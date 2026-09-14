@@ -1,0 +1,1 @@
+{ "dialect": "postgres", "outFile": "src/db/schema.generated.ts", "camelCase": false, "excludePattern": "schema_migrations" }
