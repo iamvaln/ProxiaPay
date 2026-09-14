@@ -6,9 +6,10 @@ import { requestContextMiddleware } from './http/request-context.middleware';
 import { ProjectApiModule } from './project-api/project-api.module';
 import { ConsoleApiModule } from './console-api/console-api.module';
 import { ProviderWebhookModule } from './providers/provider-webhook.module';
+import { DocsModule } from './docs/docs.module';
 
 @Module({
-  imports: [CoreModule, ProjectApiModule, ConsoleApiModule, ProviderWebhookModule],
+  imports: [CoreModule, ProjectApiModule, ConsoleApiModule, ProviderWebhookModule, DocsModule],
   providers: [{ provide: APP_FILTER, useClass: PlatformExceptionFilter }],
 })
 export class AppModule implements NestModule {

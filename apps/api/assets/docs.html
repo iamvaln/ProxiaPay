@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProxiaPay Integration</title>
+<style>
+  :root {
+    --ink: #1b2430; --ink-2: #4a5566; --muted: #6b7686; --ground: #f5f7fa; --panel: #ffffff; --panel-2: #eef1f5; --line: #dfe4ea;
+    --accent: #1f5fd6; --sandbox: #2f6fb7; --production: #1d7a4f; --warn-bg: #fff7dc; --warn-line: #e8c96a;
+    --code-bg: #1b2430; --code-ink: #e6ebf2;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e6ebf2; --ink-2: #b8c2d0; --muted: #8d98a8; --ground: #0f141b; --panel: #161c25; --panel-2: #1e2632; --line: #2a3442;
+      --accent: #6f9df0; --sandbox: #4d8ad8; --production: #3ea672; --warn-bg: #2a2410; --warn-line: #7a6320;
+      --code-bg: #0b0f14; --code-ink: #dfe6ef;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: light dark; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.55; }
+  a { color: var(--accent); }
+  code, pre, kbd { font-family: var(--mono); }
+  code { font-size: 0.9em; background: var(--panel-2); padding: 0.05em 0.35em; border-radius: 3px; }
+  pre { background: var(--code-bg); color: var(--code-ink); padding: 0.9rem 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.84rem; line-height: 1.5; margin: 0.75rem 0; }
+  pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+  h1, h2, h3 { text-wrap: balance; line-height: 1.2; margin: 0; }
+  h1 { font-size: 1.9rem; font-weight: 600; }
+  h2 { font-size: 1.35rem; font-weight: 600; margin-top: 0.25rem; }
+  h3 { font-size: 1.02rem; font-weight: 600; margin-top: 1.25rem; }
+  p { margin: 0.6rem 0; max-width: 68ch; }
+  ul, ol { max-width: 68ch; padding-left: 1.3rem; }
+  li { margin: 0.25rem 0; }
+  .eyebrow { font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+
+  .mast { position: sticky; top: 0; z-index: 10; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .mast-inner { display: flex; align-items: center; gap: 1.25rem; padding: 0.7rem 1.25rem; flex-wrap: wrap; }
+  .brand { font-weight: 600; font-size: 1.05rem; }
+  .brand small { color: var(--muted); font-weight: 400; margin-left: 0.4rem; }
+  .env { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #fff; padding: 0.3rem 0.8rem; border-radius: 999px; }
+  .env[data-env="sandbox"] { background: var(--sandbox); }
+  .env[data-env="production"] { background: var(--production); }
+  .server { font-family: var(--mono); font-size: 0.82rem; color: var(--muted); overflow-x: auto; white-space: nowrap; }
+  .server b { color: var(--ink); font-weight: 500; }
+  .meta { margin-left: auto; font-size: 0.78rem; color: var(--muted); }
+  .meta a { color: inherit; }
+
+  .layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 2.5rem; max-width: 1180px; margin: 0 auto; padding: 1.75rem 1.25rem 3rem; }
+  nav.toc { position: sticky; top: 4.2rem; align-self: start; font-size: 0.88rem; }
+  nav.toc .eyebrow { margin-bottom: 0.5rem; }
+  nav.toc ol { list-style: none; padding: 0; margin: 0; border-left: 1px solid var(--line); }
+  nav.toc li { margin: 0; }
+  nav.toc a { display: block; padding: 0.3rem 0 0.3rem 0.85rem; color: var(--ink-2); text-decoration: none; border-left: 2px solid transparent; margin-left: -1px; }
+  nav.toc a:hover, nav.toc a:focus-visible { color: var(--ink); border-left-color: var(--accent); outline: none; }
+  nav.toc .step { display: inline-block; width: 1.3rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } nav.toc { position: static; } }
+
+  section.step { padding: 1.5rem 0 1.75rem; border-top: 1px solid var(--line); scroll-margin-top: 4.5rem; }
+  section.step:first-of-type { border-top: 0; padding-top: 0; }
+  .step-head { display: flex; align-items: baseline; gap: 0.75rem; }
+  .step-no { font-family: var(--mono); font-size: 0.85rem; color: var(--muted); }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 1.1rem 1.25rem; }
+  .project { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.9rem 1.5rem; }
+  .field label { display: block; font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.25rem; }
+  .field input { width: 100%; font: inherit; font-family: var(--mono); font-size: 0.86rem; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 0.45rem 0.6rem; }
+  .field input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .hint { font-size: 0.8rem; color: var(--muted); margin-top: 0.6rem; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+  .table-wrap { overflow-x: auto; margin: 0.75rem 0; }
+  th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+  td code { white-space: nowrap; }
+
+  .callout { border: 1px solid var(--warn-line); background: var(--warn-bg); border-radius: 6px; padding: 0.7rem 0.9rem; max-width: 68ch; margin: 0.75rem 0; }
+  .callout b { font-weight: 600; }
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.6rem; margin: 0.9rem 0; }
+  .flow div { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 0.6rem 0.7rem; font-size: 0.84rem; }
+  .flow div b { display: block; font-family: var(--mono); font-size: 0.8rem; margin-bottom: 0.2rem; }
+  .flow div span { color: var(--muted); }
+
+  ul.checklist { list-style: none; padding: 0; }
+  ul.checklist li { display: grid; grid-template-columns: 1.4rem 1fr; gap: 0.4rem; align-items: start; padding: 0.35rem 0; border-bottom: 1px solid var(--line); }
+  ul.checklist input { margin: 0.25rem 0 0; }
+
+  #reference { border-top: 1px solid var(--line); scroll-margin-top: 4.5rem; }
+  #reference .ref-head { max-width: 1180px; margin: 0 auto; padding: 1.5rem 1.25rem 0.5rem; }
+  /* The reference renderer's stylesheet is light-only, so it sits on an explicitly light surface in both themes. */
+  #redoc { background: #ffffff; color: #1b2430; }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+
+<header class="mast">
+  <div class="mast-inner">
+    <div class="brand">ProxiaPay<small>Integration · API v{{VERSION}}</small></div>
+    <span class="env" data-env="{{ENV}}">{{ENV}}</span>
+    <div class="server">base URL <b>{{SERVER}}</b></div>
+    <div class="meta"><a href="/docs/openapi.json">openapi.json</a></div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="Contents">
+    <div class="eyebrow">Onboarding</div>
+    <ol>
+      <li><a href="#project"><span class="step">0</span>Your project</a></li>
+      <li><a href="#tokens"><span class="step">1</span>Credentials and tokens</a></li>
+      <li><a href="#settings"><span class="step">2</span>Read settings</a></li>
+      <li><a href="#payment"><span class="step">3</span>Preview, then confirm</a></li>
+      <li><a href="#payer"><span class="step">4</span>Payer actions</a></li>
+      <li><a href="#notifications"><span class="step">5</span>Notifications</a></li>
+      <li><a href="#errors"><span class="step">6</span>Errors and retries</a></li>
+      <li><a href="#sandbox"><span class="step">7</span>Sandbox behaviour</a></li>
+      <li><a href="#golive"><span class="step">8</span>Going live</a></li>
+    </ol>
+    <div class="eyebrow" style="margin-top:1.1rem">Reference</div>
+    <ol><li><a href="#reference"><span class="step">§</span>Every operation</a></li></ol>
+  </nav>
+
+  <main>
+    <div class="eyebrow">Integration guide · {{ENV}}</div>
+    <h1>Taking and sending mobile money payments through ProxiaPay</h1>
+    <p>Every payment is two calls — a preview, then a confirmation — and every outcome reaches you twice: as a state on the transaction you can retrieve at any time, and as a signed notification. Amounts are integers in the currency's minor units, timestamps are RFC 3339 in UTC, and every response carries an <code>X-Request-Id</code> to quote when you need help.</p>
+
+    <section class="step" id="project">
+      <div class="step-head"><span class="step-no">0</span><h2>Your project</h2></div>
+      <p>A project is what the platform knows you as. An administrator creates it in the console and hands you what is below, once, in writing. Fill this card in for your own team — it is stored only in this browser.</p>
+      <div class="card">
+        <div class="project">
+          <div class="field"><label for="f-project">Project code</label><input id="f-project" data-key="project" placeholder="shop" autocomplete="off"></div>
+          <div class="field"><label for="f-env">Environment</label><input id="f-env" data-key="env" placeholder="{{ENV}}" autocomplete="off"></div>
+          <div class="field"><label for="f-key">Client key</label><input id="f-key" data-key="key" placeholder="pk_test_…" autocomplete="off"></div>
+          <div class="field"><label for="f-routes">Routes granted</label><input id="f-routes" data-key="routes" placeholder="CM · MOMO · collection · XAF" autocomplete="off"></div>
+          <div class="field"><label for="f-origins">Declared origins</label><input id="f-origins" data-key="origins" placeholder="none required in sandbox" autocomplete="off"></div>
+          <div class="field"><label for="f-hook">Notification address</label><input id="f-hook" data-key="hook" placeholder="https://…/hook" autocomplete="off"></div>
+        </div>
+        <p class="hint">Never write the client secret or the notification signing secret here or anywhere but a secret store. Each is shown exactly once, when issued; a lost one is replaced, not recovered.</p>
+      </div>
+      <h3>What each of these is</h3>
+      <ul>
+        <li><b>Credentials</b> — a key (<code>pk_test_…</code> in sandbox, <code>pk_live_…</code> in production) and a secret. A project holds one primary credential; issuing a secondary begins a rotation, and revoking the old one ends it. Issuing takes a confirmation code on the administrator's side, so it cannot happen by accident.</li>
+        <li><b>Routes granted</b> — a route is one country, one payment method, one currency, one direction. You can only pay on routes your project has been entitled to; each entitlement carries its own limits, velocity caps and fee terms, which you read from <a href="#settings">settings</a> rather than from this card.</li>
+        <li><b>Declared origins</b> — the addresses or ranges your product calls from. Production refuses any other origin before it even looks at your credentials. Sandbox does not require one.</li>
+        <li><b>Notification address</b> — where events are delivered. An administrator sets it; a credential cannot. Its signing secret is shown once at that moment.</li>
+      </ul>
+    </section>
+
+    <section class="step" id="tokens">
+      <div class="step-head"><span class="step-no">1</span><h2>Credentials and tokens</h2></div>
+      <p>Exchange the key and secret for a bearer token and carry the token on every other call.</p>
+<pre><code>POST {{SERVER}}/auth/tokens
+{ "client_key": "pk_test_…", "client_secret": "sk_test_…" }
+
+→ 200 { "access_token": "pt_…", "token_type": "Bearer", "expires_in": 3600 }</code></pre>
+      <p>Hold the token. Exchange again when it is within a few minutes of expiry or when a call returns <code>TOKEN_EXPIRED</code> — and only then. Exchanging on every call exhausts the exchange limit (ten per minute per credential) and raises a security alert against your project. Each instance of your product holds its own token; tokens never invalidate one another.</p>
+      <div class="callout"><b>Order of checks.</b> Origin is verified before credentials. In production, a call from an undeclared address is refused with <code>ORIGIN_NOT_ALLOWED</code> before the secret is looked at — declare new infrastructure before it starts calling.</div>
+    </section>
+
+    <section class="step" id="settings">
+      <div class="step-head"><span class="step-no">2</span><h2>Read settings, do not hold configuration</h2></div>
+<pre><code>GET {{SERVER}}/settings
+Authorization: Bearer pt_…
+If-None-Match: "…"        ← optional; a 304 costs nothing</code></pre>
+      <p>The response lists, for every route your project holds: country, currency with its decimal exponent, payment method, direction, both fee rates with who bears them, amount limits, velocity caps and the payer action the route requires. Build your payment screens from this; nothing in your configuration should duplicate it.</p>
+      <p>Amounts everywhere are integers in minor units. XAF, XOF and GNF have no decimals — 1 000 XAF is <code>1000</code>. CDF and USD have two — 10.50 USD is <code>1050</code>. A decimal amount is refused with <code>AMOUNT_INVALID</code>, never rounded.</p>
+    </section>
+
+    <section class="step" id="payment">
+      <div class="step-head"><span class="step-no">3</span><h2>Preview, then confirm</h2></div>
+      <div class="flow">
+        <div><b>POST /previews</b><span>figures, normalised number, payer action, expiry</span></div>
+        <div><b>POST /collections</b><span>or /disbursements — creates the transaction</span></div>
+        <div><b>processing</b><span>or action_required, then succeeded / failed</span></div>
+        <div><b>notification</b><span>signed; retrieve the transaction to act</span></div>
+      </div>
+<pre><code>POST {{SERVER}}/previews
+{
+  "direction": "collection", "amount": 1000, "currency": "XAF",
+  "country": "CM", "payment_method": "MOMO",
+  "counterparty": { "msisdn": "677123456", "name": "A. Mbarga" },
+  "reference": "order-4417"
+}
+
+→ 201 { "reference": "prv_…", "requested_amount": 1000, "charged_amount": 1025,
+        "settled_amount": 1000, "fees": { "processing": { "amount": 25, "bearer": "counterparty" },
+        "platform": { "amount": 0, "bearer": "counterparty" }, "total": 25 },
+        "payer_action": "none", "expires_at": "…" }</code></pre>
+      <p><code>charged_amount</code> is what the payer is debited on a collection (what your balance carries on a disbursement); <code>settled_amount</code> is what you receive (what the recipient receives). Show these figures. Never compute a fee yourself.</p>
+<pre><code>POST {{SERVER}}/collections          — or /disbursements
+{ "preview_reference": "prv_…" }
+
+→ 201 created now       → 200 an earlier confirmation created it; same transaction</code></pre>
+      <p>Confirming twice is safe, and it is how you retry a call that timed out. A preview expires fifteen minutes after it is made.</p>
+      <p><code>reference</code> is yours, unique within your project. Repeating a preview with the same reference and the same intent returns the original; a different intent under a used reference returns <code>REFERENCE_CONFLICT</code>. Your reference is what appears in your records and what support will search by.</p>
+    </section>
+
+    <section class="step" id="payer">
+      <div class="step-head"><span class="step-no">4</span><h2>Payer actions</h2></div>
+      <p><code>payer_action</code> in the preview tells you which of three sequences applies to the route.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>payer_action</th><th>Transaction returns in</th><th>What you do</th></tr></thead>
+        <tbody>
+          <tr><td><code>none</code></td><td><code>processing</code></td><td>Nothing. The payer approves on their handset outside the platform.</td></tr>
+          <tr><td><code>code</code></td><td><code>action_required</code> with <code>action.attempts_remaining</code></td><td>Collect the code the operator sent the payer and submit it to <code>POST /transactions/{reference}/code</code>. A wrong code returns <code>CODE_INVALID</code> with the attempts left; exhausting them ends the transaction.</td></tr>
+          <tr><td><code>browser</code></td><td><code>action_required</code> with <code>action.url</code></td><td>Send the payer to that address. It authorises the payment for whoever holds it: it goes to the payer and nowhere else, and belongs in no log.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="step" id="notifications">
+      <div class="step-head"><span class="step-no">5</span><h2>Notifications</h2></div>
+      <p>Events arrive as a <code>POST</code> to your registered address with a JSON body and three headers.</p>
+<pre><code>POST https://your-product.example/hook
+X-ProxiaPay-Event-Id: evt_…
+X-ProxiaPay-Timestamp: 1789390744
+X-ProxiaPay-Signature: 6f1c…           ← hex HMAC-SHA256
+
+{ "id": "evt_…", "event": "transaction.succeeded", "occurred_at": "…",
+  "data": { "transaction": { … } } }</code></pre>
+      <h3>Verify every one</h3>
+      <ol>
+        <li>Compute HMAC-SHA256 over <code>"{X-ProxiaPay-Timestamp}.{raw body bytes}"</code> keyed on your signing secret, and compare it to <code>X-ProxiaPay-Signature</code> in constant time. Use the raw bytes: re-serialising changes whitespace and key order.</li>
+        <li>Reject a timestamp more than five minutes from now.</li>
+        <li>Delivery is at-least-once. An <code>id</code> you have already processed is acknowledged with <code>2xx</code> and ignored.</li>
+      </ol>
+<pre><code>// Node.js
+const crypto = require('node:crypto');
+function verify(secret, headers, rawBody) {
+  const ts = Number(headers['x-proxiapay-timestamp']);
+  if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) return false;
+  const expected = crypto.createHmac('sha256', secret).update(`${ts}.`).update(rawBody).digest('hex');
+  const given = String(headers['x-proxiapay-signature'] ?? '');
+  return expected.length === given.length && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(given));
+}</code></pre>
+      <p>Respond <code>2xx</code> promptly. Anything else is retried on a widening interval, from one minute up to a day, eight attempts. A notification says a transaction's state <em>may</em> have changed: where the outcome governs something consequential, retrieve the transaction and act on what the retrieval returns.</p>
+      <div class="callout"><b>Handle <code>transaction.corrected</code>.</b> It means a payment previously reported one way turned out to be another — most consequentially, a collection reported as failed that the customer completed. It carries <code>previous_state</code> and <code>previous_failure_reason</code> beside the corrected transaction. A product that ignores it leaves an order unfulfilled against a customer who paid.</div>
+    </section>
+
+    <section class="step" id="errors">
+      <div class="step-head"><span class="step-no">6</span><h2>Errors: what to retry</h2></div>
+      <p>Every error body is <code>{ "error": { "code", "message", "retryable", "details"? } }</code>. <code>retryable</code> says whether repeating the identical request could succeed later.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Situation</th><th>What to do</th></tr></thead>
+        <tbody>
+          <tr><td>A preview call timed out</td><td>Repeat it with the same <code>reference</code>; you get the original or <code>REFERENCE_CONFLICT</code>.</td></tr>
+          <tr><td>A confirm call timed out</td><td>Repeat it with the same preview reference; you get the transaction the first call created.</td></tr>
+          <tr><td><code>TOKEN_EXPIRED</code></td><td>Exchange and retry.</td></tr>
+          <tr><td><code>RATE_LIMITED</code></td><td>Wait for <code>Retry-After</code>. Every response carries <code>X-RateLimit-*</code> headers.</td></tr>
+          <tr><td><code>FLOAT_INSUFFICIENT</code>, <code>NO_PROVIDER_AVAILABLE</code></td><td>Retry later, unchanged. Both are the platform's condition, not yours.</td></tr>
+          <tr><td><code>BALANCE_INSUFFICIENT</code></td><td>Your balance is short by <code>details.shortfall</code>; fund it or reduce the amount.</td></tr>
+          <tr><td><code>VELOCITY_COUNT_EXCEEDED</code>, <code>VELOCITY_VALUE_EXCEEDED</code></td><td>Wait until <code>details.resets_at</code>.</td></tr>
+          <tr><td><code>SIMILAR_PAYMENT_PENDING</code></td><td>A matching payment is open; <code>details.transaction</code> names it. Do not raise another.</td></tr>
+          <tr><td>A transaction is <code>undetermined</code></td><td><b>Wait. Never send it again.</b> The money may have moved; the resolution arrives by notification.</td></tr>
+        </tbody>
+      </table></div>
+      <p><code>OUTCOME_UNDETERMINED</code> is the one failure reason a product must never answer by repeating the payment.</p>
+      <h3>Support</h3>
+      <p>A customer contacting your support usually quotes the reference from their operator's confirmation message. That is <code>operator_reference</code> on the transaction, and <code>GET /transactions?operator_reference=…</code> finds it. Quote <code>X-Request-Id</code> from any response when raising a question with the platform team; it identifies the exact call.</p>
+    </section>
+
+    <section class="step" id="sandbox">
+      <div class="step-head"><span class="step-no">7</span><h2>Sandbox behaviour</h2></div>
+      <p>In the sandbox a simulator stands in for the mobile money provider and chooses its behaviour by the <b>last two digits of the counterparty number</b>. Use these to exercise every branch of your handling before requesting production credentials.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Number ends in</th><th>Behaviour</th></tr></thead>
+        <tbody>
+          <tr><td><code>00</code></td><td>Rejected at submission — <code>WALLET_NOT_FOUND</code></td></tr>
+          <tr><td><code>01</code></td><td>Accepted, then fails — <code>PAYER_DECLINED</code></td></tr>
+          <tr><td><code>02</code></td><td>Stays <code>processing</code> until the sweep ceiling, then <code>undetermined</code></td></tr>
+          <tr><td><code>03</code></td><td>Provider unreachable; fallback applies</td></tr>
+          <tr><td><code>04</code></td><td>Submission times out; <code>undetermined</code> at once</td></tr>
+          <tr><td><code>05</code></td><td>Accepted, then <code>WALLET_BALANCE_INSUFFICIENT</code></td></tr>
+          <tr><td><code>06</code></td><td>Requires a one-time code; the code is <code>123456</code></td></tr>
+          <tr><td><code>07</code></td><td>Requires a browser step; completes on its own after about twenty seconds</td></tr>
+          <tr><td>anything else</td><td>Succeeds after a few seconds, at a 2 % provider fee</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="step" id="golive">
+      <div class="step-head"><span class="step-no">8</span><h2>Going live</h2></div>
+      <p>A project completes each item against the sandbox before its production credentials are issued. Ticks are kept in this browser only, for your own tracking.</p>
+      <h3>Infrastructure</h3>
+      <ul class="checklist">
+        <li><input type="checkbox" id="c1"><label for="c1">Every address or range the product calls from is declared on the project.</label></li>
+        <li><input type="checkbox" id="c2"><label for="c2">Outbound calls to the platform use TLS 1.2 or later.</label></li>
+        <li><input type="checkbox" id="c3"><label for="c3">The notification address is registered, reachable from the platform, served over HTTPS, and responds <code>2xx</code> within a few seconds.</label></li>
+        <li><input type="checkbox" id="c4"><label for="c4">The signing secret is held in a secret store, not in configuration files or source.</label></li>
+      </ul>
+      <h3>Behaviour verified in sandbox</h3>
+      <ul class="checklist">
+        <li><input type="checkbox" id="c5"><label for="c5">Token exchange on start-up and on <code>TOKEN_EXPIRED</code> only; no exchange per call.</label></li>
+        <li><input type="checkbox" id="c6"><label for="c6">Payment screens are built from <code>GET /settings</code> — exponent, both fees with bearers, limits, <code>payer_action</code>.</label></li>
+        <li><input type="checkbox" id="c7"><label for="c7">A preview is shown before a confirmation, and the figures shown are the preview's.</label></li>
+        <li><input type="checkbox" id="c8"><label for="c8">A confirmation that times out is retried with the same preview reference.</label></li>
+        <li><input type="checkbox" id="c9"><label for="c9">At least one sandbox transaction has completed on each route and direction the product will use.</label></li>
+        <li><input type="checkbox" id="c10"><label for="c10">The one-time code sequence has been exercised (<code>06</code>).</label></li>
+        <li><input type="checkbox" id="c11"><label for="c11">The browser step has been exercised (<code>07</code>); the address is neither logged nor shown to anyone but the payer.</label></li>
+        <li><input type="checkbox" id="c12"><label for="c12">Signatures are verified over the raw body; a tampered body and a stale timestamp are rejected; a replayed event id is acknowledged and ignored.</label></li>
+        <li><input type="checkbox" id="c13"><label for="c13"><code>transaction.corrected</code> is handled: a failed collection later corrected to succeeded fulfils the order.</label></li>
+        <li><input type="checkbox" id="c14"><label for="c14">An <code>undetermined</code> outcome (<code>02</code> or <code>04</code>) leaves the payment waiting; nothing re-sends it.</label></li>
+        <li><input type="checkbox" id="c15"><label for="c15"><code>FLOAT_INSUFFICIENT</code> and <code>NO_PROVIDER_AVAILABLE</code> are retried later; <code>BALANCE_INSUFFICIENT</code> is surfaced with its shortfall.</label></li>
+        <li><input type="checkbox" id="c16"><label for="c16">Customer support can search by the operator's reference.</label></li>
+      </ul>
+      <h3>Operational</h3>
+      <ul class="checklist">
+        <li><input type="checkbox" id="c17"><label for="c17">Product-side logs carry <code>X-Request-Id</code> for calls to the platform.</label></li>
+        <li><input type="checkbox" id="c18"><label for="c18">The product's reference scheme is unique within the project and is what appears in its records.</label></li>
+        <li><input type="checkbox" id="c19"><label for="c19">Someone on the product team receives the platform's notification-failure alerts for the project.</label></li>
+      </ul>
+      <p>A project receives its credentials, its declared origins and its granted routes in writing. Everything else comes from the settings endpoint at the moment it is needed.</p>
+    </section>
+  </main>
+</div>
+
+<section id="reference">
+  <div class="ref-head">
+    <div class="eyebrow">Reference</div>
+    <h2>Every operation</h2>
+    <p>Generated from the request schemas this API validates with, so it describes the interface answering you. The raw document is at <a href="/docs/openapi.json">/docs/openapi.json</a>.</p>
+  </div>
+  <div id="redoc"></div>
+</section>
+
+<script src="/docs/redoc.standalone.js"></script>
+<script>
+  (function () {
+    var store = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+    Redoc.init('/docs/openapi.json', {
+      hideDownloadButton: true, disableSearch: true, expandResponses: '200,201', scrollYOffset: '.mast',
+      theme: {
+        colors: { primary: { main: '#1f5fd6' }, text: { primary: '#1b2430', secondary: '#6b7686' } },
+        typography: { fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', fontSize: '14px', headings: { fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', fontWeight: '600' }, code: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '13px' } },
+        sidebar: { backgroundColor: '#f5f7fa', textColor: '#1b2430' },
+        rightPanel: { backgroundColor: '#1b2430' }
+      }
+    }, document.getElementById('redoc'));
+    // Project card and go-live ticks: per-viewer conveniences, kept in this browser only.
+    document.querySelectorAll('.field input').forEach(function (input) {
+      var k = 'proxiapay-project-' + input.dataset.key;
+      var v = store.get(k); if (v) input.value = v;
+      input.addEventListener('input', function () { store.set(k, input.value); });
+    });
+    document.querySelectorAll('ul.checklist input[type="checkbox"]').forEach(function (box) {
+      var k = 'proxiapay-golive-' + box.id;
+      box.checked = store.get(k) === '1';
+      box.addEventListener('change', function () { store.set(k, box.checked ? '1' : '0'); });
+    });
+  })();
+</script>
+</body>
+</html>
