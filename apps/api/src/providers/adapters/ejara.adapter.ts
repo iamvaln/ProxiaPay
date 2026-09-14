@@ -7,7 +7,12 @@ import {
 import { log } from '../../logging/logger';
 import { fromMajorUnits, toMajorUnits } from '../../money/money';
 
-interface EjaraResponse { status?: string; code?: string; message?: string; data?: Record<string, unknown> }
+interface EjaraResponse { status?: string; code?: string; errorCode?: string; message?: string; data?: Record<string, unknown> }
+
+/** Observed: a refusal carries its code as errorCode ({ message, errorCode }); `code` was the name assumed before. */
+function codeOf(body: EjaraResponse | undefined): string | undefined {
+  return body?.errorCode ?? body?.code;
+}
 
 /**
  * Ejara Pay (spec 12). Authentication exchanges client-key and client-secret headers for a
@@ -33,9 +38,10 @@ export class EjaraAdapter implements ProviderAdapter {
       headers: { 'client-key': ctx.account.credentials.clientKey ?? '', 'client-secret': ctx.account.credentials.clientSecret ?? '', 'content-type': 'application/json', accept: 'application/json' },
     });
     if (res.timedOut) throw new ProviderUnavailableError('ejara: authentication timed out');
-    const body = res.body as { data?: { accessToken?: string; expiresIn?: number } };
+    const body = res.body as EjaraResponse & { data?: { accessToken?: string; expiresIn?: number } };
     const token = body?.data?.accessToken;
-    if (res.status !== 200 || !token) throw new ProviderUnavailableError(`ejara: authentication failed (${res.status})`);
+    // Observed: 401 { message: 'Client key is invalid', errorCode: 'INVALID_API_CLIENT' } — worth surfacing, since which half of the pair is wrong is the whole diagnosis.
+    if (res.status !== 200 || !token) throw new ProviderUnavailableError(`ejara: authentication failed (${res.status}${codeOf(body) ? ` ${codeOf(body)}` : ''}${body?.message ? `: ${body.message}` : ''})`);
     this.tokens.set(ctx.account.id, { token, expiresAt: Date.now() + (body.data?.expiresIn ?? 3600) * 1000 });
     return token;
   }
@@ -68,9 +74,9 @@ export class EjaraAdapter implements ProviderAdapter {
     if (res.timedOut) return { outcome: 'undetermined', payloadId: requestPayloadId };
     const body = res.body as EjaraResponse;
     const payloadId = await ctx.recordPayload('outbound_response', 'initiate-momo-payment', { http_status: res.status, body });
-    if (res.status === 401 || res.status === 403 || body?.code === 'INVALID_API_CLIENT' || body?.code === 'INCOMPLETE_REQUEST_HEADERS') {
+    if (res.status === 401 || res.status === 403 || codeOf(body) === 'INVALID_API_CLIENT' || codeOf(body) === 'INCOMPLETE_REQUEST_HEADERS') {
       this.tokens.delete(ctx.account.id);
-      throw new ProviderUnavailableError(`ejara: authentication rejected (${body?.code ?? res.status})`);
+      throw new ProviderUnavailableError(`ejara: authentication rejected (${codeOf(body) ?? res.status})`);
     }
     if (res.status >= 500) throw new ProviderUnavailableError(`ejara: server error ${res.status}`);
     const data = body?.data ?? {};
@@ -80,11 +86,12 @@ export class EjaraAdapter implements ProviderAdapter {
     const providerReference = String(data.internalPaymentId ?? data.paymentReference ?? data.reference ?? data.id ?? '');
     if (res.status >= 200 && res.status < 300 && providerReference) {
       const state = String(data.providerStatus ?? data.status ?? 'pending').toLowerCase();
-      if (state === 'rejected') return { outcome: 'rejected', reason: mapFailure(body), providerCode: body.code, providerMessage: body.message, payloadId };
+      if (state === 'rejected') return { outcome: 'rejected', reason: mapFailure(body), providerCode: codeOf(body), providerMessage: body.message, payloadId };
       return { outcome: 'accepted', providerReference, state: 'processing', payloadId };
     }
-    if (body?.code === 'INSUFFICIENT_FUNDS') return { outcome: 'rejected', reason: 'PROVIDER_REJECTED', providerCode: 'INSUFFICIENT_FUNDS', providerMessage: 'merchant float insufficient', payloadId };
-    return { outcome: 'rejected', reason: mapFailure(body), providerCode: body?.code ?? String(res.status), providerMessage: body?.message ?? 'provider refused the request', payloadId };
+    // Observed on a payout from an empty wallet: 400 { message: 'Insufficient wallet funds', errorCode: 'INSUFFICIENT_FUNDS' }. That is our float at the provider, not the payer's balance.
+    if (codeOf(body) === 'INSUFFICIENT_FUNDS') return { outcome: 'rejected', reason: 'PROVIDER_REJECTED', providerCode: 'INSUFFICIENT_FUNDS', providerMessage: body?.message ?? 'merchant float insufficient', payloadId };
+    return { outcome: 'rejected', reason: mapFailure(body), providerCode: codeOf(body) ?? String(res.status), providerMessage: body?.message ?? 'provider refused the request', payloadId };
   }
 
   async status(ctx: AdapterContext, providerReference: string): Promise<StatusResult> {
@@ -94,7 +101,7 @@ export class EjaraAdapter implements ProviderAdapter {
     const body = res.body as EjaraResponse;
     const payloadId = await ctx.recordPayload('outbound_response', 'status', { http_status: res.status, body });
     if (res.status === 401 || res.status === 403) { this.tokens.delete(ctx.account.id); throw new ProviderUnavailableError('ejara: authentication rejected on status'); }
-    if (res.status === 404 || body?.code === 'RESOURCE_NOT_FOUND') return { state: 'unknown', providerCode: 'RESOURCE_NOT_FOUND', payloadId };
+    if (res.status === 404 || codeOf(body) === 'RESOURCE_NOT_FOUND') return { state: 'unknown', providerCode: 'RESOURCE_NOT_FOUND', payloadId };
     if (res.status >= 500) throw new ProviderUnavailableError(`ejara: server error ${res.status}`);
     const data = body?.data ?? {};
     const state = mapState(String(data.status ?? ''));
@@ -105,7 +112,7 @@ export class EjaraAdapter implements ProviderAdapter {
       chargedAmount: data.amount != null ? fromProviderAmount(data.amount, exponent) : undefined,
       providerFee: data.fees != null ? fromProviderAmount(data.fees, exponent) : undefined,
       operatorReference: firstString(data, ['operatorReference', 'operatorTransactionId', 'providerReference', 'financialTransactionId']),
-      providerCode: body?.code,
+      providerCode: codeOf(body),
       providerMessage: body?.message,
       payloadId,
     };
@@ -163,7 +170,7 @@ function mapState(status: string): NormalisedState {
 }
 
 function mapFailure(body: EjaraResponse | undefined, data: Record<string, unknown> = {}): FailureReason {
-  const code = String(body?.code ?? data.failureReason ?? data.reason ?? '').toUpperCase();
+  const code = String(codeOf(body) ?? data.failureReason ?? data.reason ?? '').toUpperCase();
   const message = String(body?.message ?? data.message ?? '').toLowerCase();
   if (code.includes('INSUFFICIENT') && !code.includes('FUNDS')) return 'WALLET_BALANCE_INSUFFICIENT';
   if (message.includes('insufficient balance') || message.includes('insufficient funds in wallet')) return 'WALLET_BALANCE_INSUFFICIENT';
