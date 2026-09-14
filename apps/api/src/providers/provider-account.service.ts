@@ -26,7 +26,8 @@ export class ProviderAccountService {
     const credentials = account.credential_ciphertext ? (JSON.parse(this.crypto.openString(account.credential_ciphertext, `provider_account:${account.id}`)) as Record<string, string>) : {};
     const db = this.db;
     const ctx: AdapterContext = {
-      account: { id: account.id, baseUrl: account.base_url, credentials },
+      // A base address pasted with stray whitespace or a byte-order mark, or without a scheme, is normalised here.
+      account: { id: account.id, baseUrl: normaliseBaseUrl(account.base_url), credentials },
       correlationId,
       transactionId,
       async recordPayload(flow, kind, body) {
@@ -62,4 +63,9 @@ export class ProviderAccountService {
       and id not in (select request_payload_id from transaction_attempt where request_payload_id is not null union select response_payload_id from transaction_attempt where response_payload_id is not null)`.execute(this.db);
     return Number(result.numAffectedRows ?? 0);
   }
+}
+
+export function normaliseBaseUrl(raw: string): string {
+  const cleaned = raw.replace(/^\uFEFF/, '').trim().replace(/\/+$/, '');
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
 }

@@ -30,7 +30,7 @@ export class EjaraAdapter implements ProviderAdapter {
     if (cached && cached.expiresAt - Date.now() > 5 * 60_000) return cached.token;
     const res = await fetchJson(`${ctx.account.baseUrl}/api/v1/accounts/authenticate`, {
       method: 'POST',
-      headers: { 'client-key': ctx.account.credentials.clientKey ?? '', 'client-secret': ctx.account.credentials.clientSecret ?? '', 'content-type': 'application/json' },
+      headers: { 'client-key': ctx.account.credentials.clientKey ?? '', 'client-secret': ctx.account.credentials.clientSecret ?? '', 'content-type': 'application/json', accept: 'application/json' },
     });
     if (res.timedOut) throw new ProviderUnavailableError('ejara: authentication timed out');
     const body = res.body as { data?: { accessToken?: string; expiresIn?: number } };
