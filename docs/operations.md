@@ -61,4 +61,4 @@ Data keys are wrapped under the master key per record. To rotate the master key,
 
 ## Email
 
-`Mailer` logs messages when `SMTP_URL` is unset. Wire a transport (for example `nodemailer`) in `apps/api/src/alerts/mailer.ts` for deployments that send one-time codes and alerts by email; delivering codes and the sign-in second factor by different channels removes their shared dependency (spec 10.1).
+`Mailer` sends through Resend's HTTP API when `RESEND_API_KEY` is set, and logs messages otherwise. `MAIL_FROM` names the sender and must be an address on a domain verified in Resend; the region mail is routed from (EU, `eu-west-1`, for `proxia-digital.com`) is a property of the domain in the Resend dashboard, chosen when the domain is added. Note that Resend stores account data, logs and API records in the United States whatever the sending region. A refused or unreachable send is recorded in `alert_delivery` as `failed` with the reason. Delivering codes and the sign-in second factor by different channels removes their shared dependency (spec 10.1).

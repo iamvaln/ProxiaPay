@@ -31,7 +31,10 @@ const schema = z.object({
   ALERT_EMAIL_FINANCE: optionalEmail,
   ALERT_EMAIL_DEVELOPERS: optionalEmail,
   ALERT_EMAIL_ADMINISTRATORS: optionalEmail,
-  SMTP_URL: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),
+  /** Resend API key. Unset, mail is logged instead of sent, which is what development and tests want. */
+  RESEND_API_KEY: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),
+  /** Sender for every outbound mail, as `Name <address>`; the address must be on a domain verified in Resend. */
+  MAIL_FROM: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   PUBLIC_BASE_URL: z.string().url().optional(),
   /** Worker instance name, used when claiming jobs. */
@@ -49,6 +52,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     throw new Error(`Invalid configuration: ${issues}`);
   }
+  if (parsed.data.RESEND_API_KEY && !parsed.data.MAIL_FROM) throw new Error('Invalid configuration: MAIL_FROM is required when RESEND_API_KEY is set');
   cached = parsed.data;
   return cached;
 }

@@ -29,7 +29,7 @@ npm run dev:worker                     # status sweep, deliveries, reconciliatio
 npm run dev:console                    # http://localhost:5173, proxies /console to the API
 ```
 
-Sign in to the console with the administrator created above; the first sign-in enrols an authenticator. In development, one-time codes and alerts are written to the API log rather than sent by email (set `SMTP_URL` and a transport to send them).
+Sign in to the console with the administrator created above; the first sign-in enrols an authenticator. In development, one-time codes and alerts are written to the API log rather than sent by email (set `RESEND_API_KEY` and `MAIL_FROM` to send them through Resend).
 
 Environments are separate deployments (spec 2.3): `PROXIAPAY_ENV=sandbox` uses the simulator adapter and allows projects without declared origins; `production` requires origins and uses the Ejara adapter.
 
