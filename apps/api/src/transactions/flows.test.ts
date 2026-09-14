@@ -206,13 +206,14 @@ describe('disbursement', () => {
     expect((await reader.apiById(t.db, transactionId, { revealMsisdn: true, revealAction: true })).state).toBe('undetermined');
     expect(await ledger.balanceByKey(t.db, { type: 'suspense', currency: 'XAF' })).toBe(1000);
     expect(await ledger.projectBalances(t.db, project.id)).toEqual([{ currency: 'XAF', available: 49_000, reserved: 0 }]);
-    // Free liquidity now 3000 − (975 + 20) = 2005: two more of 995 fit, a third does not.
+    // Each disbursement reserves the settled 975 plus the expected provider fee of 15 (150 bps).
+    // Free liquidity now 3000 − 990 = 2010: two more of 990 fit, a third does not.
     const ps = await Promise.all([1, 2, 3].map((i) => previews.create(principal, { ...collection(`67712300${i}`.replace(/0(\d)$/, '1$1'), `wd-c${i}`), direction: 'disbursement' })));
     const results = await Promise.allSettled(ps.map((pp) => transactions.confirm(principal, pp.reference, 'disbursement')));
     const ok = results.filter((r) => r.status === 'fulfilled').length;
     const floatShort = results.filter((r) => r.status === 'rejected' && (r.reason as PlatformError).code === 'FLOAT_INSUFFICIENT').length;
     expect(ok).toBe(2);
     expect(floatShort).toBe(1);
-    expect((await treasury.freeLiquidity(t.db, float)).free).toBe(3000 - 995 * 3);
+    expect((await treasury.freeLiquidity(t.db, float)).free).toBe(3000 - 990 * 3);
   });
 });

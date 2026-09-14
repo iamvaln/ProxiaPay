@@ -63,10 +63,21 @@ export const ROUTE_LIMITS: Record<string, { min: number; max: number }> = {
   USD: { min: 100, max: 500_000 }, // 1.00 to 5,000.00 USD
 };
 
-/** Indicative terms pending the signed agreement: 2.5 % processing, 0 platform, provider expected at 2 %. */
+/** Indicative terms pending the signed agreement: 2.5 % processing, 0 platform. */
 export const INDICATIVE_PROCESSING_BPS = 250;
 export const INDICATIVE_PLATFORM_BPS = 0;
-export const INDICATIVE_PROVIDER_BPS = 200;
+
+/**
+ * What the provider expects to charge us, by direction. Read from the Ejara partner portal on
+ * 2026-09-14, where CM/XAF is configured at 2.00 % collection and 1.50 % disbursement for both
+ * MOMO and OM, borne by the client — so it is our expense, as the ledger posts it.
+ * Note the onboarding email quoted a flat 1 %; the portal is the configuration that will actually
+ * be applied, so it wins here. A variance at either rate is a real finding, not a seeding artefact.
+ */
+export const INDICATIVE_PROVIDER_BPS: Record<'collection' | 'disbursement', number> = {
+  collection: 200,
+  disbursement: 150,
+};
 
 /** Configured values of spec 14.7. Durations in seconds, money in XAF minor units. */
 export const DEFAULT_SETTINGS: Record<string, unknown> = {

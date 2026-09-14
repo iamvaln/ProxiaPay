@@ -111,7 +111,7 @@ export async function seedReferenceData(db: Executor, opts: SeedOptions = {}): P
         const fingerprint = routeVersionFingerprint(version);
         const rv = await db.insertInto('route_version').values({ ...version, fingerprint }).returning('id').executeTakeFirstOrThrow();
         await db.insertInto('route_binding').values({
-          route_version_id: rv.id, provider_account_id: account.id, expected_fee_bps: INDICATIVE_PROVIDER_BPS, expected_fee_fixed: 0,
+          route_version_id: rv.id, provider_account_id: account.id, expected_fee_bps: INDICATIVE_PROVIDER_BPS[direction], expected_fee_fixed: 0,
           terms_status: 'indicative', priority: 1, enabled: true,
         }).execute();
       }
