@@ -74,9 +74,12 @@ export class EjaraAdapter implements ProviderAdapter {
     }
     if (res.status >= 500) throw new ProviderUnavailableError(`ejara: server error ${res.status}`);
     const data = body?.data ?? {};
-    const providerReference = String(data.paymentReference ?? data.reference ?? data.id ?? '');
+    // Observed against the test box: initiation answers with internalPaymentId and providerStatus,
+    // where the status endpoint calls the same two internalReference and status. The reference read
+    // here is what status() is later queried with, so it must be the internal one.
+    const providerReference = String(data.internalPaymentId ?? data.paymentReference ?? data.reference ?? data.id ?? '');
     if (res.status >= 200 && res.status < 300 && providerReference) {
-      const state = String(data.status ?? 'pending').toLowerCase();
+      const state = String(data.providerStatus ?? data.status ?? 'pending').toLowerCase();
       if (state === 'rejected') return { outcome: 'rejected', reason: mapFailure(body), providerCode: body.code, providerMessage: body.message, payloadId };
       return { outcome: 'accepted', providerReference, state: 'processing', payloadId };
     }
