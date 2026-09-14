@@ -1,0 +1,146 @@
+name: sandbox
+
+# The sandbox at https://sandbox.pay.proxia-digital.com, redeployed on every
+# merge to `develop`.
+#
+# It follows `develop` rather than `main` on purpose: a sandbox fed by the
+# release branch is a copy of production, and says nothing production does not
+# already say. Integrators need somewhere to exercise what is not blessed yet.
+#
+# There is no verification gate here, unlike a release: a broken sandbox costs
+# one more merge, and this is precisely where things should break.
+on:
+  push:
+    branches: [develop]
+  # Redeploy without pushing a commit — after a VPS reboot, for instance.
+  workflow_dispatch:
+
+# One run at a time. Two merges in quick succession would otherwise race two
+# deploys onto the same stack, the second overwriting the first mid `up -d`.
+concurrency:
+  group: sandbox
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io/iamvaln
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/proxiapay-api:develop
+          cache-from: type=gha,scope=sandbox-api
+          cache-to: type=gha,scope=sandbox-api,mode=max
+
+  console:
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # NO build-args, and that is deliberate. The console calls the platform at
+      # a relative path, so this image carries no environment inside it and the
+      # same build is correct in sandbox and in production. The other projects on
+      # this VPS must bake a base URL in and cannot promote an image between
+      # environments; this one can.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/console/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/proxiapay-console:develop
+          cache-from: type=gha,scope=sandbox-console
+          cache-to: type=gha,scope=sandbox-console,mode=max
+
+  deploy:
+    needs: [api, console]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          envs: GHCR_USER,GHCR_TOKEN
+          script: |
+            set -euo pipefail
+            cd "$HOME/proxiapay-sandbox"
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+            # Authenticated fetch: GitHub rate-limits anonymous git by IP, and
+            # this VPS is shared with several other projects.
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GHCR_TOKEN" | base64 -w0)" \
+              fetch origin develop
+            # `reset --hard`, not `pull`: develop advances by merges and a deploy
+            # checkout has nothing local worth keeping. A pull that hit a conflict
+            # would leave the stack half-updated with nobody the wiser.
+            git reset --hard origin/develop
+
+            # ── The guard ──────────────────────────────────────────────────
+            # Ask Compose which project it believes it is BEFORE touching
+            # anything. `config` starts nothing; it is a read. If STACK were
+            # missing from .env.sandbox, the project would fall back to
+            # `proxiapay` and this deploy would recreate a different stack's
+            # containers with the sandbox's environment — the failure that took
+            # lehno's production down on 14 September.
+            PROJECT=$(docker compose --env-file .env.sandbox -f docker-compose.deploy.yml config --format json | sed -n 's/.*"name": *"\([^"]*\)".*/\1/p' | head -1)
+            if [ "$PROJECT" != "proxiapay-sandbox" ]; then
+              echo "STOP: Compose reports the project '$PROJECT', not 'proxiapay-sandbox'."
+              echo "Going on would deploy onto another stack. Check STACK in .env.sandbox."
+              exit 1
+            fi
+            echo "Compose project confirmed: $PROJECT"
+
+            n=0
+            until docker compose --env-file .env.sandbox -f docker-compose.deploy.yml pull db api worker console; do
+              n=$((n+1))
+              if [ "$n" -ge 3 ]; then echo "pull failed after $n attempts"; exit 1; fi
+              echo "pull interrupted — retrying in 10s…"
+              sleep 10
+            done
+
+            # Services named explicitly. `migrate` shares the api image, already
+            # pulled, and runs to completion before api and worker start.
+            docker compose --env-file .env.sandbox -f docker-compose.deploy.yml up -d db migrate api worker console
+            docker logout ghcr.io
+            # :develop replaces itself under the same tag; only dangling layers pile up.
+            docker image prune -f
+        env:
+          # `envs:` says what to forward, not where it comes from. Without this
+          # block the remote script dies on "GHCR_TOKEN: unbound variable".
+          GHCR_USER: ${{ github.actor }}
+          # This run's own token: it expires with the run, leaving nothing
+          # durable on the server.
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check the sandbox answers
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://sandbox.pay.proxia-digital.com/healthz || true)
+            if [ "$code" = "200" ]; then echo "sandbox healthy — https://sandbox.pay.proxia-digital.com/docs"; exit 0; fi
+            echo "attempt $i: /healthz answered $code"
+            sleep 10
+          done
+          echo "the sandbox never answered 200 on /healthz"
+          exit 1
