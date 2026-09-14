@@ -5,6 +5,8 @@
   "description": "ProxiaPay — mobile money payment platform for Central and West Africa",
   "workspaces": ["apps/api", "apps/console"],
   "engines": { "node": ">=22" },
+  "//overrides": "@nestjs/platform-express pins multer 2.2.0, which carries four denial-of-service advisories. No route here accepts multipart — statements arrive base64-encoded in a JSON body — so the package ships unreachable, but it still fails the audit gate. 2.4.0 is the same 2.x API outside the vulnerable range. Remove this once the platform depends on a patched multer itself.",
+  "overrides": { "multer": "^2.4.0" },
   "scripts": {
     "build": "npm run build -w apps/api && npm run build -w apps/console",
     "test": "npm run test -w apps/api",

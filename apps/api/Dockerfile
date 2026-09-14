@@ -18,6 +18,11 @@ COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
 COPY apps/console/package.json apps/console/
 RUN npm ci
+# Whether redoc hoists to the root or nests under the workspace depends on how its
+# React range meets the console's. It hoists today; it nested before redoc 2.5.4, and
+# a future dependency could nest it again. This keeps the directory present either way,
+# so the runtime COPY below never fails on a resolution that simply went the other way.
+RUN mkdir -p /src/apps/api/node_modules
 
 # ── Build ───────────────────────────────────────────────────────────────────
 FROM deps AS build
@@ -33,8 +38,9 @@ ENV NODE_ENV=production
 # the package root. Flattening dist/ to /app would send both lookups to /.
 WORKDIR /app/apps/api
 COPY --from=deps /src/node_modules /app/node_modules
-# Nested, and not by accident: redoc pins a React older than the console's, so npm
-# cannot hoist it. Dropping this copy costs you /docs at runtime, not at build.
+# The workspace's own node_modules, when npm nests anything there rather than hoisting
+# it (redoc did, before 2.5.4). Empty today; copied regardless, because the alternative
+# is an image that loses a package at runtime whenever resolution changes.
 COPY --from=deps /src/apps/api/node_modules /app/apps/api/node_modules
 COPY --from=build /src/apps/api/dist ./dist
 COPY apps/api/migrations ./migrations
