@@ -10,6 +10,13 @@ const base64Key = z
   .transform((s) => Buffer.from(s, 'base64'))
   .refine((b) => b.length === 32, { message: 'must be 32 bytes, base64 encoded' });
 
+/** An email address that may be absent or left blank in a .env file. */
+const optionalEmail = z
+  .string()
+  .optional()
+  .transform((v) => (v && v.length > 0 ? v : undefined))
+  .pipe(z.string().email().optional());
+
 const schema = z.object({
   PROXIAPAY_ENV: z.enum(['production', 'sandbox']).default('sandbox'),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -20,6 +27,10 @@ const schema = z.object({
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
   CONSOLE_ORIGIN: z.string().url().default('http://localhost:5173'),
   ALERT_EMAIL: z.string().email().default('ops@example.com'),
+  /** Initial delivery address per alert group of spec 8.6, seeded once; the console owns them afterwards. */
+  ALERT_EMAIL_FINANCE: optionalEmail,
+  ALERT_EMAIL_DEVELOPERS: optionalEmail,
+  ALERT_EMAIL_ADMINISTRATORS: optionalEmail,
   SMTP_URL: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   PUBLIC_BASE_URL: z.string().url().optional(),

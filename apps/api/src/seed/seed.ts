@@ -7,9 +7,13 @@ import {
   PAYMENT_METHODS, ROUTE_CATALOGUE, ROUTE_LIMITS,
 } from './catalogue';
 
+export type AlertGroupName = 'Finance' | 'Developers' | 'Administrators';
+
 export interface SeedOptions {
   withRoutes?: boolean;
   environment?: 'production' | 'sandbox';
+  /** Initial email address per alert group; a group already holding one keeps it. */
+  alertAddresses?: Partial<Record<AlertGroupName, string>>;
 }
 
 /** Idempotent: every insert is ON CONFLICT DO NOTHING, so re-running the seed changes nothing already present. */
@@ -45,6 +49,11 @@ export async function seedReferenceData(db: Executor, opts: SeedOptions = {}): P
     await db.insertInto('alert_group').values(g).onConflict((oc) => oc.doNothing()).execute();
   }
   const groups = Object.fromEntries((await db.selectFrom('alert_group').select(['id', 'name']).execute()).map((g) => [g.name, g.id]));
+  // Delivery addresses come from the environment only on first seed; the console owns them afterwards.
+  for (const [name, address] of Object.entries(opts.alertAddresses ?? {}) as [AlertGroupName, string | undefined][]) {
+    if (!address) continue;
+    await db.insertInto('alert_group_address').values({ group_id: groups[name]!, channel: 'email', address }).onConflict((oc) => oc.doNothing()).execute();
+  }
   for (const [category, group, ack] of [
     ['treasury', 'Finance', true], ['reconciliation', 'Finance', false], ['service_health', 'Developers', false], ['security', 'Administrators', true],
   ] as const) {
