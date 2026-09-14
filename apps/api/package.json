@@ -1,0 +1,51 @@
+{
+  "name": "@proxiapay/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "node --watch -r @swc-node/register src/main.ts",
+    "dev:worker": "node --watch -r @swc-node/register src/main.worker.ts",
+    "start": "node dist/main.js",
+    "start:worker": "node dist/main.worker.js",
+    "migrate": "tsx src/cli/migrate.ts",
+    "seed": "tsx src/cli/seed.ts",
+    "openapi": "tsx src/cli/openapi.ts",
+    "admin:create": "node -r @swc-node/register src/cli/create-admin.ts",
+    "db:codegen": "kysely-codegen --url \"$DATABASE_URL\" --out-file src/db/schema.generated.ts --exclude-pattern schema_migrations && sed -i \"s|export type Int8 = ColumnType<string, bigint \\\\| number \\\\| string, bigint \\\\| number \\\\| string>;|// BIGINT columns are parsed to safe integers by pg-types.ts; see configurePgTypes.\\\\nexport type Int8 = ColumnType<number, number, number>;|\" src/db/schema.generated.ts",
+    "smoke": "node -r @swc-node/register src/cli/smoke.ts"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.1.0",
+    "@nestjs/core": "^11.1.0",
+    "@nestjs/platform-express": "^11.1.0",
+    "argon2": "^0.44.0",
+    "cookie": "^1.0.2",
+    "ipaddr.js": "^2.2.0",
+    "kysely": "^0.29.5",
+    "pg": "^8.16.0",
+    "pino": "^9.7.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@swc-node/register": "^1.12.1",
+    "@swc/core": "^1.16.2",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.15.0",
+    "@types/pg": "^8.15.0",
+    "eslint": "^9.30.0",
+    "kysely-codegen": "^0.20.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "typescript-eslint": "^8.35.0",
+    "unplugin-swc": "^1.6.0",
+    "vitest": "^3.2.0"
+  }
+}
