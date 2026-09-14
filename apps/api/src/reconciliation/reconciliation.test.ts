@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createTestContext, type TestContext } from '../test/context';
 import { ProjectAuthService, type ProjectPrincipal } from '../project-auth/project-auth.service';
@@ -11,7 +13,7 @@ import { StatementService } from './statement.service';
 import { ReconciliationService } from './reconciliation.service';
 import { DiscrepancyService } from './discrepancy.service';
 import { NotificationService } from '../notifications/notification.service';
-import { parseCsv } from './statement-format';
+import { normaliseStatementStatus, parseCsv, parseStatement } from './statement-format';
 
 let t: TestContext;
 let auth: ProjectAuthService, previews: PreviewService, transactions: TransactionService, submission: SubmissionService, status: StatusService, ledger: LedgerService;
@@ -47,7 +49,8 @@ async function collect(msisdn: string, reference: string) {
 }
 
 const csv = (rows: { ref: string; ext: string; status: string; amount: number; fee: number }[]) =>
-  ['paymentReference,externalReference,transactionType,amount,fees,currencyCode,status,createdAt', ...rows.map((r) => `${r.ref},${r.ext},payin,${r.amount},${r.fee},XAF,${r.status},${new Date().toISOString()}`)].join('\n');
+  // The column names of the provider's real export (see fixtures/ejara-export-2026-09-14.csv), reduced to what the comparison reads.
+  ['internalReference,externalTransactionReference,transactionType,rawAmount,globalFees,currency,paymentStatus,validatedAt', ...rows.map((r) => `${r.ref},${r.ext},payin,${r.amount},${r.fee},XAF,${r.status},${new Date().toISOString()}`)].join('\n');
 
 describe('statement import', () => {
   it('parses CSV with quotes and rejects duplicates by checksum', async () => {
@@ -58,6 +61,22 @@ describe('statement import', () => {
     expect(r.import.row_count).toBe(1);
     expect(r.period_disagrees).toBe(false);
     await expect(statements.upload({ providerAccountId, filename: 's2.csv', content, uploadedBy: project.adminId, ...period })).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
+  it("reads the provider's real export: all 31 columns, quoted JSON, internalReference as the reference", () => {
+    // Two confirmed 100 XAF collections from the test box on 2026-09-14, phone number and IP anonymised.
+    const text = readFileSync(join(__dirname, 'fixtures', 'ejara-export-2026-09-14.csv'), 'utf8');
+    const out = parseStatement('ejara_csv_v1', text, (c) => (c === 'XAF' ? 0 : undefined));
+    expect(out.rejected).toEqual([]);
+    expect(out.rows.map((r) => r.providerReference)).toEqual(['ACCT-EJARAX1l5qc11ighmmu1941c4', 'ACCT-EJARAX1l5qc11ighmmu191rff']);
+    for (const r of out.rows) {
+      expect(r).toMatchObject({ direction: 'collection', amount: 100, fee: 2, currency: 'XAF', status: 'confirmed' });
+      expect(r.externalReference).toMatch(/^probe_\d+$/);
+      expect(r.raw.paidamount).toBe('102'); // what the payer was charged: principal plus the provider's fee
+      expect(r.raw.paymentmode).toBe('OM');
+    }
+    expect(out.rows[0]!.occurredAt).toEqual(new Date('2026-09-14T13:01:00.027Z')); // validatedAt, not dateCreated
+    expect(normaliseStatementStatus(out.rows[0]!.status)).toBe('succeeded');
   });
 });
 

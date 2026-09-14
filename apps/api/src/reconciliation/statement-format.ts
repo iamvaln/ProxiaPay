@@ -40,23 +40,37 @@ export function parseCsv(text: string): string[][] {
 }
 
 /**
- * Statement formats declared by adapters (spec 9.3, 11). `ejara_csv_v1` is the export of the
- * provider's console as understood at integration; header names are matched case-insensitively.
+ * Statement formats declared by adapters (spec 9.3, 11). `ejara_csv_v1` is the transactions export
+ * of the provider's partner portal, as observed on 2026-09-14; header names are matched
+ * case-insensitively. In each column the observed name comes first and the names assumed before
+ * the export was seen follow as fallbacks.
+ *
+ * Observed columns: id, paymentStatus, currency, rawAmount, paidAmount, customerUsername,
+ * globalFees, globalFeesPolicy, globalFeesPolicyValue, accountId, walletId, wallet (JSON),
+ * ejaraAccountConfigId, validationChannel, validatedAt, providerCurrency, countryShortCode,
+ * country, transactionType, paymentMode, customerPhoneNumber, isWebhookSent, failureReason,
+ * transactionReason, customerIpAddress, internalReference, externalTransactionReference,
+ * providerReference, operatorReference, dateCreated, dateUpdated.
+ *
+ * internalReference is the ACCT-… identifier initiation returns, which is what an attempt stores
+ * as its provider reference; providerReference and operatorReference are the downstream operator's
+ * ids. rawAmount is the principal and paidAmount what the payer was charged, fee included.
  */
 const FORMATS: Record<string, (rows: string[][], exponentOf: (currency: string) => number | undefined) => ParseOutcome> = {
   ejara_csv_v1(rows, exponentOf) {
     const header = (rows[0] ?? []).map((h) => h.trim().toLowerCase());
     const col = (names: string[]) => names.map((n) => header.indexOf(n.toLowerCase())).find((i) => i >= 0) ?? -1;
-    const ref = col(['paymentReference', 'reference', 'payment_reference']);
-    const ext = col(['externalReference', 'external_reference']);
+    const ref = col(['internalReference', 'paymentReference', 'reference', 'payment_reference']);
+    const ext = col(['externalTransactionReference', 'externalReference', 'external_reference']);
     const type = col(['transactionType', 'type', 'transaction_type']);
-    const amount = col(['amount', 'rawAmount']);
-    const fees = col(['fees', 'fee']);
-    const currency = col(['currencyCode', 'currency']);
-    const status = col(['status']);
-    const created = col(['createdAt', 'date', 'created_at', 'timestamp']);
+    const amount = col(['rawAmount', 'amount']);
+    const fees = col(['globalFees', 'fees', 'fee']);
+    const currency = col(['currency', 'currencyCode']);
+    const status = col(['paymentStatus', 'status']);
+    const validated = col(['validatedAt']);
+    const created = col(['dateCreated', 'createdAt', 'date', 'created_at', 'timestamp']);
     const out: ParseOutcome = { rows: [], rejected: [] };
-    if (ref < 0) { out.rejected.push({ rowNumber: 1, reason: 'header lacks a paymentReference column' }); return out; }
+    if (ref < 0) { out.rejected.push({ rowNumber: 1, reason: 'header lacks an internalReference column' }); return out; }
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i]!;
       const rowNumber = i + 1;
@@ -76,7 +90,8 @@ const FORMATS: Record<string, (rows: string[][], exponentOf: (currency: string) 
       if (Number.isNaN(amt) || Number.isNaN(fee)) { out.rejected.push({ rowNumber, reason: 'amount or fee is not numeric' }); continue; }
       const t = get(type).toLowerCase();
       const direction: Direction | null = t === 'payin' || t === 'collection' ? 'collection' : t === 'payout' || t === 'disbursement' ? 'disbursement' : null;
-      const when = get(created);
+      // A settled row carries its validation time; one still pending only has its creation time.
+      const when = get(validated) || get(created);
       const occurredAt = when ? new Date(when) : null;
       if (occurredAt && Number.isNaN(occurredAt.getTime())) { out.rejected.push({ rowNumber, reason: `unreadable date "${when}"` }); continue; }
       const raw: Record<string, string> = {};
