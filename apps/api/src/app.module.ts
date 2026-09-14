@@ -7,9 +7,10 @@ import { ProjectApiModule } from './project-api/project-api.module';
 import { ConsoleApiModule } from './console-api/console-api.module';
 import { ProviderWebhookModule } from './providers/provider-webhook.module';
 import { DocsModule } from './docs/docs.module';
+import { HealthzModule } from './health/healthz.module';
 
 @Module({
-  imports: [CoreModule, ProjectApiModule, ConsoleApiModule, ProviderWebhookModule, DocsModule],
+  imports: [CoreModule, ProjectApiModule, ConsoleApiModule, ProviderWebhookModule, DocsModule, HealthzModule],
   providers: [{ provide: APP_FILTER, useClass: PlatformExceptionFilter }],
 })
 export class AppModule implements NestModule {
