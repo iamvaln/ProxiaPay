@@ -130,10 +130,17 @@ export class EjaraAdapter implements ProviderAdapter {
       if (res.timedOut) throw new ProviderUnavailableError('ejara: wallets timed out');
       const body = res.body as { data?: unknown };
       await ctx.recordPayload('outbound_response', 'wallets', { http_status: res.status, body });
-      const list = Array.isArray(body?.data) ? body.data as Record<string, unknown>[] : [];
+      // Observed against the test box: the page sits inside the envelope, as
+      // { data: { totalCount, data: [...], count } }. The flat form is kept as a fallback.
+      const page = body?.data as { data?: unknown } | undefined;
+      const list = Array.isArray(page?.data) ? page.data as Record<string, unknown>[]
+        : Array.isArray(body?.data) ? body.data as Record<string, unknown>[]
+        : [];
       for (const w of list) {
-        const country = firstString(w, ['countryCode', 'country']);
-        const currency = firstString(w, ['currencyCode', 'currency']);
+        // Observed: country and currency arrive as objects, not codes —
+        // { shortCode: 'CM', name: 'Cameroon' } and { isoCode: 'XAF' }.
+        const country = firstString(w, ['countryCode', 'country']) ?? nestedString(w.country, ['shortCode', 'code', 'isoCode']);
+        const currency = firstString(w, ['currencyCode', 'currency']) ?? nestedString(w.currency, ['isoCode', 'code']);
         const balance = w.balance ?? w.availableBalance;
         if (!country || !currency || balance == null) continue;
         out.push({ country, currency, direction: serviceType, balance: fromProviderAmount(balance, 0), providerWalletId: firstString(w, ['id', 'walletId']) });
@@ -163,6 +170,11 @@ function mapFailure(body: EjaraResponse | undefined, data: Record<string, unknow
   if (message.includes('limit')) return 'WALLET_LIMIT_EXCEEDED';
   if (message.includes('inactive') || message.includes('blocked')) return 'WALLET_INACTIVE';
   return 'PROVIDER_REJECTED';
+}
+
+/** Reads a code out of a nested object the provider sends in place of a plain string. */
+function nestedString(value: unknown, keys: string[]): string | undefined {
+  return value && typeof value === 'object' ? firstString(value as Record<string, unknown>, keys) : undefined;
 }
 
 function firstString(obj: Record<string, unknown>, keys: string[]): string | undefined {
