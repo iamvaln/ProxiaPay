@@ -49,12 +49,7 @@ The integration tests exercise the ledger invariants, the collection and disburs
 npm run openapi -w apps/api -- --env sandbox --out openapi.sandbox.json
 ```
 
-The running API serves the same document at `/docs/openapi.json`, and the integration guide — onboarding steps, notification verification, sandbox behaviour, go-live checklist, then the full reference — at `/docs`. Both are built at start from the request schemas the process validates with, so they describe the version answering.
-
-```sh
-```
-
-The document is generated from the request schemas the implementation validates with (spec 7.5).
+The running API serves the same document at `/docs/openapi.json`, and the integration guide — onboarding steps, notification verification, sandbox behaviour, go-live checklist, then the full reference — at `/docs`. Both are built at start from the request schemas the process validates with (spec 7.5), so they describe the version answering.
 
 ## Where things are
 
