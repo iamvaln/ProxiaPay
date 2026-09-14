@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ApiError, post } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import type { Lang } from '../lib/i18n';
+import { QrCode } from '../components/QrCode';
 
 /** Sign-in (console spec 4.1): the language is offered before authentication; failures name neither field. */
 export function SignInPage() {
@@ -58,8 +59,9 @@ export function SignInPage() {
           {stage === 'enrol' && enrol && (
             <div>
               <p className="small">{t('second.enrol')}</p>
+              <QrCode value={enrol.uri} alt={t('second.enrol_qr_alt')} />
+              <p className="small muted">{t('second.enrol_manual')}</p>
               <pre>{enrol.secret}</pre>
-              <p className="small muted" style={{ wordBreak: 'break-all' }}>{enrol.uri}</p>
             </div>
           )}
           <label>{t('second.code')}<input autoFocus inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} required /></label>
