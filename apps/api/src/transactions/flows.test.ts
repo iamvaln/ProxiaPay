@@ -56,7 +56,8 @@ describe('collection', () => {
     await submission.submit(transactionId);
     let api = await reader.apiById(t.db, transactionId, { revealMsisdn: true, revealAction: true });
     expect(api.state).toBe('processing');
-    expect(api.provider_reference).toMatch(/^SIM-ok-/);
+    // The provider adds its 2 percent on top, so it is sent 1005, not the 1000 requested: 1005 + 20 = 1025, the quote.
+    expect(api.provider_reference).toMatch(/^SIM-ok-c-1005-XAF-/);
     // Repeating the confirmation returns the same transaction.
     const again = await transactions.confirm(principal, p.reference, 'collection');
     expect(again).toEqual({ transactionId, created: false });
@@ -72,6 +73,24 @@ describe('collection', () => {
     const events = await t.db.selectFrom('transaction_event').select(['prior_state', 'new_state', 'source']).where('transaction_id', '=', transactionId).orderBy('id').execute();
     expect(events.map((e) => e.new_state)).toEqual(['created', 'submitted', 'processing', 'succeeded']);
     expect(events[3]!.source).toBe('status_check');
+  });
+
+  it('never debits the payer above the quote when the provider\'s rounding cannot reach it, and books what was debited', async () => {
+    // 124 requested is quoted 127 (2.5 percent, half-up). The simulator's 2 percent half-up makes 126
+    // and 128 reachable but not 127 — the shape of the live Ejara case, where 103 could not be hit.
+    const p = await previews.create(principal, { ...collection('677123456', 'order-unreachable'), amount: 124 });
+    expect(p.charged_amount).toBe(127);
+    const { transactionId } = await transactions.confirm(principal, p.reference, 'collection');
+    await submission.submit(transactionId);
+    let api = await reader.apiById(t.db, transactionId, { revealMsisdn: true, revealAction: true });
+    expect(api.provider_reference).toMatch(/^SIM-ok-c-124-XAF-/);
+    await t.db.updateTable('transaction').set({ next_status_check_at: new Date(0) }).execute();
+    await status.sweep();
+    api = await reader.apiById(t.db, transactionId, { revealMsisdn: true, revealAction: true });
+    expect(api.state).toBe('succeeded');
+    expect(api.charged_amount).toBe(126); // what the payer was actually debited, one under the quote
+    expect(await ledger.balanceByKey(t.db, { type: 'float', providerAccountId: await providerAccount(), countryCode: 'CM', currency: 'XAF', direction: 'collection' })).toBe(124);
+    expect(await ledger.balanceByKey(t.db, { type: 'processing_revenue', currency: 'XAF' })).toBe(2); // 3 quoted, 1 not collected
   });
 
   it('rejects malformed and foreign numbers, reference reuse, and similar pending payments', async () => {

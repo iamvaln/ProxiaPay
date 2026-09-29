@@ -98,6 +98,38 @@ export function subtract(a: number, b: number): number {
   return assertMinorUnits(a) - assertMinorUnits(b);
 }
 
+/** How a provider rounds the fee it adds on top. Ejara rounds up on collections; the simulator rounds half-up. */
+export type ProviderRounding = 'ceil' | 'half_up';
+
+function providerFee(amount: number, terms: FeeTerms, rounding: ProviderRounding): number {
+  if (rounding === 'half_up') return computeFee(amount, terms).amount;
+  const product = amount * terms.bps;
+  if (!Number.isSafeInteger(product)) throw new RangeError('fee computation overflows the safe integer range');
+  const whole = Math.floor(product / 10000);
+  return (product - whole * 10000 > 0 ? whole + 1 : whole) + terms.fixed;
+}
+
+/**
+ * For a provider that adds its fee on top of the amount it is sent: the largest amount A such that
+ * A + fee(A) does not exceed `target`, which is what the payer was quoted. Sending A makes the payer's
+ * debit land on the quote exactly where the provider's rounding allows it, and one unit under where it
+ * does not — at 2 percent rounded up, 102 and 104 are reachable and 103 is not. The payer is never
+ * debited more than quoted; the shortfall, when there is one, comes out of the platform's margin.
+ */
+export function providerAmountWithin(target: number, terms: FeeTerms, rounding: ProviderRounding): { amount: number; debit: number; fee: number } {
+  assertMinorUnits(target, 'target');
+  assertRate(terms.bps, 'bps');
+  assertMinorUnits(terms.fixed, 'fixed');
+  const debitOf = (a: number) => a + providerFee(a, terms, rounding);
+  // A + A·bps/10000 + fixed ≤ target gives the starting point; rounding moves the answer by a unit or two.
+  let amount = Math.floor(((target - terms.fixed) * 10000) / (10000 + terms.bps));
+  while (amount > 0 && debitOf(amount) > target) amount -= 1;
+  while (debitOf(amount + 1) <= target) amount += 1;
+  if (amount <= 0) throw new RangeError('the provider fee consumes the whole quote');
+  const fee = providerFee(amount, terms, rounding);
+  return { amount, debit: amount + fee, fee };
+}
+
 /** Margin is computed, never stored: processing fee less the actual provider fee, and may be negative. */
 export function margin(processingFee: number, actualProviderFee: number | null): number | null {
   if (actualProviderFee == null) return null;

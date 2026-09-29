@@ -188,13 +188,14 @@ export class TransactionService {
     const settled = txn.expected_settled_amount;
     const floatAccount = await this.floatAccountFor(tx, txn, r.providerAccountId);
     if (txn.direction === 'collection') {
-      await this.ledger.postCollection(tx, { transactionId: txn.id, projectId: txn.project_id, currency: txn.currency_code, floatAccountId: floatAccount, fees: this.fees(txn, actualFee) });
+      await this.ledger.postCollection(tx, { transactionId: txn.id, projectId: txn.project_id, currency: txn.currency_code, floatAccountId: floatAccount, fees: { ...this.fees(txn, actualFee), counterpartyDebit: r.chargedAmount ?? null } });
     } else {
       await this.ledger.settleDisbursement(tx, { transactionId: txn.id, projectId: txn.project_id, currency: txn.currency_code, floatAccountId: floatAccount, fees: this.fees(txn, actualFee), from: txn.state === 'undetermined' ? 'suspense' : 'reserved' });
     }
     await tx.updateTable('transaction').set({
       state: 'succeeded', settled_amount: settled, actual_provider_fee: actualFee, terminal_at: sql`now()`, next_status_check_at: null, action_url_ciphertext: null,
-      ...(r.chargedAmount != null && r.chargedAmount !== txn.charged_amount ? {} : {}),
+      // A collection records what the payer was actually debited; the quote stays on the preview.
+      ...(txn.direction === 'collection' && r.chargedAmount != null ? { charged_amount: r.chargedAmount } : {}),
       ...(r.discrepancyId ? { reconciliation_status: 'corrected' } : {}),
     }).where('id', '=', txn.id).execute();
     if (r.attemptId) await tx.updateTable('transaction_attempt').set({ state: 'succeeded', actual_provider_fee: actualFee, operator_reference: r.operatorReference ?? null, ended_at: sql`now()`, response_payload_id: r.payloadId ?? null }).where('id', '=', r.attemptId).execute();

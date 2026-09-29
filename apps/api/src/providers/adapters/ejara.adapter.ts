@@ -27,7 +27,7 @@ export class EjaraAdapter implements ProviderAdapter {
   private readonly tokens = new Map<string, { token: string; expiresAt: number }>();
 
   capabilities(): AdapterCapabilities {
-    return { supportsTransfers: false, supportsListing: false, hasTestEnvironment: false, tokenModel: 'concurrent', statementFormat: 'ejara_csv_v1', supportsCodeSubmission: false };
+    return { supportsTransfers: false, supportsListing: false, hasTestEnvironment: false, tokenModel: 'concurrent', statementFormat: 'ejara_csv_v1', supportsCodeSubmission: false, collectionFeeRounding: 'ceil' };
   }
 
   private async token(ctx: AdapterContext): Promise<string> {

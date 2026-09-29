@@ -4,6 +4,7 @@ import type { FailureReason } from '../common/errors';
 import { CryptoService } from '../crypto/crypto.service';
 import { dbNow, DB_TOKEN, type Db } from '../db/database';
 import { log } from '../logging/logger';
+import { providerAmountWithin } from '../money/money';
 import { RouteResolver } from '../routes/route-resolver';
 import { SettingsService } from '../settings/settings.service';
 import { TransactionService } from '../transactions/transaction.service';
@@ -88,8 +89,15 @@ export class SubmissionService {
       const route = await tx.selectFrom('route').selectAll().where('id', '=', txn.route_id).executeTakeFirstOrThrow();
       const currency = await tx.selectFrom('currency').select('exponent').where('code', '=', txn.currency_code).executeTakeFirstOrThrow();
       const { ctx, adapterKey } = await this.accounts.context(tx, binding.provider_account_id, txn.correlation_id, txn.id);
+      // A collection's provider adds its fee on top of what it is sent, so it is sent the largest amount
+      // whose debit stays within the payer's quote — never the requested amount, which would leave the
+      // platform's own fee uncollected. Disbursements are unchanged until a live payout shows the
+      // provider's semantics there.
+      const amount = txn.direction === 'collection'
+        ? providerAmountWithin(txn.charged_amount, { bps: binding.expected_fee_bps, fixed: binding.expected_fee_fixed }, this.accounts.adapter(adapterKey).capabilities().collectionFeeRounding).amount
+        : txn.expected_settled_amount;
       const req = {
-        transactionReference: txn.reference, direction: txn.direction as 'collection' | 'disbursement', amount: txn.direction === 'collection' ? txn.requested_amount : txn.expected_settled_amount,
+        transactionReference: txn.reference, direction: txn.direction as 'collection' | 'disbursement', amount,
         currency: txn.currency_code, currencyExponent: currency.exponent, country: route.country_code, paymentMethod: route.payment_method_code,
         msisdn: this.crypto.openString(txn.msisdn_ciphertext, 'msisdn'), counterpartyName: txn.counterparty_name, counterpartyEmail: txn.counterparty_email,
       };

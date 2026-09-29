@@ -29,7 +29,7 @@ export class SimulatorAdapter implements ProviderAdapter {
   static settleAfterMs = 2000;
 
   capabilities(): AdapterCapabilities {
-    return { supportsTransfers: false, supportsListing: false, hasTestEnvironment: true, tokenModel: 'concurrent', statementFormat: 'ejara_csv_v1', supportsCodeSubmission: true };
+    return { supportsTransfers: false, supportsListing: false, hasTestEnvironment: true, tokenModel: 'concurrent', statementFormat: 'ejara_csv_v1', supportsCodeSubmission: true, collectionFeeRounding: 'half_up' };
   }
 
   async submit(ctx: AdapterContext, req: SubmitRequest): Promise<SubmitResult> {

@@ -1,5 +1,5 @@
 import type { FailureReason } from '../common/errors';
-import type { Direction } from '../money/money';
+import type { Direction, ProviderRounding } from '../money/money';
 
 /** The internal contract every provider presents (spec 11). */
 export interface AdapterCapabilities {
@@ -10,6 +10,12 @@ export interface AdapterCapabilities {
   tokenModel: 'concurrent' | 'single';
   statementFormat?: string;
   supportsCodeSubmission: boolean;
+  /**
+   * How the provider rounds the fee it adds on top of a collection amount. The platform sends the
+   * largest amount whose debit stays within the payer's quote (money.providerAmountWithin), so this
+   * decides where the payer's debit lands. Declared per provider: each rounds its own way.
+   */
+  collectionFeeRounding: ProviderRounding;
 }
 
 export interface AdapterAccount {

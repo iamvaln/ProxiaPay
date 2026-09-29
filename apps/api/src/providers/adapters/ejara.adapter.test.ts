@@ -85,6 +85,12 @@ const WEBHOOK_CONFIRMED = {
   },
 };
 
+describe('Ejara fee model', () => {
+  it('declares that it rounds its on-top fee up on collections, as observed on the prodbox', () => {
+    expect(new EjaraAdapter().capabilities().collectionFeeRounding).toBe('ceil');
+  });
+});
+
 describe('Ejara webhook as the prodbox sends it', () => {
   const parse = (body: unknown) => new EjaraAdapter().parseNotification(ctx(), {}, Buffer.from(JSON.stringify(body)));
 
