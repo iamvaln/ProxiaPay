@@ -1,0 +1,471 @@
+{
+  "info": {
+    "name": "ProxiaPay — Project API (sandbox)",
+    "description": "The nine project-interface operations, in the order an integration uses them, plus the provider webhook.\n\nRun **Auth → Exchange credentials** first: it stores `access_token`. Each preview stores `preview_reference`; each confirm stores `transaction_reference`, so requests chain without copy-paste.\n\nFull reference: {{base_url}}/docs\n\n⚠️ The CM/XAF/MOMO collection route is currently bound to Ejara's **prodbox**: confirming a collection there debits a real phone.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Exchange credentials for a token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/auth/tokens",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "tokens"
+              ]
+            },
+            "description": "Returns a short-lived bearer token. Stored automatically in `access_token`.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_key\": \"{{client_key}}\",\n  \"client_secret\": \"{{client_secret}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "pm.test('token issued', () => pm.expect(b.access_token).to.be.a('string'));",
+                  "pm.environment.set('access_token', b.access_token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Account",
+      "item": [
+        {
+          "name": "Retrieve settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/settings",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "settings"
+              ]
+            },
+            "description": "Routes this project may use and their fees. Supports If-None-Match with the returned ETag."
+          }
+        },
+        {
+          "name": "Retrieve balances",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/balances",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "balances"
+              ]
+            },
+            "description": "Available and reserved balance per currency."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Collections",
+      "item": [
+        {
+          "name": "1. Preview a collection",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/previews",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "previews"
+              ]
+            },
+            "description": "A quote: fees, charged and settled amounts. Moves no money. Expires after 15 minutes. `amount` is an integer in minor units.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"direction\": \"collection\",\n  \"amount\": {{amount}},\n  \"currency\": \"XAF\",\n  \"country\": \"CM\",\n  \"payment_method\": \"MOMO\",\n  \"counterparty\": {\n    \"msisdn\": \"{{msisdn}}\",\n    \"name\": \"Test Payer\"\n  },\n  \"reference\": \"{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "pm.test('preview created', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('preview_reference', b.reference);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Confirm the collection",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/collections",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "collections"
+              ]
+            },
+            "description": "Submits to the provider. Repeating it returns the same transaction (200) rather than creating a second one.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"preview_reference\": \"{{preview_reference}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "pm.test('submitted', () => pm.expect([200,201]).to.include(pm.response.code));",
+                  "pm.environment.set('transaction_reference', b.reference);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Disbursements",
+      "item": [
+        {
+          "name": "1. Preview a disbursement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/previews",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "previews"
+              ]
+            },
+            "description": "Checks balance and float cover and reserves the amount.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"direction\": \"disbursement\",\n  \"amount\": {{amount}},\n  \"currency\": \"XAF\",\n  \"country\": \"CM\",\n  \"payment_method\": \"MOMO\",\n  \"counterparty\": {\n    \"msisdn\": \"{{msisdn}}\",\n    \"name\": \"Test Recipient\"\n  },\n  \"reference\": \"{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "pm.environment.set('preview_reference', b.reference);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Confirm the disbursement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/disbursements",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "disbursements"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"preview_reference\": \"{{preview_reference}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "pm.environment.set('transaction_reference', b.reference);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Transactions",
+      "item": [
+        {
+          "name": "Retrieve a transaction",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions/{{transaction_reference}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions",
+                "{{transaction_reference}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "List transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions?limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Filters: project_reference, provider_reference, operator_reference, state, direction, country, payment_method, currency, created_after, created_before, cursor."
+          }
+        },
+        {
+          "name": "Submit a one-time code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/transactions/{{transaction_reference}}/code",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "transactions",
+                "{{transaction_reference}}",
+                "code"
+              ]
+            },
+            "description": "Only for routes that require the payer's one-time code.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Provider webhook (simulate Ejara)",
+      "item": [
+        {
+          "name": "Ejara notification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/providers/{{ejara_account_id}}/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "providers",
+                "{{ejara_account_id}}",
+                "notifications"
+              ]
+            },
+            "description": "Mimics Ejara calling the platform. Always answers 200 {received:true} — the response never says whether it matched. Check the transaction instead. It only triggers a status check; it cannot move money on its own.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"payment.confirmed\",\n  \"data\": {\n    \"paymentReference\": \"ACCT-EJARA-example\",\n    \"externalReference\": \"{{transaction_reference}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Service",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/healthz",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "OpenAPI document",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/docs/openapi.json",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "docs",
+                "openapi.json"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
