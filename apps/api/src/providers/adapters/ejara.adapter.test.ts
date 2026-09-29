@@ -66,3 +66,37 @@ describe('Ejara adapter against recorded answers', () => {
     await expect(new EjaraAdapter().wallets(ctx())).rejects.toThrow('authentication failed (401 INVALID_API_CLIENT: Client key is invalid)');
   });
 });
+
+// Ejara's webhook as it actually arrived from the prodbox on 2026-09-29, for the first
+// real collection. The parser was written against field names Ejara does not send, so
+// this notification was answered 200 and silently dropped; the transaction resolved only
+// because the status sweep reached it independently.
+const WEBHOOK_CONFIRMED = {
+  event: 'payment.confirmed',
+  sentAt: '2026-09-29T02:34:00.744Z',
+  data: {
+    fees: '2', feeValue: '0.02', accountId: 17, feePolicy: 'percentage', paymentId: 1024421, paidAmount: '102',
+    featureCode: 'ACT', validatedAt: '2026-09-29T02:34:00.730Z', paymentStatus: 'confirmed', transactionType: 'payin',
+    providerCurrency: 'XAF', transactionCurrency: 'XAF', transactionReason: null,
+    internalReference: 'ACCT-EJARAX1l5pjm14l8xmum2ayvj',
+    operatorReference: 'c1080f0e-8657-4669-9c1a-628a5bb0b8b5',
+    providerReference: '81bfb6f8-6227-4d23-ac4c-dbae154c2b47',
+    externalTransactionReference: 'txn_M3NG51R7HNS0A5JR3GFM6VQX',
+  },
+};
+
+describe('Ejara webhook as the prodbox sends it', () => {
+  const parse = (body: unknown) => new EjaraAdapter().parseNotification(ctx(), {}, Buffer.from(JSON.stringify(body)));
+
+  it('matches on internalReference, the id initiation returned, and never on providerReference', async () => {
+    const event = await parse(WEBHOOK_CONFIRMED);
+    // providerReference is the operator side's own id; matching on it would look right and never find the attempt.
+    expect(event?.providerReference).toBe('ACCT-EJARAX1l5pjm14l8xmum2ayvj');
+    expect(event?.eventKey).toBe('payment.confirmed');
+  });
+
+  it('carries our own transaction reference from externalTransactionReference', async () => {
+    const event = await parse(WEBHOOK_CONFIRMED);
+    expect(event?.externalReference).toBe('txn_M3NG51R7HNS0A5JR3GFM6VQX');
+  });
+});

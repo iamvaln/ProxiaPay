@@ -124,9 +124,12 @@ export class EjaraAdapter implements ProviderAdapter {
     try {
       const body = JSON.parse(rawBody.toString('utf8')) as { event?: string; data?: Record<string, unknown> };
       const data = body.data ?? {};
-      const providerReference = firstString(data, ['paymentReference', 'reference', 'id']);
+      // Observed from the prodbox: our reference arrives as internalReference — the id initiation
+      // returned as internalPaymentId — and ours as externalTransactionReference. data.providerReference
+      // is the operator's own id and must never be matched on: it looks right and finds nothing.
+      const providerReference = firstString(data, ['internalReference', 'internalPaymentId', 'paymentReference', 'reference']);
       if (!providerReference || !body.event) return null;
-      return { providerReference, externalReference: firstString(data, ['externalReference']), eventKey: body.event, asserts: body.event.endsWith('.confirmed') ? 'succeeded' : body.event.endsWith('.rejected') ? 'failed' : undefined };
+      return { providerReference, externalReference: firstString(data, ['externalTransactionReference', 'externalReference']), eventKey: body.event, asserts: body.event.endsWith('.confirmed') ? 'succeeded' : body.event.endsWith('.rejected') ? 'failed' : undefined };
     } catch {
       return null;
     }
