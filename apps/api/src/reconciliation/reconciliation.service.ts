@@ -162,22 +162,64 @@ export class ReconciliationService {
     return ours.length + records.length;
   }
 
-  private async compareWallets(providerAccountId: string, findings: Finding[]): Promise<void> {
+  /** Each provider wallet beside the ledger float it should equal; null when the provider cannot be read. */
+  private async walletsAgainstFloat(providerAccountId: string): Promise<{ w: WalletBalance; accountId: string | null; ledgerBalance: number }[] | null> {
     let wallets: WalletBalance[];
     try {
       const { ctx, adapterKey } = await this.accounts.context(this.db, providerAccountId, newCorrelationId());
       wallets = await this.accounts.adapter(adapterKey).wallets(ctx);
     } catch (e) {
       this.logger.warn({ provider_account: providerAccountId, err: (e as Error).message }, 'wallet balances unavailable; float drift not compared');
-      return;
+      return null;
     }
+    const out: { w: WalletBalance; accountId: string | null; ledgerBalance: number }[] = [];
     for (const w of wallets) {
       const accountId = await this.ledger.findAccount(this.db, { type: 'float', providerAccountId, countryCode: w.country, currency: w.currency, direction: w.direction });
-      const ledgerBalance = accountId ? await this.ledger.balance(this.db, accountId) : 0;
+      out.push({ w, accountId: accountId ?? null, ledgerBalance: accountId ? await this.ledger.balance(this.db, accountId) : 0 });
+    }
+    return out;
+  }
+
+  private async compareWallets(providerAccountId: string, findings: Finding[]): Promise<void> {
+    for (const { w, accountId, ledgerBalance } of (await this.walletsAgainstFloat(providerAccountId)) ?? []) {
       if (ledgerBalance !== w.balance) {
         findings.push({ type: 'float_drift', subjectType: 'float_account', subjectReference: `${w.country}/${w.currency}/${w.direction}`, floatAccountId: accountId ?? null, expected: { balance: ledgerBalance }, observed: { balance: w.balance, wallet: w.providerWalletId ?? null }, difference: subtract(w.balance, ledgerBalance), currency: w.currency });
       }
     }
+  }
+
+  /**
+   * Float drift, measured continuously rather than only inside a reconciliation run. A provider that
+   * cannot list its transactions is reconciled from statements someone uploads, and until then its
+   * float was never compared with the money — so a ledger three units above the provider's wallet
+   * went unnoticed on the first live collections. Each wallet is compared with its float and raises,
+   * updates or clears an alert. An account with a payment in flight is skipped: the provider credits
+   * its wallet when the payer confirms, a few seconds before the platform posts, and comparing in that
+   * gap would report drift that is only timing.
+   */
+  async checkFloatDrift(): Promise<{ checked: number; skipped: number; drifting: number }> {
+    const accounts = await this.db.selectFrom('provider_account').select('id').where('status', '<>', 'suspended').execute();
+    let checked = 0, skipped = 0, drifting = 0;
+    for (const a of accounts) {
+      const inFlight = await this.db.selectFrom('transaction_attempt as ta').innerJoin('transaction as t', 't.id', 'ta.transaction_id').select('t.id')
+        .where('ta.provider_account_id', '=', a.id).where('t.state', 'in', ['submitted', 'processing', 'action_required']).limit(1).executeTakeFirst();
+      if (inFlight) { skipped++; continue; }
+      const compared = await this.walletsAgainstFloat(a.id);
+      if (!compared) { skipped++; continue; }
+      checked++;
+      for (const { w, accountId, ledgerBalance } of compared) {
+        const fingerprint = `float_drift:${a.id}:${w.country}/${w.currency}/${w.direction}`;
+        if (ledgerBalance === w.balance) { await this.alerts.clear(fingerprint); continue; }
+        drifting++;
+        await this.alerts.raise({
+          category: 'reconciliation', severity: 'warning', subjectType: 'float_account', subjectReference: `${w.country}/${w.currency}/${w.direction}`, fingerprint,
+          title: 'Float differs from the provider wallet',
+          detail: { provider_account_id: a.id, float_account_id: accountId, country: w.country, currency: w.currency, direction: w.direction, provider_balance: w.balance, ledger_balance: ledgerBalance, difference: subtract(w.balance, ledgerBalance) },
+          actionReference: '/treasury',
+        });
+      }
+    }
+    return { checked, skipped, drifting };
   }
 
   private async staleUndetermined(providerAccountId: string, findings: Finding[]): Promise<void> {

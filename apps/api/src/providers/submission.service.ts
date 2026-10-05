@@ -93,9 +93,15 @@ export class SubmissionService {
       // whose debit stays within the payer's quote — never the requested amount, which would leave the
       // platform's own fee uncollected. Disbursements are unchanged until a live payout shows the
       // provider's semantics there.
-      const amount = txn.direction === 'collection'
-        ? providerAmountWithin(txn.charged_amount, { bps: binding.expected_fee_bps, fixed: binding.expected_fee_fixed }, this.accounts.adapter(adapterKey).capabilities().collectionFeeRounding).amount
-        : txn.expected_settled_amount;
+      const within = txn.direction === 'collection'
+        ? providerAmountWithin(txn.charged_amount, { bps: binding.expected_fee_bps, fixed: binding.expected_fee_fixed }, this.accounts.adapter(adapterKey).capabilities().collectionFeeRounding)
+        : null;
+      const amount = within ? within.amount : txn.expected_settled_amount;
+      // What was sent and the debit it should produce travel with the attempt, so settlement can
+      // tell a provider that debited something else from one that did exactly what was asked.
+      if (within) {
+        await tx.updateTable('transaction_attempt').set({ binding_snapshot: JSON.stringify({ ...attempt.binding_snapshot as object, sent_amount: within.amount, expected_debit: within.debit }) }).where('id', '=', attempt.id).execute();
+      }
       const req = {
         transactionReference: txn.reference, direction: txn.direction as 'collection' | 'disbursement', amount,
         currency: txn.currency_code, currencyExponent: currency.exponent, country: route.country_code, paymentMethod: route.payment_method_code,

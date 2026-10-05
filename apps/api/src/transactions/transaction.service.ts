@@ -6,7 +6,7 @@ import { newTransactionReference } from '../crypto/references';
 import { dbNow, DB_TOKEN, type Db, type Tx } from '../db/database';
 import { InsufficientBalanceError, LedgerService } from '../ledger/ledger.service';
 import { log } from '../logging/logger';
-import { sum, type Bearer } from '../money/money';
+import { subtract, sum, type Bearer } from '../money/money';
 import { NotificationService, type NotificationEvent } from '../notifications/notification.service';
 import type { ProjectPrincipal } from '../project-auth/project-auth.service';
 import { RouteResolver } from '../routes/route-resolver';
@@ -181,6 +181,26 @@ export class TransactionService {
     return this.ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId, countryCode: route.country_code, currency: txn.currency_code, direction: txn.direction as 'collection' | 'disbursement' });
   }
 
+  /**
+   * A provider that adds its fee on top debits a known amount for what it was sent. When it reports
+   * anything else, the books and the money part company — the case that went unnoticed on the first
+   * live Ejara collections — so it is raised at the moment it is known rather than left for a
+   * reconciliation run. Compared with the expected debit, not the quote: a debit one unit under an
+   * unreachable quote is what was asked for.
+   */
+  private async checkReportedDebit(tx: Tx, txn: TransactionRow, attemptId: string | null, reported: number | null): Promise<void> {
+    if (reported == null || !attemptId) return;
+    const attempt = await tx.selectFrom('transaction_attempt').select(['binding_snapshot', 'provider_account_id']).where('id', '=', attemptId).executeTakeFirst();
+    const snapshot = (attempt?.binding_snapshot ?? {}) as { sent_amount?: number; expected_debit?: number };
+    if (snapshot.expected_debit == null || snapshot.expected_debit === reported) return;
+    await this.alerts.raise({
+      category: 'reconciliation', severity: 'warning', subjectType: 'transaction', subjectReference: txn.reference,
+      fingerprint: `debit_divergence:${txn.id}`, title: 'The provider debited the payer a different amount than expected',
+      detail: { transaction: txn.reference, sent: snapshot.sent_amount ?? null, expected_debit: snapshot.expected_debit, reported_debit: reported, difference: subtract(reported, snapshot.expected_debit), provider_account_id: attempt?.provider_account_id ?? null },
+      actionReference: `/transactions/${txn.reference}`,
+    }, tx);
+  }
+
   /** Success: amounts and fees recorded, ledger posted, project notified. From processing, action_required or undetermined (via correction). */
   async finalizeSuccess(tx: Tx, txn: TransactionRow, r: { actualProviderFee: number | null; chargedAmount?: number | null; operatorReference?: string | null; providerAccountId: string } & OutcomeDetail): Promise<void> {
     if (TERMINAL_STATES.includes(txn.state as never)) return;
@@ -200,6 +220,7 @@ export class TransactionService {
     }).where('id', '=', txn.id).execute();
     if (r.attemptId) await tx.updateTable('transaction_attempt').set({ state: 'succeeded', actual_provider_fee: actualFee, operator_reference: r.operatorReference ?? null, ended_at: sql`now()`, response_payload_id: r.payloadId ?? null }).where('id', '=', r.attemptId).execute();
     await this.event(tx, txn.id, txn.state, 'succeeded', { ...r, detail: { ...(r.detail ?? {}), actual_provider_fee: actualFee, provider_charged_amount: r.chargedAmount ?? null } });
+    if (txn.direction === 'collection') await this.checkReportedDebit(tx, txn, r.attemptId ?? txn.current_attempt_id, r.chargedAmount ?? null);
     await this.notify(tx, txn.id, 'transaction.succeeded');
     await this.alerts.clear(`undetermined:${txn.id}`, tx);
   }
