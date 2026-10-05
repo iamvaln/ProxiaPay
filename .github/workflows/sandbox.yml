@@ -122,6 +122,17 @@ jobs:
             # Services named explicitly. `migrate` shares the api image, already
             # pulled, and runs to completion before api and worker start.
             docker compose --env-file .env.sandbox -f docker-compose.deploy.yml up -d db migrate api worker console
+
+            # Provider credentials from their own file, mounted and parsed by the CLI — never handed
+            # to Compose as an env file, which would interpolate a `$` in a secret and truncate it.
+            # Only changed credentials are re-sealed, so running this on every deploy is free. A
+            # refused file (half a set, a name the adapter would not read) fails the deploy here,
+            # before anyone relies on credentials that were never stored.
+            if [ -f provider-credentials.env ]; then
+              docker compose --env-file .env.sandbox -f docker-compose.deploy.yml run --rm -T \
+                -v "$PWD/provider-credentials.env:/run/provider-credentials.env:ro" \
+                migrate node dist/cli/set-credentials.js /run/provider-credentials.env
+            fi
             docker logout ghcr.io
             # :develop replaces itself under the same tag; only dangling layers pile up.
             docker image prune -f

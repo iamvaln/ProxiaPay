@@ -127,6 +127,39 @@ one read and removes the possibility.
 If `STACK` were missing from `.env.sandbox`, the name would fall back to
 `proxiapay` and the guard would stop the deploy.
 
+## Provider credentials
+
+The platform reads a provider's credentials from its account, sealed under the
+master key — never from the environment. They get there from a file of their own:
+
+```sh
+cp deploy/provider-credentials.env.example ~/proxiapay-sandbox/provider-credentials.env
+chmod 600 ~/proxiapay-sandbox/provider-credentials.env
+nano ~/proxiapay-sandbox/provider-credentials.env   # values exactly as the provider issued them
+```
+
+Every deploy then runs `node dist/cli/set-credentials.js` against it. Names are
+mechanical — provider code, then the key the adapter reads — so Ejara's are
+`EJARA_CLIENT_KEY` and `EJARA_CLIENT_SECRET`. Only values that changed are
+re-sealed, so an unchanged file writes nothing to the audit trail; a provider the
+file does not mention keeps what it has. The deploy **fails** on half a set, or on
+a name the adapter would not read — `EJARA_CLIENT_ID` is refused, because stored
+under that name the credential would reach Ejara as an empty header and Ejara
+would blame the credential.
+
+**Never pass this file to Compose as an env file.** Compose interpolates `$`, and
+the Ejara secret contains one: it would be truncated silently and handed to every
+container that way. The CLI parses the file itself, literally. That is also why
+the credentials are not in `.env.sandbox`.
+
+To apply a change without a deploy:
+
+```sh
+docker compose --env-file .env.sandbox -f docker-compose.deploy.yml run --rm -T \
+  -v "$PWD/provider-credentials.env:/run/provider-credentials.env:ro" \
+  migrate node dist/cli/set-credentials.js /run/provider-credentials.env
+```
+
 ## Where the keys live, and why that is a deviation
 
 `docs/operations.md` is explicit: `MASTER_KEY_BASE64` and `INDEX_KEY_BASE64`

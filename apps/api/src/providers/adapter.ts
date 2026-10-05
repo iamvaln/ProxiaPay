@@ -16,6 +16,12 @@ export interface AdapterCapabilities {
    * decides where the payer's debit lands. Declared per provider: each rounds its own way.
    */
   collectionFeeRounding: ProviderRounding;
+  /**
+   * The credential keys the adapter reads from `ctx.account.credentials`. A credentials file is held
+   * to exactly these (see provider-credentials.ts): a key the adapter never reads would be stored and
+   * then sent as an empty value, and the provider would blame the credential.
+   */
+  credentialKeys: readonly string[];
 }
 
 export interface AdapterAccount {

@@ -89,6 +89,10 @@ describe('Ejara fee model', () => {
   it('declares that it rounds its on-top fee up on collections, as observed on the prodbox', () => {
     expect(new EjaraAdapter().capabilities().collectionFeeRounding).toBe('ceil');
   });
+
+  it('declares exactly the credential keys it reads, so a credentials file is checked against them', () => {
+    expect(new EjaraAdapter().capabilities().credentialKeys).toEqual(['clientKey', 'clientSecret']);
+  });
 });
 
 describe('Ejara webhook as the prodbox sends it', () => {
