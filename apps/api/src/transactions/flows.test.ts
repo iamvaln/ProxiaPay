@@ -1,3 +1,5 @@
+import { RouteService } from '../console-api/route.service';
+import { AuditService } from '../audit/audit.service';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createTestContext, type TestContext } from '../test/context';
 import { ProjectAuthService, type ProjectPrincipal } from '../project-auth/project-auth.service';
@@ -178,6 +180,82 @@ describe('collection', () => {
 });
 
 describe('disbursement', () => {
+  it('raises an alert at settlement when a fee-deducting provider delivers less than it should have', async () => {
+    // The live Ejara payout: promised 520, delivered 512. A provider that deducts its fee reports
+    // the recipient's amount, so it is compared with the delivery expected for what it was sent.
+    const admin = await t.admin();
+    const float = await ledger.getOrCreateAccount(t.db, { type: 'float', providerAccountId: await providerAccount(), countryCode: 'CM', currency: 'XAF', direction: 'disbursement' });
+    await t.db.transaction().execute((tx) => ledger.postFloatFunding(tx, { floatAccountId: float, currency: 'XAF', amount: 100_000, authorId: admin.id, justification: 'capital' }));
+    const p = await previews.create(principal, { ...collection('677123456', 'deliver-1'), direction: 'disbursement' });
+    const { transactionId } = await transactions.confirm(principal, p.reference, 'disbursement');
+    await submission.submit(transactionId);
+    // As a deducting provider's submission records it: sent enough to deliver the promised 975.
+    const row0 = await t.db.selectFrom('transaction').select('current_attempt_id').where('id', '=', transactionId).executeTakeFirstOrThrow();
+    await t.db.updateTable('transaction_attempt').set({ binding_snapshot: JSON.stringify({ sent_amount: 990, expected_delivery: 975 }) }).where('id', '=', row0.current_attempt_id!).execute();
+    await t.db.transaction().execute(async (tx) => {
+      const row = await transactions.lock(tx, transactionId);
+      await transactions.finalizeSuccess(tx, row, { actualProviderFee: 15, chargedAmount: 967, providerAccountId: await providerAccount(), attemptId: row.current_attempt_id, source: 'status_check' });
+    });
+    const alerts = await t.db.selectFrom('alert').selectAll().where('fingerprint', 'like', 'delivery_divergence:%').execute();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]!.detail).toMatchObject({ sent: 990, expected_delivery: 975, reported_delivery: 967, difference: -8 });
+  });
+
+  it('holds a provider\'s minimum to what the recipient receives, and names the smallest amount that clears it', async () => {
+    // Ejara refuses payouts that would deliver under 500; our route minimum (100) is on the requested
+    // amount. A 510 request delivers 497 after our 2.5 percent, so it must be refused at preview —
+    // not confirmed, reserved and then failed a second later as PROVIDER_REJECTED.
+    // Bindings are append-only, so the minimum arrives as a new route version, as it would in production.
+    const route = await t.db.selectFrom('route').select('id').where('country_code', '=', 'CM').where('payment_method_code', '=', 'MOMO').where('direction', '=', 'disbursement').executeTakeFirstOrThrow();
+    const admin = await t.admin();
+    const pa = await providerAccount();
+    const routes = new RouteService(t.db, t.app.get(AuditService));
+    await t.db.transaction().execute((tx) => routes.openVersion(tx, route.id, {
+      processing_fee_bps: 250, processing_fee_fixed: 0, processing_fee_floor: null, processing_fee_ceiling: null, platform_fee_bps: 0, platform_fee_fixed: 0, platform_fee_floor: null, platform_fee_ceiling: null,
+      processing_fee_bearer: 'counterparty', platform_fee_bearer: 'counterparty', minimum_amount: 100, maximum_amount: 1_000_000,
+      otp_required: false, browser_required: false, disbursement_fallback: false, active: true, accept_shortfall: false,
+      bindings: [{ provider_account_id: pa, expected_fee_bps: 150, expected_fee_fixed: 0, terms_status: 'indicative', enabled: true, minimum_amount: 500, maximum_amount: null }],
+      note: 'Provider payout minimum of 500 on what the recipient receives.',
+    }, admin.id, { requireFeePermission: false, hasFeePermission: true }));
+    await expect(previews.create(principal, { ...collection('677123456', 'min-1'), direction: 'disbursement', amount: 510 }))
+      .rejects.toMatchObject({ code: 'AMOUNT_BELOW_MINIMUM', options: { details: { minimum: 513 } } });
+    const ok = await previews.create(principal, { ...collection('677123456', 'min-2'), direction: 'disbursement', amount: 513 });
+    expect(ok.settled_amount).toBe(500);
+  });
+
+  it('pays out through the next provider in the country when the first one\'s float cannot cover it', async () => {
+    // Two providers on CM/MOMO payouts; the first, by priority, holds no float. The payout must go to
+    // the second rather than be refused — the decision is made before anything is sent, so it cannot
+    // pay twice, unlike fallback after submission.
+    const admin = await t.admin();
+    const first = await providerAccount();
+    const second = (await t.db.insertInto('provider_account').values({ provider_code: 'simulator', name: 'Simulator (second)', base_url: 'simulator://second' }).returning('id').executeTakeFirstOrThrow()).id;
+    const route = await t.db.selectFrom('route').select('id').where('country_code', '=', 'CM').where('payment_method_code', '=', 'MOMO').where('direction', '=', 'disbursement').executeTakeFirstOrThrow();
+    const routes = new RouteService(t.db, t.app.get(AuditService));
+    await t.db.transaction().execute((tx) => routes.openVersion(tx, route.id, {
+      processing_fee_bps: 250, processing_fee_fixed: 0, processing_fee_floor: null, processing_fee_ceiling: null, platform_fee_bps: 0, platform_fee_fixed: 0, platform_fee_floor: null, platform_fee_ceiling: null,
+      processing_fee_bearer: 'counterparty', platform_fee_bearer: 'counterparty', minimum_amount: 100, maximum_amount: 1_000_000,
+      otp_required: false, browser_required: false, disbursement_fallback: false, active: true, accept_shortfall: false,
+      bindings: [
+        { provider_account_id: first, expected_fee_bps: 150, expected_fee_fixed: 0, terms_status: 'indicative', enabled: true, minimum_amount: null, maximum_amount: null },
+        { provider_account_id: second, expected_fee_bps: 150, expected_fee_fixed: 0, terms_status: 'indicative', enabled: true, minimum_amount: null, maximum_amount: null },
+      ],
+      note: 'Two providers for payouts.',
+    }, admin.id, { requireFeePermission: false, hasFeePermission: true }));
+    const secondFloat = await ledger.getOrCreateAccount(t.db, { type: 'float', providerAccountId: second, countryCode: 'CM', currency: 'XAF', direction: 'disbursement' });
+    await t.db.transaction().execute((tx) => ledger.postFloatFunding(tx, { floatAccountId: secondFloat, currency: 'XAF', amount: 100_000, authorId: admin.id, justification: 'capital' }));
+
+    const p = await previews.create(principal, { ...collection('677123456', 'route-by-float'), direction: 'disbursement' });
+    const { transactionId } = await transactions.confirm(principal, p.reference, 'disbursement');
+    const txn = await t.db.selectFrom('transaction').select(['selected_provider_account_id', 'binding_id']).where('id', '=', transactionId).executeTakeFirstOrThrow();
+    expect(txn.selected_provider_account_id).toBe(second);
+  });
+
+  it('still refuses a payout no provider in the country can cover', async () => {
+    const p = await previews.create(principal, { ...collection('677123456', 'no-float'), direction: 'disbursement' });
+    await expect(transactions.confirm(principal, p.reference, 'disbursement')).rejects.toMatchObject({ code: 'FLOAT_INSUFFICIENT' });
+  });
+
   it('reserves, checks liquidity, settles per spec 6.1 and releases on failure', async () => {
     const admin = await t.admin();
     const pa = await providerAccount();

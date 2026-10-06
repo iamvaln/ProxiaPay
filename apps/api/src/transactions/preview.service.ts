@@ -56,7 +56,13 @@ export class PreviewService {
     if (!msisdn.ok) {
       throw new PlatformError('PAYER_IDENTIFIER_INVALID', msisdn.reason === 'foreign_prefix' ? "The number carries another country's prefix." : 'The number is malformed for its country.', { field: 'counterparty.msisdn' });
     }
-    const bindings = await this.resolver.availableBindings(this.db, resolution.routeVersion.id, body.amount);
+    // Provider limits apply to what the counterparty experiences, which the binding does not change.
+    const counterparty = RouteResolver.counterpartyAmount(resolution.route.direction, this.resolver.computeFigures(resolution, body.amount, undefined));
+    const bindings = await this.resolver.availableBindings(this.db, resolution.routeVersion.id, counterparty);
+    if (bindings.length === 0) {
+      const refusal = await this.resolver.providerLimitRefusal(this.db, resolution, body.amount);
+      if (refusal) throw refusal;
+    }
     const binding = bindings[0];
     const figures = this.resolver.computeFigures(resolution, body.amount, binding);
     const validity = await this.settings.number('preview.validity_seconds');

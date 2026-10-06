@@ -130,6 +130,30 @@ export function providerAmountWithin(target: number, terms: FeeTerms, rounding: 
   return { amount, debit: amount + fee, fee };
 }
 
+/**
+ * For a provider that deducts its fee from what it is sent and rounds the recipient's amount down:
+ * the smallest amount S such that floor(S − S·bps/10000) − fixed is at least `target`, the amount
+ * the recipient was promised. Ejara's CM payouts take 1.5 percent this way: 520 sent delivers
+ * 520 − 7.8 = 512.2, rounded down to 512 — so to deliver 520, it is sent 528.
+ */
+export function providerAmountDelivering(target: number, terms: FeeTerms): { amount: number; delivered: number; fee: number } {
+  assertMinorUnits(target, 'target');
+  assertRate(terms.bps, 'bps');
+  assertMinorUnits(terms.fixed, 'fixed');
+  if (terms.bps >= 10000) throw new RangeError('a provider taking the whole amount can deliver nothing');
+  const deliveredBy = (s: number) => {
+    const product = s * (10000 - terms.bps);
+    if (!Number.isSafeInteger(product)) throw new RangeError('fee computation overflows the safe integer range');
+    return Math.floor(product / 10000) - terms.fixed;
+  };
+  // S·(1 − bps/10000) − fixed ≥ target gives the starting point; flooring moves the answer by a unit or two.
+  let amount = Math.ceil(((target + terms.fixed) * 10000) / (10000 - terms.bps));
+  while (deliveredBy(amount) < target) amount += 1;
+  while (amount > 1 && deliveredBy(amount - 1) >= target) amount -= 1;
+  const delivered = deliveredBy(amount);
+  return { amount, delivered, fee: amount - delivered };
+}
+
 /** Margin is computed, never stored: processing fee less the actual provider fee, and may be negative. */
 export function margin(processingFee: number, actualProviderFee: number | null): number | null {
   if (actualProviderFee == null) return null;

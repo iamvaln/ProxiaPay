@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bpsToPercent, compose, computeFee, formatAmount, margin, percentToBps, providerAmountWithin } from './money';
+import { bpsToPercent, compose, computeFee, formatAmount, margin, percentToBps, providerAmountDelivering, providerAmountWithin } from './money';
 
 describe('computeFee', () => {
   it('applies basis points with half-up rounding', () => {
@@ -107,5 +107,36 @@ describe('providerAmountWithin (a provider that adds its fee on top)', () => {
 
   it('refuses a quote the fee alone would consume', () => {
     expect(() => providerAmountWithin(50, { bps: 0, fixed: 50 }, 'ceil')).toThrow(RangeError);
+  });
+});
+
+describe('providerAmountDelivering (a provider that deducts its fee from the recipient)', () => {
+  // Ejara on CM payouts: 1.5 percent taken from what it is sent, the recipient's amount rounded down.
+  // Observed on the prodbox on 2026-10-06: 520 sent, 7.8 fee, 512.2 rounded down to 512 received.
+  const EJARA_PAYOUT = { bps: 150, fixed: 0 };
+
+  it('reproduces the live payout: 520 sent delivers 512', () => {
+    // The inverse question first, so the arithmetic is anchored to what Ejara actually did.
+    expect(providerAmountDelivering(512, EJARA_PAYOUT)).toEqual({ amount: 520, delivered: 512, fee: 8 });
+  });
+
+  it('sends enough to deliver the promised amount: 528 delivers 520', () => {
+    expect(providerAmountDelivering(520, EJARA_PAYOUT)).toEqual({ amount: 528, delivered: 520, fee: 8 });
+  });
+
+  it('delivers Ejara\'s 500 minimum from 508', () => {
+    expect(providerAmountDelivering(500, EJARA_PAYOUT)).toEqual({ amount: 508, delivered: 500, fee: 8 });
+  });
+
+  it('is the smallest amount that delivers the target, for every target in a range', () => {
+    const deliveredBy = (amount: number) => Math.floor(amount - (amount * 150) / 10000);
+    for (let target = 100; target <= 3000; target++) {
+      const r = providerAmountDelivering(target, EJARA_PAYOUT);
+      expect(r.delivered, `${target}`).toBe(deliveredBy(r.amount));
+      expect(r.delivered, `${target} delivered`).toBeGreaterThanOrEqual(target);
+      expect(r.fee).toBe(r.amount - r.delivered);
+      // Minimal: one unit less would leave the recipient short.
+      expect(deliveredBy(r.amount - 1), `${target} minimal`).toBeLessThan(target);
+    }
   });
 });

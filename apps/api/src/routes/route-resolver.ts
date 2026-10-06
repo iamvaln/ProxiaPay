@@ -103,8 +103,15 @@ export class RouteResolver {
     };
   }
 
-  /** The bindings a payment may be sent to, in fallback order, excluding suspended accounts, open breakers, and narrower limits the amount falls outside. */
-  async availableBindings(exec: Executor, routeVersionId: string, amount: number): Promise<(BindingRow & { provider_code: string; adapter_key: string; account_status: string; breaker_state: string | null })[]> {
+  /**
+   * The bindings a payment may be sent to, in fallback order, excluding suspended accounts, open
+   * breakers, and provider limits the payment falls outside. A provider's limits apply to what the
+   * counterparty experiences there — the payer's debit on a collection, the recipient's receipt on a
+   * payout — so callers pass that amount (counterpartyAmount below), not the requested one: Ejara
+   * refuses a payout that would deliver under 500 whatever the project asked for.
+   */
+  async availableBindings(exec: Executor, routeVersionId: string, counterpartyAmount: number): Promise<(BindingRow & { provider_code: string; adapter_key: string; account_status: string; breaker_state: string | null })[]> {
+    const amount = counterpartyAmount;
     const rows = await exec
       .selectFrom('route_binding as b')
       .innerJoin('provider_account as pa', 'pa.id', 'b.provider_account_id')
@@ -119,6 +126,36 @@ export class RouteResolver {
     return rows.filter((b) =>
       b.account_status !== 'suspended' && b.breaker_state !== 'open'
       && (b.minimum_amount == null || amount >= b.minimum_amount) && (b.maximum_amount == null || amount <= b.maximum_amount));
+  }
+
+  /** What the counterparty experiences: the payer's debit on a collection, the recipient's receipt on a payout. */
+  static counterpartyAmount(direction: 'collection' | 'disbursement', figures: { chargedAmount: number; settledAmount: number }): number {
+    return direction === 'collection' ? figures.chargedAmount : figures.settledAmount;
+  }
+
+  /**
+   * When no binding admits a payment only because of provider limits, the smallest (or largest)
+   * requested amount that would clear them, so the refusal names a figure the caller can use.
+   * Null when limits are not the reason — every provider suspended, say — and the usual path applies.
+   */
+  async providerLimitRefusal(exec: Executor, resolution: Resolution, requested: number): Promise<PlatformError | null> {
+    // The bindings that would take the payment but for their limits: enabled, account not suspended, breaker not open.
+    const all = await exec.selectFrom('route_binding as b').innerJoin('provider_account as pa', 'pa.id', 'b.provider_account_id').leftJoin('circuit_breaker as cb', 'cb.provider_account_id', 'pa.id')
+      .select(['b.minimum_amount', 'b.maximum_amount']).where('b.route_version_id', '=', resolution.routeVersion.id).where('b.enabled', '=', true)
+      .where('pa.status', '<>', 'suspended').where((eb) => eb.or([eb('cb.state', 'is', null), eb('cb.state', '<>', 'open')])).execute();
+    if (all.length === 0) return null;
+    const direction = resolution.route.direction;
+    const counterparty = (r: number) => RouteResolver.counterpartyAmount(direction, this.computeFigures(resolution, r, undefined));
+    const admits = (r: number) => all.some((b) => (b.minimum_amount == null || counterparty(r) >= b.minimum_amount) && (b.maximum_amount == null || counterparty(r) <= b.maximum_amount));
+    if (admits(requested)) return null;
+    const { minimum, maximum } = resolution.limits;
+    for (let r = requested + 1; r <= maximum; r++) {
+      if (admits(r)) return new PlatformError('AMOUNT_BELOW_MINIMUM', 'Amount is below what the provider accepts on this route.', { field: 'amount', details: { minimum: r } });
+    }
+    for (let r = requested - 1; r >= minimum; r--) {
+      if (admits(r)) return new PlatformError('AMOUNT_ABOVE_MAXIMUM', 'Amount is above what the provider accepts on this route.', { field: 'amount', details: { maximum: r } });
+    }
+    return null;
   }
 
   computeFigures(resolution: Resolution, amount: number, binding: Pick<BindingRow, 'expected_fee_bps' | 'expected_fee_fixed'> | undefined): Figures {
