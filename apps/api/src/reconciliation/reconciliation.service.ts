@@ -79,6 +79,8 @@ export class ReconciliationService {
       const compared = await this.compareTransactions(run, records, findings);
       await this.compareWallets(run.provider_account_id, findings);
       await this.staleUndetermined(run.provider_account_id, findings);
+      // Transfers the balances already prove are confirmed first, so only the rest can be reported unconfirmed.
+      await this.confirmPendingTransfers(run.provider_account_id);
       await this.unconfirmedTransfers(run.provider_account_id, findings);
       for (const m of await this.ledger.verifyCheckpoints(this.db)) {
         findings.push({ type: 'checkpoint_mismatch', subjectType: 'ledger_account', subjectReference: m.accountId, floatAccountId: m.accountId, expected: { checkpoint: m.checkpoint }, observed: { recomputed: m.recomputed }, difference: subtract(m.recomputed, m.checkpoint) });
@@ -188,6 +190,40 @@ export class ReconciliationService {
     }
   }
 
+  /** The provider credits its wallet when the payer confirms, seconds before the platform posts; balances read then mislead. */
+  private async hasPaymentInFlight(providerAccountId: string): Promise<boolean> {
+    const row = await this.db.selectFrom('transaction_attempt as ta').innerJoin('transaction as t', 't.id', 'ta.transaction_id').select('t.id')
+      .where('ta.provider_account_id', '=', providerAccountId).where('t.state', 'in', ['submitted', 'processing', 'action_required']).limit(1).executeTakeFirst();
+    return Boolean(row);
+  }
+
+  /**
+   * Confirms pending float transfers on the provider's own balances, rather than waiting for a
+   * reconciliation run — which for a provider without listing waits for a statement, while a client
+   * may be waiting on the refund the transfer funds. A transfer is confirmed when the wallets on
+   * both its sides read exactly what the ledger holds, the transfer already posted. Called straight
+   * after registration and every minute after that until confirmed.
+   */
+  async confirmPendingTransfers(providerAccountId?: string): Promise<{ confirmed: number; pending: number }> {
+    let q = this.db.selectFrom('float_transfer').selectAll().where('status', '=', 'pending');
+    if (providerAccountId) q = q.where('provider_account_id', '=', providerAccountId);
+    const pending = await q.execute();
+    let confirmed = 0;
+    for (const accountId of [...new Set(pending.map((p) => p.provider_account_id))]) {
+      if (await this.hasPaymentInFlight(accountId)) continue;
+      const compared = await this.walletsAgainstFloat(accountId);
+      if (!compared) continue;
+      const agrees = (floatId: string) => compared.find((c) => c.accountId === floatId);
+      for (const t of pending.filter((p) => p.provider_account_id === accountId)) {
+        const src = agrees(t.source_account_id), dst = agrees(t.destination_account_id);
+        if (!src || !dst || src.ledgerBalance !== src.w.balance || dst.ledgerBalance !== dst.w.balance) continue;
+        const evidence = { source: { wallet: src.w.providerWalletId ?? null, balance: src.w.balance }, destination: { wallet: dst.w.providerWalletId ?? null, balance: dst.w.balance } };
+        if (await this.db.transaction().execute((tx) => this.treasury.confirmTransferOnBalances(tx, t.id, evidence))) confirmed++;
+      }
+    }
+    return { confirmed, pending: pending.length - confirmed };
+  }
+
   /**
    * Float drift, measured continuously rather than only inside a reconciliation run. A provider that
    * cannot list its transactions is reconciled from statements someone uploads, and until then its
@@ -201,9 +237,7 @@ export class ReconciliationService {
     const accounts = await this.db.selectFrom('provider_account').select('id').where('status', '<>', 'suspended').execute();
     let checked = 0, skipped = 0, drifting = 0;
     for (const a of accounts) {
-      const inFlight = await this.db.selectFrom('transaction_attempt as ta').innerJoin('transaction as t', 't.id', 'ta.transaction_id').select('t.id')
-        .where('ta.provider_account_id', '=', a.id).where('t.state', 'in', ['submitted', 'processing', 'action_required']).limit(1).executeTakeFirst();
-      if (inFlight) { skipped++; continue; }
+      if (await this.hasPaymentInFlight(a.id)) { skipped++; continue; }
       const compared = await this.walletsAgainstFloat(a.id);
       if (!compared) { skipped++; continue; }
       checked++;
@@ -233,11 +267,6 @@ export class ReconciliationService {
   private async unconfirmedTransfers(providerAccountId: string, findings: Finding[]): Promise<void> {
     const pending = await this.db.selectFrom('float_transfer').selectAll().where('provider_account_id', '=', providerAccountId).where('status', '=', 'pending').execute();
     for (const t of pending) {
-      const drift = findings.filter((f) => f.type === 'float_drift' && (f.floatAccountId === t.source_account_id || f.floatAccountId === t.destination_account_id));
-      if (drift.length === 0 && findings.some((f) => f.type !== 'float_drift') === false && Date.now() - t.created_at.getTime() > 60_000) {
-        // Wallet balances reflect the transfer on both sides: confirm it.
-        continue;
-      }
       if (Date.now() - t.created_at.getTime() > 24 * 3600_000) {
         findings.push({ type: 'unconfirmed_transfer', subjectType: 'float_transfer', subjectReference: t.id, floatTransferId: t.id, floatAccountId: t.destination_account_id, expected: { status: 'confirmed' }, observed: { status: 'pending', registered_at: t.created_at }, difference: t.amount, currency: t.currency_code });
       }

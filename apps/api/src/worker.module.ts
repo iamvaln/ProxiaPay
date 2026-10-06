@@ -22,7 +22,7 @@ export class WorkerModule {}
 const inSeconds = (s: number) => ({ rescheduleAt: new Date(Date.now() + s * 1000) });
 
 /** The jobs that re-arm themselves, seeded at worker start; each must have a handler below. */
-export const RECURRING_JOBS = ['sweep.tick', 'preview.expire', 'alerts.evaluate', 'float.cover', 'float.drift', 'reconciliation.weekly', 'housekeeping'] as const;
+export const RECURRING_JOBS = ['sweep.tick', 'preview.expire', 'alerts.evaluate', 'float.cover', 'float.drift', 'transfers.confirm', 'reconciliation.weekly', 'housekeeping'] as const;
 
 /** Every kind of background work, in one place, so what the worker does is readable end to end. */
 export function registerJobHandlers(app: INestApplicationContext): void {
@@ -51,6 +51,8 @@ export function registerJobHandlers(app: INestApplicationContext): void {
   worker.register('float.cover', async () => { await treasury.evaluateCover(); return inSeconds(300); });
   // Hourly: the float against each provider's own wallet balances, statement or no statement.
   worker.register('float.drift', async () => { await reconciliation.checkFloatDrift(); return inSeconds(3600); });
+  // Every minute: pending float transfers, confirmed as soon as the provider's balances show the move.
+  worker.register('transfers.confirm', async () => { await reconciliation.confirmPendingTransfers(); return inSeconds(60); });
   worker.register('reconciliation.weekly', async () => { await reconciliation.scheduleWeekly(); return inSeconds(3600); });
   worker.register('housekeeping', async () => {
     await rateLimiter.prune();

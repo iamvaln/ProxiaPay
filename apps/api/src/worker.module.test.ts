@@ -16,4 +16,8 @@ describe('recurring work', () => {
   it('measures float drift continuously, not only inside a reconciliation run', () => {
     expect(RECURRING_JOBS).toContain('float.drift');
   });
+
+  it('keeps confirming pending transfers every minute, so none waits for a statement', () => {
+    expect(RECURRING_JOBS).toContain('transfers.confirm');
+  });
 });

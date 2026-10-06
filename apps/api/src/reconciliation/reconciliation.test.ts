@@ -13,6 +13,7 @@ import { StatementService } from './statement.service';
 import { ReconciliationService } from './reconciliation.service';
 import { DiscrepancyService } from './discrepancy.service';
 import { NotificationService } from '../notifications/notification.service';
+import { TreasuryService } from '../treasury/treasury.service';
 import { normaliseStatementStatus, parseCsv, parseStatement } from './statement-format';
 
 let t: TestContext;
@@ -195,6 +196,63 @@ describe('continuous checks', () => {
     SimulatorAdapter.wallets = [{ country: 'CM', currency: 'XAF', direction: 'collection', balance: 1005 }];
     expect(await recon.checkFloatDrift()).toMatchObject({ drifting: 0 });
     expect(await alertsLike('float_drift:')).toHaveLength(0);
+  });
+
+  describe('float transfers, confirmed on the provider\'s own balances', () => {
+    // A registered transfer sat pending until a reconciliation run, and for a provider without
+    // listing a run waits for a statement — while a client may be waiting on the refund it funds.
+    async function registered(amount: number) {
+      await collect('677123456', `t-${amount}`); // collection float 1005
+      return t.db.transaction().execute(async (tx) => {
+        const source = (await ledger.findAccount(tx, { type: 'float', providerAccountId, countryCode: 'CM', currency: 'XAF', direction: 'collection' }))!;
+        const destination = await ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId, countryCode: 'CM', currency: 'XAF', direction: 'disbursement' });
+        return t.app.get(TreasuryService).registerTransfer(tx, { sourceAccountId: source, destinationAccountId: destination, amount, providerFee: 0, actorId: project.adminId });
+      });
+    }
+    const statusOf = async (id: string) => (await t.db.selectFrom('float_transfer').select(['status', 'confirmed_at']).where('id', '=', id).executeTakeFirstOrThrow());
+
+    it('confirms as soon as both wallets show the move', async () => {
+      const id = await registered(500);
+      SimulatorAdapter.wallets = [
+        { country: 'CM', currency: 'XAF', direction: 'collection', balance: 505 },
+        { country: 'CM', currency: 'XAF', direction: 'disbursement', balance: 500 },
+      ];
+      expect(await recon.confirmPendingTransfers()).toMatchObject({ confirmed: 1 });
+      expect((await statusOf(id)).status).toBe('confirmed');
+      expect((await statusOf(id)).confirmed_at).toBeTruthy();
+    });
+
+    it('waits while the provider has not moved the money yet', async () => {
+      const id = await registered(500);
+      SimulatorAdapter.wallets = [
+        { country: 'CM', currency: 'XAF', direction: 'collection', balance: 1005 },
+        { country: 'CM', currency: 'XAF', direction: 'disbursement', balance: 0 },
+      ];
+      expect(await recon.confirmPendingTransfers()).toMatchObject({ confirmed: 0, pending: 1 });
+      expect((await statusOf(id)).status).toBe('pending');
+    });
+
+    it('does not confirm on balances read while a payment is in flight', async () => {
+      const id = await registered(500);
+      await submitted('in-flight-t');
+      SimulatorAdapter.wallets = [
+        { country: 'CM', currency: 'XAF', direction: 'collection', balance: 505 },
+        { country: 'CM', currency: 'XAF', direction: 'disbursement', balance: 500 },
+      ];
+      expect(await recon.confirmPendingTransfers()).toMatchObject({ confirmed: 0 });
+      expect((await statusOf(id)).status).toBe('pending');
+    });
+
+    it('records who confirmed it: the provider\'s balances, not a reconciliation run', async () => {
+      const id = await registered(500);
+      SimulatorAdapter.wallets = [
+        { country: 'CM', currency: 'XAF', direction: 'collection', balance: 505 },
+        { country: 'CM', currency: 'XAF', direction: 'disbursement', balance: 500 },
+      ];
+      await recon.confirmPendingTransfers();
+      const audit = await t.db.selectFrom('audit_record').select(['actor_id', 'action']).where('subject_id', '=', id).where('action', '=', 'float_transfer.confirm').execute();
+      expect(audit).toEqual([{ actor_id: null, action: 'float_transfer.confirm' }]);
+    });
   });
 
   it('does not compare an account while a payment is in flight, since the provider credits before we post', async () => {
