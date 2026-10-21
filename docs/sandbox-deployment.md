@@ -160,6 +160,14 @@ docker compose --env-file .env.sandbox -f docker-compose.deploy.yml run --rm -T 
   migrate node dist/cli/set-credentials.js /run/provider-credentials.env
 ```
 
+## The second factor on the sandbox
+
+With `SANDBOX_ANY_SECOND_FACTOR=true` in `.env.sandbox`, signing in to the console
+asks for a code but accepts any six digits, and never asks to enrol an
+authenticator. Each such sign-in is recorded in the authentication history as
+"second factor waived on the sandbox". One-time codes for sensitive operations are
+unaffected. The API refuses to start with the switch set in production.
+
 ## Where the keys live, and why that is a deviation
 
 `docs/operations.md` is explicit: `MASTER_KEY_BASE64` and `INDEX_KEY_BASE64`
