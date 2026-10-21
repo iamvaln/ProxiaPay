@@ -10,7 +10,9 @@ import { buildOpenApi } from './openapi';
  * /docs is the interface of the version answering it — there is no publication step to forget.
  * The reference renderer is served from this process too: a payment host loads no third-party script.
  */
-@Controller('docs')
+// Served at /docs and at /v1/docs: integrators look for the reference beside the base URL they were
+// given, which ends in /v1. The page's links are absolute, so it renders the same at either address.
+@Controller(['docs', 'v1/docs'])
 export class DocsController {
   private readonly page: string;
   private readonly spec: string;

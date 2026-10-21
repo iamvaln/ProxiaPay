@@ -33,3 +33,11 @@ describe('/docs', () => {
     expect(docs.redoc().length).toBeGreaterThan(100_000);
   });
 });
+
+describe('where the documentation is served', () => {
+  it('answers under /v1 as well, beside the interface it documents', () => {
+    // Integrators look for the reference next to the base URL they were given, which ends in /v1.
+    // The page's own links are absolute (/docs/…), so it renders the same at either address.
+    expect(Reflect.getMetadata('path', DocsController)).toEqual(['docs', 'v1/docs']);
+  });
+});
