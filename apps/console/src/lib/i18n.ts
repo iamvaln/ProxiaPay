@@ -5,7 +5,7 @@ const STRINGS: Record<string, { en: string; fr: string }> = {
   'nav.home': { en: 'Home', fr: 'Accueil' }, 'nav.transactions': { en: 'Transactions', fr: 'Transactions' }, 'nav.projects': { en: 'Projects', fr: 'Projets' },
   'nav.configuration': { en: 'Configuration', fr: 'Configuration' }, 'nav.treasury': { en: 'Treasury', fr: 'Trésorerie' }, 'nav.reconciliation': { en: 'Reconciliation', fr: 'Rapprochement' },
   'nav.oversight': { en: 'Oversight', fr: 'Supervision' }, 'nav.sign_out': { en: 'Sign out', fr: 'Déconnexion' },
-  'env.production': { en: 'PRODUCTION', fr: 'PRODUCTION' }, 'env.sandbox': { en: 'SANDBOX', fr: 'BAC À SABLE' },
+  'env.production': { en: 'PRODUCTION', fr: 'PRODUCTION' }, 'env.sandbox': { en: 'SANDBOX', fr: 'SANDBOX' },
   'search.placeholder': { en: 'Search any reference or telephone number', fr: 'Rechercher une référence ou un numéro' },
   'signin.console': { en: 'Administration console', fr: 'Console d’administration' },
   'signin.title': { en: 'Sign in', fr: 'Connexion' }, 'signin.email': { en: 'Email address', fr: 'Adresse e-mail' }, 'signin.password': { en: 'Password', fr: 'Mot de passe' },
