@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ApiError, post } from '../lib/api';
-import { useSession, useT } from '../lib/session';
+import { ApiError, get, post } from '../lib/api';
+import { useSession, useT, type Me } from '../lib/session';
 import type { Lang } from '../lib/i18n';
 import { QrCode } from '../components/QrCode';
 import { Lockup } from '../components/Logo';
+import { EnvChip, EnvRibbon, LanguageSwitch } from '../components/Environment';
 
 /** Sign-in (console spec 4.1): the language is offered before authentication; failures name neither field. */
 export function SignInPage() {
@@ -20,6 +21,9 @@ export function SignInPage() {
   const [locked, setLocked] = useState<string | null>(null);
   const [resetSent, setResetSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [environment, setEnvironment] = useState<Me['environment'] | null>(null);
+  // The environment is shown before anyone signs in (console spec 2); until it answers, nothing is claimed.
+  useEffect(() => { get<{ environment: Me['environment'] }>('/auth/environment').then((r) => setEnvironment(r.environment)).catch(() => undefined); }, []);
 
   const signIn = async (e: React.FormEvent) => {
     e.preventDefault(); setError(null); setLocked(null); setBusy(true);
@@ -37,12 +41,15 @@ export function SignInPage() {
   };
 
   return (
+    <>
+    <EnvRibbon environment={environment} />
     <div className="signin-page">
-      <Lockup size={32} />
+      <header className="signin-head">
+        <h1><Lockup size={32} /></h1>
+        <p className="muted">{t('signin.console')}</p>
+        <EnvChip environment={environment} />
+      </header>
       <div className="signin card">
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <select value={lang} onChange={(e) => setLang(e.target.value as Lang)}><option value="en">English</option><option value="fr">Français</option></select>
-        </div>
         {stage === 'credentials' && (
           <form className="stack" onSubmit={signIn}>
             <h2>{t('signin.title')}</h2>
@@ -71,7 +78,9 @@ export function SignInPage() {
             <button className="primary" disabled={busy || code.length !== 6}>{t('second.verify')}</button>
           </form>
         )}
+        <LanguageSwitch lang={lang} onChange={(l: Lang) => setLang(l)} />
       </div>
     </div>
+    </>
   );
 }

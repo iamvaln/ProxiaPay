@@ -7,6 +7,7 @@ const STRINGS: Record<string, { en: string; fr: string }> = {
   'nav.oversight': { en: 'Oversight', fr: 'Supervision' }, 'nav.sign_out': { en: 'Sign out', fr: 'Déconnexion' },
   'env.production': { en: 'PRODUCTION', fr: 'PRODUCTION' }, 'env.sandbox': { en: 'SANDBOX', fr: 'BAC À SABLE' },
   'search.placeholder': { en: 'Search any reference or telephone number', fr: 'Rechercher une référence ou un numéro' },
+  'signin.console': { en: 'Administration console', fr: 'Console d’administration' },
   'signin.title': { en: 'Sign in', fr: 'Connexion' }, 'signin.email': { en: 'Email address', fr: 'Adresse e-mail' }, 'signin.password': { en: 'Password', fr: 'Mot de passe' },
   'signin.submit': { en: 'Continue', fr: 'Continuer' }, 'signin.mismatch': { en: 'The address and password did not match.', fr: "L'adresse et le mot de passe ne correspondent pas." },
   'signin.locked': { en: 'The account is locked until {until}. Waiting will help.', fr: 'Le compte est verrouillé jusqu’à {until}. Attendre suffira.' },

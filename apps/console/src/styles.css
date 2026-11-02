@@ -102,6 +102,15 @@ form.stack { display: grid; gap: 10px; max-width: 520px; }
 form.stack label { display: grid; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .signin { width: 100%; max-width: 400px; margin: 0 auto; }
 .signin-page { padding: 72px 16px; display: grid; justify-items: center; gap: 24px; }
+.signin-head { display: grid; justify-items: center; gap: 6px; text-align: center; }
+.signin-head h1 { margin: 0; font-size: inherit; letter-spacing: normal; }
+.signin-head p { margin: 0; }
+.signin-head .env-chip { margin-top: 6px; }
+/* The language choice sits quietly at the foot of the card: each name in its own language, the current one marked. */
+.lang-switch { display: flex; justify-content: center; gap: 4px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.lang-switch button { border: 0; background: none; padding: 4px 8px; font-size: 12px; font-weight: 500; color: var(--muted); }
+.lang-switch button[aria-pressed="true"] { color: var(--ink); font-weight: 700; }
+.lang-switch button + button::before { content: "·"; margin-right: 12px; color: var(--muted); font-weight: 500; }
 .diff { font-size: 12px; }
 .timeline li { margin-bottom: 6px; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
