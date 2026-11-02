@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ApiError, post, requestConfirmation } from '../lib/api';
 import { useSession, useT } from '../lib/session';
-import { money, utc, when } from '../lib/format';
+import { moneyParts, utc, when } from '../lib/format';
+import { STATE_SYMBOL, stateFamily, type StateFamily } from '../lib/states';
 
 export function useLoad<T>(loader: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -13,14 +14,25 @@ export function useLoad<T>(loader: () => Promise<T>, deps: unknown[] = []) {
   return { data, error, loading, reload };
 }
 
+/** A badge in one state family: its colour, its symbol (decorative) and the word. A plain tag has no symbol. */
+export function Tag({ family, children, title }: { family: StateFamily; children: React.ReactNode; title?: string }) {
+  if (family === 'tag') return <span className="tag" title={title}>{children}</span>;
+  return <span className={`tag ${family}`} title={title}><span className="tag-symbol" aria-hidden="true">{STATE_SYMBOL[family]}</span>{children}</span>;
+}
+
 export function Pill({ value }: { value: string | null | undefined }) {
   if (!value) return <span className="muted">—</span>;
-  return <span className={`pill ${value}`}>{value.replace(/_/g, ' ')}</span>;
+  return <Tag family={stateFamily(value)}>{value.replace(/_/g, ' ')}</Tag>;
 }
 
 export function Amount({ minor, currency }: { minor: number | null | undefined; currency: string }) {
   const { lang } = useSession();
-  return <span className={minor != null && minor < 0 ? 'negative' : ''}>{money(minor, currency, lang)}</span>;
+  const p = moneyParts(minor, currency, lang);
+  return (
+    <span className={minor != null && minor < 0 ? 'amount negative' : 'amount'}>
+      <span className="amount-figure">{p.figure}</span>{p.currency && <> <span className="amount-currency">{p.currency}</span></>}
+    </span>
+  );
 }
 
 /** Timestamps in the administrator's zone, the UTC value on hover (console spec 3.3). */

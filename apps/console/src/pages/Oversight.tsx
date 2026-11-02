@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, NavLink, Route, Routes, useParams } from 'react-router-dom';
 import { get, post, put } from '../lib/api';
 import { useSession } from '../lib/session';
-import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, When, useLoad } from '../components/common';
+import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
 import { pct } from '../lib/format';
 
 /** Oversight (console spec 10): alerts, health, reporting, export verification, administrators, roles, audit and authentication history. */
@@ -112,7 +112,7 @@ function Administrators() {
   if (!data) return null;
   return (<>
     <table><thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Roles and scope</th><th>Language</th><th>Last sign-in</th><th /></tr></thead>
-      <tbody>{data.administrators.map((a: any) => <tr key={a.id}><td>{a.name}{a.id === me?.administrator.id && <span className="small muted"> (you)</span>}</td><td>{a.email}</td><td><Pill value={a.status} />{!a.totp_enrolled_at && <span className="small muted"> · no authenticator</span>}{a.locked_until && new Date(a.locked_until) > new Date() && <span className="pill critical">locked</span>}</td>
+      <tbody>{data.administrators.map((a: any) => <tr key={a.id}><td>{a.name}{a.id === me?.administrator.id && <span className="small muted"> (you)</span>}</td><td>{a.email}</td><td><Pill value={a.status} />{!a.totp_enrolled_at && <span className="small muted"> · no authenticator</span>}{a.locked_until && new Date(a.locked_until) > new Date() && <Tag family="refused">locked</Tag>}</td>
         <td>{a.assignments.map((x: any) => <div key={x.id}>{x.role_name} <span className="small muted">{x.scope_type}{x.scopes.length ? `: ${x.scopes.map((s: any) => (s.project_id ?? s.provider_account_id).slice(0, 8)).join(', ')}` : ''}</span> {a.id !== me?.administrator.id && <ConfirmedAction operationType="role.change" values={{ kind: 'assignment_remove', assignment_id: x.id }} path="/oversight/roles/changes" label="×" onDone={reload} />}</div>)}</td>
         <td>{a.language}</td><td><When value={a.last_sign_in_at} /></td>
         <td>{a.id === me?.administrator.id ? <span className="small muted">You cannot alter your own status or roles.</span> : <ConfirmedAction operationType="administrator.amend" values={{ id: a.id, status: a.status === 'active' ? 'disabled' : 'active' }} path={`/oversight/administrators/${a.id}`} method="PATCH" label={a.status === 'active' ? 'Disable' : 'Enable'} onDone={reload} />}</td></tr>)}</tbody></table>

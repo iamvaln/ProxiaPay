@@ -4,6 +4,7 @@ import { ApiError, post } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import type { Lang } from '../lib/i18n';
 import { QrCode } from '../components/QrCode';
+import { Lockup } from '../components/Logo';
 
 /** Sign-in (console spec 4.1): the language is offered before authentication; failures name neither field. */
 export function SignInPage() {
@@ -36,39 +37,41 @@ export function SignInPage() {
   };
 
   return (
-    <div className="signin card">
-      <div className="row" style={{ justifyContent: 'space-between' }}>
-        <h1 style={{ margin: 0 }}>ProxiaPay</h1>
-        <select value={lang} onChange={(e) => setLang(e.target.value as Lang)}><option value="en">English</option><option value="fr">Français</option></select>
+    <div className="signin-page">
+      <Lockup size={32} />
+      <div className="signin card">
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <select value={lang} onChange={(e) => setLang(e.target.value as Lang)}><option value="en">English</option><option value="fr">Français</option></select>
+        </div>
+        {stage === 'credentials' && (
+          <form className="stack" onSubmit={signIn}>
+            <h2>{t('signin.title')}</h2>
+            <label>{t('signin.email')}<input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
+            <label>{t('signin.password')}<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
+            {error && <p className="error">{error}</p>}
+            {locked && <p className="error">{t('signin.locked', { until: new Date(locked).toLocaleTimeString() })}</p>}
+            <button className="primary" disabled={busy}>{t('signin.submit')}</button>
+            <a href="#" className="small" onClick={(e) => { e.preventDefault(); setResetSent(true); }}>{t('signin.reset')}</a>
+            {resetSent && <p className="small muted">{t('signin.reset_sent')}</p>}
+          </form>
+        )}
+        {(stage === 'verify' || stage === 'enrol') && (
+          <form className="stack" onSubmit={verify}>
+            <h2>{t('second.title')}</h2>
+            {stage === 'enrol' && enrol && (
+              <div>
+                <p className="small">{t('second.enrol')}</p>
+                <QrCode value={enrol.uri} alt={t('second.enrol_qr_alt')} />
+                <p className="small muted">{t('second.enrol_manual')}</p>
+                <pre>{enrol.secret}</pre>
+              </div>
+            )}
+            <label>{t('second.code')}<input autoFocus inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} required /></label>
+            {error && <p className="error">{error}</p>}
+            <button className="primary" disabled={busy || code.length !== 6}>{t('second.verify')}</button>
+          </form>
+        )}
       </div>
-      {stage === 'credentials' && (
-        <form className="stack" onSubmit={signIn}>
-          <h2>{t('signin.title')}</h2>
-          <label>{t('signin.email')}<input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
-          <label>{t('signin.password')}<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
-          {error && <p className="error">{error}</p>}
-          {locked && <p className="error">{t('signin.locked', { until: new Date(locked).toLocaleTimeString() })}</p>}
-          <button className="primary" disabled={busy}>{t('signin.submit')}</button>
-          <a href="#" className="small" onClick={(e) => { e.preventDefault(); setResetSent(true); }}>{t('signin.reset')}</a>
-          {resetSent && <p className="small muted">{t('signin.reset_sent')}</p>}
-        </form>
-      )}
-      {(stage === 'verify' || stage === 'enrol') && (
-        <form className="stack" onSubmit={verify}>
-          <h2>{t('second.title')}</h2>
-          {stage === 'enrol' && enrol && (
-            <div>
-              <p className="small">{t('second.enrol')}</p>
-              <QrCode value={enrol.uri} alt={t('second.enrol_qr_alt')} />
-              <p className="small muted">{t('second.enrol_manual')}</p>
-              <pre>{enrol.secret}</pre>
-            </div>
-          )}
-          <label>{t('second.code')}<input autoFocus inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} required /></label>
-          {error && <p className="error">{error}</p>}
-          <button className="primary" disabled={busy || code.length !== 6}>{t('second.verify')}</button>
-        </form>
-      )}
     </div>
   );
 }

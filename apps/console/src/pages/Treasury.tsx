@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { get } from '../lib/api';
 import { useSession } from '../lib/session';
-import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, When, useLoad } from '../components/common';
+import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
 
 /** Treasury (console spec 8): balances, float ordered by cover, transfers, cashouts, funding and adjustments. */
 export function TreasuryPage() {
@@ -28,7 +28,7 @@ export function TreasuryPage() {
         <ErrorLine error={float.error} />
         {float.data && <>
           <ScopeNote scoped={float.data.scoped} />
-          <div className="row" style={{ marginBottom: 12 }}>{float.data.coverage.map((c: any) => <div className="card" key={c.currency}><b>{c.currency}</b> coverage {c.ratio ?? '—'} {c.ratio != null && c.ratio < 1 && <span className="pill critical">below one: project balances exceed what backs them</span>}<br /><span className="small muted">float <Amount minor={c.float} currency={c.currency} /> · encumbered <Amount minor={c.encumbered} currency={c.currency} /></span></div>)}</div>
+          <div className="row" style={{ marginBottom: 12 }}>{float.data.coverage.map((c: any) => <div className="card" key={c.currency}><b>{c.currency}</b> coverage {c.ratio ?? '—'} {c.ratio != null && c.ratio < 1 && <Tag family="refused">below one: project balances exceed what backs them</Tag>}<br /><span className="small muted">float <Amount minor={c.float} currency={c.currency} /> · encumbered <Amount minor={c.encumbered} currency={c.currency} /></span></div>)}</div>
           {accounts.length === 0 ? <Empty text="No float account yet; one appears with the first collection or funding at a provider." /> : (
             <table><thead><tr><th>Account</th><th className="num">Wallet balance</th><th className="num">Open disbursements</th><th className="num">Free liquidity</th><th className="num">Cover</th><th>Band</th><th className="num">Proposed transfer</th></tr></thead>
               <tbody>{accounts.map((a: any) => <tr key={a.id}><td><Link to={`/treasury/float/${a.id}`}>{a.providerAccountName} · {a.countryCode} · {a.currency} · {a.direction}</Link></td><td className="num"><Amount minor={a.balance} currency={a.currency} /></td><td className="num"><Amount minor={a.openDisbursements} currency={a.currency} /></td><td className="num"><Amount minor={a.freeLiquidity} currency={a.currency} /></td><td className="num">{a.coverHours == null ? '—' : `${a.coverHours} h`}</td><td><Pill value={a.band} /></td><td className="num">{a.proposedTransfer != null ? <Amount minor={a.proposedTransfer} currency={a.currency} /> : '—'}</td></tr>)}</tbody></table>
@@ -72,7 +72,7 @@ export function TreasuryPage() {
                   <input type="number" placeholder="amount" value={cashout.amount || ''} onChange={(e) => setCashout({ ...cashout, amount: Number(e.target.value) })} />
                 </div>
                 <div className="row"><input placeholder="supporting document reference" value={cashout.supporting_document} onChange={(e) => setCashout({ ...cashout, supporting_document: e.target.value })} style={{ width: 300 }} /><input placeholder="justification" value={cashout.justification} onChange={(e) => setCashout({ ...cashout, justification: e.target.value })} style={{ width: 300 }} /></div>
-                {withdrawable && <p className="small">Solvency remainder <b><Amount minor={withdrawable.solvency} currency={accounts.find((a: any) => a.id === cashout.float_account_id)?.currency ?? ''} /></b> · liquidity remainder <b><Amount minor={withdrawable.liquidity} currency={accounts.find((a: any) => a.id === cashout.float_account_id)?.currency ?? ''} /></b> · <span className="pill primary">{withdrawable.binding} binds</span> → withdrawable <b><Amount minor={withdrawable.withdrawable} currency={accounts.find((a: any) => a.id === cashout.float_account_id)?.currency ?? ''} /></b>{cashout.amount > withdrawable.withdrawable && <span className="negative"> · exceeds the withdrawable amount</span>}</p>}
+                {withdrawable && <p className="small">Solvency remainder <b><Amount minor={withdrawable.solvency} currency={accounts.find((a: any) => a.id === cashout.float_account_id)?.currency ?? ''} /></b> · liquidity remainder <b><Amount minor={withdrawable.liquidity} currency={accounts.find((a: any) => a.id === cashout.float_account_id)?.currency ?? ''} /></b> · <Tag family="tag">{withdrawable.binding} binds</Tag> → withdrawable <b><Amount minor={withdrawable.withdrawable} currency={accounts.find((a: any) => a.id === cashout.float_account_id)?.currency ?? ''} /></b>{cashout.amount > withdrawable.withdrawable && <span className="negative"> · exceeds the withdrawable amount</span>}</p>}
               </div>} />
           ) : <NeedsPermission permission="treasury.cashout.initiate" />}
         </div>

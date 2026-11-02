@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { get, put } from '../lib/api';
 import { useSession } from '../lib/session';
-import { Amount, ErrorLine, NeedsPermission, Pill, When, useLoad } from '../components/common';
+import { Amount, ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
 
 export function FloatDetailPage() {
   const { id } = useParams();
@@ -22,7 +22,7 @@ export function FloatDetailPage() {
             <dt>Open disbursements</dt><dd><Amount minor={a.openDisbursements} currency={a.currency} /></dd>
             <dt>Free liquidity</dt><dd><b><Amount minor={a.freeLiquidity} currency={a.currency} /></b></dd>
             <dt>Recent outflow</dt><dd><Amount minor={a.outflowPerHour} currency={a.currency} /> per hour (95th percentile of daily volume, last 7 days)</dd>
-            <dt>Cover</dt><dd>{a.coverHours == null ? '—' : `${a.coverHours} h`} · target {a.targetHours} h · minimum {a.minimumHours} h {a.overrideAmount != null && <span className="pill warning">manual override <Amount minor={a.overrideAmount} currency={a.currency} /></span>}</dd>
+            <dt>Cover</dt><dd>{a.coverHours == null ? '—' : `${a.coverHours} h`} · target {a.targetHours} h · minimum {a.minimumHours} h {a.overrideAmount != null && <Tag family="checking">manual override <Amount minor={a.overrideAmount} currency={a.currency} /></Tag>}</dd>
             {a.proposedTransfer != null && <><dt>Proposed transfer</dt><dd><Amount minor={a.proposedTransfer} currency={a.currency} /> from the paired collection wallet {data.paired_collection && <>(free <Amount minor={data.paired_collection.freeLiquidity} currency={a.currency} />) → <Link to="/treasury">register</Link></>}</dd></>}
             {data.withdrawable && <><dt>Withdrawable</dt><dd><Amount minor={data.withdrawable.withdrawable} currency={a.currency} /> <span className="small muted">(solvency <Amount minor={data.withdrawable.solvency} currency={a.currency} />, liquidity <Amount minor={data.withdrawable.liquidity} currency={a.currency} />; {data.withdrawable.binding} binds)</span></dd></>}
           </dl>

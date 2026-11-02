@@ -27,7 +27,6 @@ a:hover { text-decoration-color: var(--ink); }
 .env-chip { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
 .env-chip.sandbox { background: var(--hazard); color: var(--ink); }
 .env-chip.production { color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
-.band { display: none; }
 
 .lockup { display: inline-flex; align-items: center; gap: 0.45em; font-weight: 700; letter-spacing: -0.03em; color: var(--ink); }
 .lockup svg { flex: none; }
@@ -70,12 +69,6 @@ tr:last-child td { border-bottom: 0; }
 .tag.pending { background: var(--state-pending-bg); color: var(--state-pending-text); box-shadow: none; }
 .tag.checking { background: var(--state-checking-bg); color: var(--state-checking-text); box-shadow: none; }
 .tag.information { background: var(--state-information-bg); color: var(--state-information-text); box-shadow: none; }
-/* Raw `pill` spans in pages until they become <Tag>: the old class names, read as families. */
-.pill { display: inline-flex; padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--line); }
-.pill.active { background: var(--state-confirmed-bg); color: var(--state-confirmed-text); box-shadow: none; }
-.pill.critical, .pill.failed { background: var(--state-refused-bg); color: var(--state-refused-text); box-shadow: none; }
-.pill.warning { background: var(--state-checking-bg); color: var(--state-checking-text); box-shadow: none; }
-
 /* Amounts: the figure carries the weight, the currency sits beside it, smaller. */
 .amount-figure { font-weight: 600; }
 .amount-currency { font-size: 0.85em; font-weight: 600; color: var(--muted); }

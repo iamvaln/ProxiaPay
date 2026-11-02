@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { get, patch, post } from '../lib/api';
 import { useSession } from '../lib/session';
-import { ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, When, useLoad } from '../components/common';
+import { ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
 
 /** Configuration (console spec 7.1, 7.4): countries, methods, the route list, providers with breaker state and one-action suspension. */
 export function ConfigurationPage() {
@@ -24,8 +24,8 @@ export function ConfigurationPage() {
         <ErrorLine error={routes.error} />
         {routes.data && <table><thead><tr><th>Country</th><th>Currency</th><th>Method</th><th>Direction</th><th className="num">Processing</th><th className="num">Platform</th><th>Bearers</th><th>Provider</th><th>Active</th><th className="num">Volume 30 d</th></tr></thead>
           <tbody>{routes.data.routes.filter((r) => !filter || `${r.country_code} ${r.currency_code} ${r.payment_method_code} ${r.direction}`.toUpperCase().includes(filter)).map((r) => <tr key={r.id}>
-            <td><Link to={`/configuration/routes/${r.id}`}>{r.country_name}</Link>{!r.country_active && <span className="pill failed">country off</span>}</td><td>{r.currency_code}</td><td>{r.payment_method_name}</td><td>{r.direction}</td>
-            <td className="num">{r.processing_fee_bps / 100}%{r.indicative && <span className="pill warning" title="Terms from a commercial proposal, not yet contracted">indicative</span>}</td>
+            <td><Link to={`/configuration/routes/${r.id}`}>{r.country_name}</Link>{!r.country_active && <Tag family="refused">country off</Tag>}</td><td>{r.currency_code}</td><td>{r.payment_method_name}</td><td>{r.direction}</td>
+            <td className="num">{r.processing_fee_bps / 100}%{r.indicative && <Tag family="checking" title="Terms from a commercial proposal, not yet contracted">indicative</Tag>}</td>
             <td className={`num ${r.platform_fee_bps > 0 ? 'ok' : 'muted'}`}>{r.platform_fee_bps / 100}%</td><td className="small">{r.processing_fee_bearer} / {r.platform_fee_bearer}</td><td>{r.provider ?? '—'}</td><td><Pill value={r.active ? 'active' : 'suspended'} /></td><td className="num">{r.volume_30d}</td>
           </tr>)}</tbody></table>}
       </>)}
@@ -48,10 +48,10 @@ export function ConfigurationPage() {
       {tab === 'providers' && (<>
         <ErrorLine error={providers.error} />
         {providers.data && <><ScopeNote scoped={providers.data.scoped} />{providers.data.providers.map((p: any) => <div className="card" key={p.id} style={{ marginBottom: 12, outline: p.id === providerId ? '2px solid var(--accent)' : undefined }}>
-          <h2>{p.name} <Pill value={p.status} /> {p.breaker_state === 'open' && <span className="pill critical">breaker open · {p.failure_count} failures</span>}</h2>
+          <h2>{p.name} <Pill value={p.status} /> {p.breaker_state === 'open' && <Tag family="refused">breaker open · {p.failure_count} failures</Tag>}</h2>
           <dl className="kv">
             <dt>Provider</dt><dd>{p.provider_name} ({p.adapter_key})</dd><dt>Base address</dt><dd>{p.base_url}</dd>
-            <dt>Credentials</dt><dd>{p.credentials_present ? <Pill value="present" /> : <span className="pill failed">absent</span>}</dd>
+            <dt>Credentials</dt><dd>{p.credentials_present ? <Pill value="present" /> : <Tag family="refused">absent</Tag>}</dd>
             <dt>Capabilities</dt><dd className="small">transfers {p.adapter.supportsTransfers ? 'exposed' : 'via console + reconciliation'} · listing {p.adapter.supportsListing ? 'exposed' : 'statement upload'} · test environment {p.adapter.hasTestEnvironment ? 'yes' : 'no (simulator stands in)'} · statement format {p.statement_format ?? '—'}</dd>
             <dt>Scope</dt><dd className="small">{[...new Set(p.capabilities.map((c: any) => `${c.country_code}/${c.currency_code}`))].join(', ') || '—'}</dd>
             {p.suspended_at && <><dt>Suspended</dt><dd><When value={p.suspended_at} /></dd></>}

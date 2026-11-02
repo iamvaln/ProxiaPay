@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { get, post } from '../lib/api';
 import { useSession, useT } from '../lib/session';
-import { Amount, Empty, ErrorLine, NeedsPermission, Pill, When, useLoad } from '../components/common';
+import { Amount, Empty, ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
 
 /** Transaction detail (console spec 5.2): everything about one payment without navigation. A browser address is absent entirely. */
 export function TransactionDetailPage() {
@@ -18,7 +18,7 @@ export function TransactionDetailPage() {
   const x = data.transaction, a = data.amounts, cur = a.currency;
   return (
     <>
-      <h1>{x.reference} <Pill value={x.state} /> <Pill value={x.reconciliation_status} /></h1>
+      <h1><span className="mono">{x.reference}</span> <Pill value={x.state} /> <Pill value={x.reconciliation_status} /></h1>
       <div className="grid2">
         <div className="card">
           <dl className="kv">
@@ -26,8 +26,8 @@ export function TransactionDetailPage() {
             <dt>Direction</dt><dd>{x.direction}</dd>
             <dt>Route</dt><dd>{x.route.country} · {x.route.payment_method} · {cur}</dd>
             <dt>Counterparty experiences</dt><dd><Amount minor={x.direction === 'collection' ? a.charged : a.settled ?? a.expected_settled} currency={cur} /></dd>
-            <dt>Provider reference</dt><dd>{x.provider_reference ?? '—'}</dd>
-            <dt>Operator reference</dt><dd>{x.operator_reference ?? '—'}</dd>
+            <dt>Provider reference</dt><dd><span className="mono">{x.provider_reference ?? '—'}</span></dd>
+            <dt>Operator reference</dt><dd><span className="mono">{x.operator_reference ?? '—'}</span></dd>
             <dt>Failure reason</dt><dd>{x.failure_reason ?? '—'}</dd>
             {data.refund_of && <><dt>Refund of</dt><dd><Link to={`/transactions/${data.refund_of}`}>{data.refund_of}</Link></dd></>}
             <dt>Created</dt><dd><When value={x.created_at} /></dd>
@@ -44,7 +44,7 @@ export function TransactionDetailPage() {
             <dt>Processing fee</dt><dd><Amount minor={a.processing_fee} currency={cur} /> · borne by {a.processing_fee_bearer}</dd>
             <dt>Platform fee</dt><dd><Amount minor={a.platform_fee} currency={cur} /> · borne by {a.platform_fee_bearer}</dd>
             <dt>Expected provider fee</dt><dd><Amount minor={a.expected_provider_fee} currency={cur} /></dd>
-            <dt>Actual provider fee</dt><dd><Amount minor={a.actual_provider_fee} currency={cur} /> {a.provider_fee_differs && <span className="pill warning">differs {data.discrepancies.length ? <Link to={`/reconciliation/discrepancies/${data.discrepancies[0].id}`}>discrepancy</Link> : null}</span>}</dd>
+            <dt>Actual provider fee</dt><dd><Amount minor={a.actual_provider_fee} currency={cur} /> {a.provider_fee_differs && <Tag family="checking">differs {data.discrepancies.length ? <Link to={`/reconciliation/discrepancies/${data.discrepancies[0].id}`}>discrepancy</Link> : null}</Tag>}</dd>
             <dt>Margin</dt><dd><Amount minor={a.margin} currency={cur} /> <span className="small muted">processing fee less actual provider fee</span></dd>
             {a.reserved_amount > 0 && <><dt>Reserved</dt><dd><Amount minor={a.reserved_amount} currency={cur} /></dd></>}
           </dl>
@@ -59,7 +59,7 @@ export function TransactionDetailPage() {
           <h2>Attempts</h2>
           {data.attempts.length === 0 ? <Empty text="No provider attempt yet." /> : (
             <table><thead><tr><th>#</th><th>Provider account</th><th>Reference</th><th>Terms</th><th>Outcome</th><th className="num">Duration</th></tr></thead>
-              <tbody>{data.attempts.map((at: any) => <tr key={at.id}><td>{at.sequence}{at.fees_recorded && <span className="pill primary" title="Fees recorded from this attempt">fees</span>}</td><td>{at.provider_account}</td><td>{at.provider_reference ?? '—'}<br /><span className="small muted">{at.operator_reference}</span></td><td className="small">{at.terms.expected_fee_bps / 100}% {at.terms.terms_status}</td><td><Pill value={at.state} />{at.failure_reason && <><br /><span className="small">{at.failure_reason}{at.provider_error_code ? ` (${at.provider_error_code})` : ''}</span></>}</td><td className="num">{at.duration_ms != null ? `${at.duration_ms} ms` : '—'}</td></tr>)}</tbody></table>
+              <tbody>{data.attempts.map((at: any) => <tr key={at.id}><td>{at.sequence}{at.fees_recorded && <Tag family="tag" title="Fees recorded from this attempt">fees</Tag>}</td><td>{at.provider_account}</td><td><span className="mono">{at.provider_reference ?? '—'}</span><br /><span className="small muted">{at.operator_reference}</span></td><td className="small">{at.terms.expected_fee_bps / 100}% {at.terms.terms_status}</td><td><Pill value={at.state} />{at.failure_reason && <><br /><span className="small">{at.failure_reason}{at.provider_error_code ? ` (${at.provider_error_code})` : ''}</span></>}</td><td className="num">{at.duration_ms != null ? `${at.duration_ms} ms` : '—'}</td></tr>)}</tbody></table>
           )}
         </div>
       </div>

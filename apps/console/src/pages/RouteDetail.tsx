@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { get, post } from '../lib/api';
 import { useSession } from '../lib/session';
-import { Empty, ErrorLine, NeedsPermission, Pill, When, useLoad } from '../components/common';
+import { Empty, ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
 
 /** Route detail (console spec 7.2): the current version, projects with their own rates, the version history as a sequence, and opening a new version with its comparison. */
 export function RouteDetailPage() {
@@ -41,7 +41,7 @@ export function RouteDetailPage() {
           </dl>
           <h3>Bindings, in fallback order</h3>
           <table><thead><tr><th>#</th><th>Provider account</th><th className="num">Expected fee</th><th>Terms</th><th>Enabled</th><th>Limits</th></tr></thead>
-            <tbody>{c.bindings.map((b: any) => <tr key={b.id}><td>{b.priority}</td><td><Link to={`/configuration/providers/${b.provider_account_id}`}>{b.provider_account_name}</Link> <Pill value={b.provider_account_status} /></td><td className="num">{b.expected_fee_bps / 100}%{b.expected_fee_bps > c.processing_fee_bps && <span className="pill critical" title="Expected provider fee exceeds the processing fee">below cost</span>}</td><td><Pill value={b.terms_status} /></td><td>{b.enabled ? 'yes' : 'no'}</td><td className="small">{b.minimum_amount ?? '—'} / {b.maximum_amount ?? '—'}</td></tr>)}</tbody></table>
+            <tbody>{c.bindings.map((b: any) => <tr key={b.id}><td>{b.priority}</td><td><Link to={`/configuration/providers/${b.provider_account_id}`}>{b.provider_account_name}</Link> <Pill value={b.provider_account_status} /></td><td className="num">{b.expected_fee_bps / 100}%{b.expected_fee_bps > c.processing_fee_bps && <Tag family="refused" title="Expected provider fee exceeds the processing fee">below cost</Tag>}</td><td><Pill value={b.terms_status} /></td><td>{b.enabled ? 'yes' : 'no'}</td><td className="small">{b.minimum_amount ?? '—'} / {b.maximum_amount ?? '—'}</td></tr>)}</tbody></table>
         </div>
         <div className="card">
           <h2>Projects quoted their own rates</h2>
