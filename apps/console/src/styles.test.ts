@@ -68,3 +68,9 @@ describe('the brand colour is black', () => {
     expect(css).toMatch(/::selection \{[^}]*background: var\(--ink\)[^}]*color: var\(--surface\)/);
   });
 });
+
+describe('the sign-in card', () => {
+  it('takes its full 400 px rather than shrinking to its content inside the centred page', () => {
+    expect(css).toMatch(/\.signin \{[^}]*width: 100%[^}]*max-width: 400px/);
+  });
+});
