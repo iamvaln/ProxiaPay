@@ -1,8 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Controller, Get, Header, Inject, Module } from '@nestjs/common';
+import { Controller, Get, Header, Inject, Module, NotFoundException, Param, StreamableFile } from '@nestjs/common';
 import { CONFIG, type AppConfig } from '../config/config';
 import { buildOpenApi } from './openapi';
+
+// The page's fonts and icons, by name. Only these are served: a name is looked up, never joined into a path.
+const FONTS = ['manrope-latin-400-normal', 'manrope-latin-500-normal', 'manrope-latin-600-normal', 'manrope-latin-700-normal', 'ibm-plex-mono-latin-400-normal', 'ibm-plex-mono-latin-500-normal'];
+const BRAND: Record<string, string> = { 'favicon.svg': 'image/svg+xml', 'favicon-32.png': 'image/png', 'apple-touch-icon.png': 'image/png' };
 
 /**
  * The integration guide and the interface specification, served by the API itself (spec 7.5).
@@ -17,6 +21,8 @@ export class DocsController {
   private readonly page: string;
   private readonly spec: string;
   private readonly renderer: string;
+  private readonly fonts = new Map<string, Buffer>();
+  private readonly brandFiles = new Map<string, Buffer>();
 
   constructor(@Inject(CONFIG) config: Pick<AppConfig, 'PROXIAPAY_ENV'>) {
     const doc = buildOpenApi(config.PROXIAPAY_ENV);
@@ -27,6 +33,11 @@ export class DocsController {
       .replaceAll('{{SERVER}}', doc.servers[0]?.url ?? '')
       .replaceAll('{{VERSION}}', doc.info.version);
     this.renderer = readFileSync(require.resolve('redoc/bundles/redoc.standalone.js'), 'utf8');
+    for (const name of FONTS) {
+      const pkg = name.startsWith('manrope') ? '@fontsource/manrope' : '@fontsource/ibm-plex-mono';
+      this.fonts.set(`${name}.woff2`, readFileSync(require.resolve(`${pkg}/files/${name}.woff2`)));
+    }
+    for (const file of Object.keys(BRAND)) this.brandFiles.set(file, readFileSync(join(__dirname, '..', '..', 'assets', 'brand', file)));
   }
 
   @Get()
@@ -41,6 +52,22 @@ export class DocsController {
   @Header('cache-control', 'public, max-age=300')
   openapi(): string {
     return this.spec;
+  }
+
+  @Get('fonts/:file')
+  @Header('cache-control', 'public, max-age=86400')
+  font(@Param('file') file: string): StreamableFile {
+    const buf = this.fonts.get(file);
+    if (!buf) throw new NotFoundException();
+    return new StreamableFile(buf, { type: 'font/woff2' });
+  }
+
+  @Get('brand/:file')
+  @Header('cache-control', 'public, max-age=86400')
+  brand(@Param('file') file: string): StreamableFile {
+    const buf = this.brandFiles.get(file);
+    if (!buf) throw new NotFoundException();
+    return new StreamableFile(buf, { type: BRAND[file] });
   }
 
   @Get('redoc.standalone.js')

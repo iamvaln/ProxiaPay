@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { buildOpenApi } from './openapi';
 import { DocsController } from './docs.module';
@@ -24,6 +25,25 @@ describe('/docs', () => {
     // The renderer is this process's own copy, never a third-party host.
     expect(html).toContain('src="/docs/redoc.standalone.js"');
     expect(html).not.toMatch(/https?:\/\/cdn\./);
+  });
+
+  it('serves its own fonts and brand files, and nothing outside the list', () => {
+    expect(docs.font('manrope-latin-600-normal.woff2').getHeaders().type).toBe('font/woff2');
+    expect(docs.brand('favicon.svg').getHeaders().type).toBe('image/svg+xml');
+    expect(docs.brand('apple-touch-icon.png').getHeaders().type).toBe('image/png');
+    for (const bad of ['../package.json', '..%2Fpackage.json', 'manrope-latin-900-normal.woff2', ''])
+      expect(() => docs.font(bad)).toThrow(NotFoundException);
+    expect(() => docs.brand('../docs.html')).toThrow(NotFoundException);
+  });
+
+  it('wears the identity: own fonts, the mark, the favicon, the sandbox ribbon', () => {
+    const html = docs.guide();
+    expect(html).toContain('/docs/fonts/manrope-latin-400-normal.woff2');
+    expect(html).toContain('/docs/fonts/ibm-plex-mono-latin-400-normal.woff2');
+    expect(html).toContain('href="/docs/brand/favicon.svg"');
+    expect(html).toMatch(/<svg[^>]*aria-label="ProxiaPay"/);
+    expect(html).not.toMatch(/fonts\.(googleapis|gstatic)\.com/);
+    expect(html).toContain('data-env="sandbox"');
   });
 
   it('serves the specification it built and the renderer it ships', () => {
