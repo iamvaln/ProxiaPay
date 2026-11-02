@@ -33,7 +33,7 @@ export function ProjectDetailPage() {
           <h2>Credentials</h2>
           <p className="small muted">Rotation: <b className={stage === 'none' ? 'negative' : ''}>{stage === 'none' ? 'no working credential' : stage === 'primary' ? 'one primary; issue a secondary to begin a rotation' : 'primary and secondary both authenticate; promote the secondary, then delete the retired one'}</b></p>
           <table><thead><tr><th>Key</th><th>Role</th><th>Status</th><th>Issued</th><th /></tr></thead>
-            <tbody>{data.credentials.map((c: any) => <tr key={c.id}><td className="small">{c.key}<br /><span className="muted">{c.scopes.join(', ')}</span></td><td><Pill value={c.role} /></td><td><Pill value={c.status} /></td><td><When value={c.issued_at} /></td><td>
+            <tbody>{data.credentials.map((c: any) => <tr key={c.id}><td className="small"><span className="mono">{c.key}</span><br /><span className="muted">{c.scopes.join(', ')}</span></td><td><Pill value={c.role} /></td><td><Pill value={c.status} /></td><td><When value={c.issued_at} /></td><td>
               {c.status === 'active' && has('projects.credentials') && <div className="row">
                 {c.role === 'secondary' && <ConfirmedAction operationType="credential.promote" values={{ credential_id: c.id }} path={`/projects/${id}/credentials/${c.id}/promote`} label="Promote" onDone={reload} />}
                 {c.role === 'secondary' && active.length > 1 && <ConfirmedAction operationType="credential.delete" values={{ credential_id: c.id }} path={`/projects/${id}/credentials/${c.id}`} label="Delete" onDone={reload} />}

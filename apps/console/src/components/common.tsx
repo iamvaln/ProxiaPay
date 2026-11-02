@@ -38,7 +38,7 @@ export function Amount({ minor, currency }: { minor: number | null | undefined; 
 /** Timestamps in the administrator's zone, the UTC value on hover (console spec 3.3). */
 export function When({ value }: { value: string | Date | null | undefined }) {
   const { lang, me } = useSession();
-  return <span title={utc(value)}>{when(value, lang, me?.administrator.timezone)}</span>;
+  return <span className="when" title={utc(value)}>{when(value, lang, me?.administrator.timezone)}</span>;
 }
 
 export function ErrorLine({ error }: { error: string | null | undefined }) {
