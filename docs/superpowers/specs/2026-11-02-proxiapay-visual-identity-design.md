@@ -55,9 +55,20 @@ These are failures even if everything technically works:
 
 ### Colour (decided: black and white)
 
-The brand has **no colour of its own**. Pages are white, text is black ink.
-Colour appears only to say what state something is in. Then it stands out,
-because nothing else competes with it.
+**The brand colour is black** (`ink`). Wherever a coloured theme would put its
+accent, ProxiaPay puts ink:
+
+- primary buttons;
+- links;
+- the active navigation item, filled;
+- the active tab;
+- focus outlines;
+- selected text;
+- checkboxes, radios and date pickers (`accent-color`);
+- the outline of a selected card.
+
+Pages are white. The only hues on screen say what state something is in, so
+they stand out.
 
 Brand values:
 

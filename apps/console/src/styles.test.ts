@@ -52,3 +52,19 @@ describe('what the components rely on', () => {
     expect(css).toMatch(/::placeholder \{[^}]*color: var\(--muted\)/);
   });
 });
+
+describe('the brand colour is black', () => {
+  // Wherever a coloured theme would put its accent, ProxiaPay puts ink.
+  it('fills the active navigation item in ink', () => {
+    expect(css).toMatch(/nav\.side a\.active \{[^}]*background: var\(--ink\)[^}]*\}/);
+    expect(css).toMatch(/nav\.side a\.active \{[^}]*color: var\(--surface\)/);
+  });
+
+  it('gives checkboxes, radios and date pickers the ink accent instead of the browser blue', () => {
+    expect(css).toMatch(/:root \{[^}]*accent-color: var\(--ink\)/);
+  });
+
+  it('highlights selected text in ink', () => {
+    expect(css).toMatch(/::selection \{[^}]*background: var\(--ink\)[^}]*color: var\(--surface\)/);
+  });
+});

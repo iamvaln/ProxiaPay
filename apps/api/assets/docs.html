@@ -31,7 +31,8 @@
     }
   }
   * { box-sizing: border-box; }
-  html { color-scheme: light dark; }
+  html { color-scheme: light dark; accent-color: var(--ink); }
+  ::selection { background: var(--ink); color: var(--ground); }
   body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.55; }
   a { color: var(--accent); text-underline-offset: 0.15em; }
   :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }

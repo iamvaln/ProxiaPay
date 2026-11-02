@@ -46,6 +46,12 @@ describe('/docs', () => {
     expect(html).toContain('data-env="sandbox"');
   });
 
+  it('puts ink wherever a coloured theme would put its accent: controls and selected text', () => {
+    const html = docs.guide();
+    expect(html).toMatch(/accent-color: var\(--ink\)/);
+    expect(html).toMatch(/::selection \{[^}]*background: var\(--ink\)/);
+  });
+
   it('sets the reference renderer\'s own controls in Manrope too, not its Verdana and Arial defaults', () => {
     expect(docs.guide()).toMatch(/#redoc \.operation-type, #redoc button \{[^}]*font-family: var\(--sans\)/);
   });
