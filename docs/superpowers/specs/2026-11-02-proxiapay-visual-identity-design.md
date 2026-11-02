@@ -117,8 +117,12 @@ double-entry ledger at the heart of the product.
 Geometry, on a 40 × 40 grid:
 
 - the disc has radius 20, centred;
-- the bars are 20 wide and 5 high, corner radius 1, at x = 10, one at y = 13
-  and one at y = 22.
+- the bars are 20 wide and 5 high, corner radius 1, at x = 10, one at
+  y = 12.5 and one at y = 22.5.
+
+The bars were first drawn at y = 13 and 22. They moved half a unit so their
+edges fall on whole pixels at 16 and 32 px, where the first position blurred
+them together.
 
 The builder may adjust bar thickness and gap by a unit if the 16 px rendering
 needs it. The shape does not change.
