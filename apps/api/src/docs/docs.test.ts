@@ -46,6 +46,10 @@ describe('/docs', () => {
     expect(html).toContain('data-env="sandbox"');
   });
 
+  it('sets the reference renderer\'s own controls in Manrope too, not its Verdana and Arial defaults', () => {
+    expect(docs.guide()).toMatch(/#redoc \.operation-type, #redoc button \{[^}]*font-family: var\(--sans\)/);
+  });
+
   it('serves the specification it built and the renderer it ships', () => {
     const spec = JSON.parse(docs.openapi()) as { openapi: string; paths: Record<string, unknown> };
     expect(spec.openapi).toBe('3.0.3');

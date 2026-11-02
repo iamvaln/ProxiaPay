@@ -106,6 +106,8 @@
   #reference .ref-head { max-width: 1180px; margin: 0 auto; padding: 1.5rem 1.25rem 0.5rem; }
   /* The reference renderer's stylesheet is light-only, so it sits on an explicitly light surface in both themes. */
   #redoc { background: #ffffff; color: #0b0d12; }
+  /* Redoc hard-codes Verdana on method badges and leaves buttons on the browser default: both take the identity's face. */
+  #redoc .operation-type, #redoc button { font-family: var(--sans); }
   @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 </style>
 </head>
