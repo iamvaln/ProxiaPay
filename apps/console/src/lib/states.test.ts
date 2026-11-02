@@ -3,10 +3,10 @@ import { STATE_SYMBOL, stateFamily } from './states';
 
 describe('which family a state belongs to', () => {
   const families = {
-    confirmed: ['succeeded', 'healthy', 'active', 'matched', 'delivered', 'confirmed', 'approved', 'completed', 'resolved', 'cleared', 'done', 'present'],
+    confirmed: ['succeeded', 'healthy', 'active', 'matched', 'delivered', 'confirmed', 'approved', 'completed', 'resolved', 'cleared', 'done', 'present', 'contracted'],
     refused: ['failed', 'expired', 'critical', 'suspended', 'exhausted', 'revoked', 'declined', 'rejected', 'dead', 'disabled', 'deleted', 'abandoned'],
     pending: ['processing', 'submitted', 'pending', 'action_required', 'created', 'submitting', 'pending_approval', 'under_review', 'running', 'queued', 'half_open'],
-    checking: ['undetermined', 'watch', 'warning', 'disputed', 'degraded', 'open', 'unreviewed'],
+    checking: ['undetermined', 'watch', 'warning', 'disputed', 'degraded', 'open', 'unreviewed', 'indicative'],
     information: ['informational', 'acknowledged', 'examined', 'corrected'],
   } as const;
 

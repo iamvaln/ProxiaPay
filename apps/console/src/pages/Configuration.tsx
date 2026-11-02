@@ -47,7 +47,7 @@ export function ConfigurationPage() {
       </>)}
       {tab === 'providers' && (<>
         <ErrorLine error={providers.error} />
-        {providers.data && <><ScopeNote scoped={providers.data.scoped} />{providers.data.providers.map((p: any) => <div className="card" key={p.id} style={{ marginBottom: 12, outline: p.id === providerId ? '2px solid var(--accent)' : undefined }}>
+        {providers.data && <><ScopeNote scoped={providers.data.scoped} />{providers.data.providers.map((p: any) => <div className="card" key={p.id} style={{ marginBottom: 12, outline: p.id === providerId ? '2px solid var(--ink)' : undefined }}>
           <h2>{p.name} <Pill value={p.status} /> {p.breaker_state === 'open' && <Tag family="refused">breaker open · {p.failure_count} failures</Tag>}</h2>
           <dl className="kv">
             <dt>Provider</dt><dd>{p.provider_name} ({p.adapter_key})</dd><dt>Base address</dt><dd>{p.base_url}</dd>

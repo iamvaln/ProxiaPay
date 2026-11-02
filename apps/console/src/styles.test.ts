@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -34,4 +34,21 @@ describe('the console palette', () => {
       expect(contrast(text, ground)).toBeGreaterThanOrEqual(4.5);
     });
   }
+});
+
+describe('what the components rely on', () => {
+  it('defines every custom property a component uses, so no style silently vanishes', () => {
+    const files = readdirSync(__dirname, { recursive: true }).map(String).filter((f) => f.endsWith('.tsx'));
+    const used = new Set(files.flatMap((f) => [...readFileSync(join(__dirname, f), 'utf8').matchAll(/var\(--([a-z0-9-]+)\)/g)].map((m) => m[1]!)));
+    const missing = [...used].filter((name) => !new RegExp(`--${name}:`).test(css));
+    expect(missing).toEqual([]);
+  });
+
+  it('keeps the environment chip in view on long pages: the sidebar stays put', () => {
+    expect(css).toMatch(/nav\.side \{[^}]*position: sticky/);
+  });
+
+  it('sets placeholder text in the muted ink, not the browser default grey', () => {
+    expect(css).toMatch(/::placeholder \{[^}]*color: var\(--muted\)/);
+  });
 });

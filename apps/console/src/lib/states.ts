@@ -9,12 +9,12 @@ export type StateFamily = 'confirmed' | 'refused' | 'pending' | 'checking' | 'in
 export const STATE_SYMBOL: Record<Exclude<StateFamily, 'tag'>, string> = { confirmed: '✓', refused: '✕', pending: '◷', checking: '!', information: 'i' };
 
 const FAMILIES: Record<Exclude<StateFamily, 'tag'>, string[]> = {
-  confirmed: ['succeeded', 'healthy', 'active', 'matched', 'delivered', 'confirmed', 'approved', 'completed', 'resolved', 'cleared', 'done', 'present'],
+  confirmed: ['succeeded', 'healthy', 'active', 'matched', 'delivered', 'confirmed', 'approved', 'completed', 'resolved', 'cleared', 'done', 'present', 'contracted'],
   refused: ['failed', 'expired', 'critical', 'suspended', 'exhausted', 'revoked', 'declined', 'rejected', 'dead', 'disabled', 'deleted', 'abandoned'],
   // action_required waits on the payer, not on an operator.
   pending: ['processing', 'submitted', 'pending', 'action_required', 'created', 'submitting', 'pending_approval', 'under_review', 'running', 'queued', 'half_open'],
   // An undetermined payment is one a person must look at.
-  checking: ['undetermined', 'watch', 'warning', 'disputed', 'degraded', 'open', 'unreviewed'],
+  checking: ['undetermined', 'watch', 'warning', 'disputed', 'degraded', 'open', 'unreviewed', 'indicative'],
   information: ['informational', 'acknowledged', 'examined', 'corrected'],
 };
 

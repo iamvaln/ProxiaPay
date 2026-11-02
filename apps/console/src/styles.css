@@ -19,6 +19,7 @@ body { margin: 0; background: var(--surface); font-size: 14px; line-height: 1.5;
 a { color: var(--ink); text-decoration: underline; text-underline-offset: 0.15em; text-decoration-color: var(--muted); }
 a:hover { text-decoration-color: var(--ink); }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+::placeholder { color: var(--muted); opacity: 1; }
 
 /* The environment (console spec 2): a hazard stripe on the sandbox, a quiet chip naming production. */
 .env-ribbon { position: sticky; top: 0; z-index: 10; height: 6px; }
@@ -32,7 +33,8 @@ a:hover { text-decoration-color: var(--ink); }
 .lockup svg { flex: none; }
 
 .shell { display: grid; grid-template-columns: 232px 1fr; min-height: calc(100vh - 6px); }
-nav.side { background: var(--surface); border-right: 1px solid var(--line); padding: 20px 12px; display: flex; flex-direction: column; }
+/* The sidebar stays in view, so the chip naming the environment does too (console spec 2). */
+nav.side { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: var(--surface); border-right: 1px solid var(--line); padding: 20px 12px; display: flex; flex-direction: column; }
 nav.side .brand { padding: 0 8px 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 nav.side a { display: block; color: var(--ink-2); padding: 7px 10px; border-radius: var(--radius-control); text-decoration: none; font-weight: 500; }
 nav.side a:hover { color: var(--ink); background: var(--soft); }
