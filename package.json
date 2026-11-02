@@ -9,7 +9,7 @@
   "overrides": { "multer": "^2.4.0" },
   "scripts": {
     "build": "npm run build -w apps/api && npm run build -w apps/console",
-    "test": "npm run test -w apps/api",
+    "test": "npm run test -w apps/api && npm run test -w apps/console",
     "lint": "npm run lint -w apps/api",
     "typecheck": "npm run typecheck -w apps/api && npm run typecheck -w apps/console",
     "migrate": "npm run migrate -w apps/api",
