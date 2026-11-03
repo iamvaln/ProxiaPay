@@ -22,7 +22,11 @@ export async function seedReferenceData(db: Executor, opts: SeedOptions = {}): P
   const environment = opts.environment ?? 'sandbox';
 
   await db.insertInto('currency').values(CURRENCIES.map((c) => ({ code: c.code, name: c.name, exponent: c.exponent }))).onConflict((oc) => oc.doNothing()).execute();
-  await db.insertInto('country').values(COUNTRIES.map((c) => ({ code: c.code, iso3: c.iso3, name: c.name, dialling_prefix: c.prefix }))).onConflict((oc) => oc.doNothing()).execute();
+  // Production opens with Cameroon alone. The flag is written only on insert, so a country an administrator
+  // activated from the console stays active when the seed runs again.
+  await db.insertInto('country').values(COUNTRIES.map((c) => ({
+    code: c.code, iso3: c.iso3, name: c.name, dialling_prefix: c.prefix, active: environment !== 'production' || c.code === 'CM',
+  }))).onConflict((oc) => oc.doNothing()).execute();
   await db
     .insertInto('country_currency')
     .values(COUNTRIES.flatMap((c) => c.currencies.map((cur) => ({ country_code: c.code, currency_code: cur }))))
@@ -74,7 +78,7 @@ export async function seedReferenceData(db: Executor, opts: SeedOptions = {}): P
     .values({
       provider_code: providerCode,
       name: accountName,
-      base_url: environment === 'production' ? 'https://ejara-pay.vercel.app' : 'simulator://local',
+      base_url: environment === 'production' ? 'https://prodbox-valentines-payment.ejaraapis.xyz' : 'simulator://local',
       supports_transfers: false,
       supports_listing: false, // both providers reconcile from uploaded statements (spec 12, 18)
       has_test_environment: providerCode === 'simulator',
