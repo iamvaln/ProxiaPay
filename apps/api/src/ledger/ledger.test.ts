@@ -39,6 +39,33 @@ describe('ledger', () => {
     expect(await ledger.balanceByKey(db, { type: 'fee_expense', currency: 'XAF' })).toBe(20);
   });
 
+  it('books what the provider actually debited when rounding kept the payer under the quote', async () => {
+    // The first live Ejara collection: 100 requested, quoted 103, but Ejara's 2 percent rounded up
+    // makes 103 unreachable, so the payer was debited 102. The float received 100; the one unit the
+    // payer did not pay comes out of processing revenue, and the margin is zero, which is the truth.
+    await db.transaction().execute(async (tx) => {
+      const float = await ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId, countryCode: 'CM', currency: 'XAF', direction: 'collection' });
+      await ledger.postCollection(tx, { transactionId: null as unknown as string, projectId, currency: 'XAF', floatAccountId: float,
+        fees: { requested: 100, processingFee: 3, platformFee: 0, processingBearer: 'counterparty', platformBearer: 'counterparty', actualProviderFee: 2, counterpartyDebit: 102 } });
+    });
+    expect(await ledger.balanceByKey(db, { type: 'float', providerAccountId, countryCode: 'CM', currency: 'XAF', direction: 'collection' })).toBe(100);
+    expect(await ledger.balanceByKey(db, { type: 'project_available', projectId, currency: 'XAF' })).toBe(100);
+    expect(await ledger.balanceByKey(db, { type: 'processing_revenue', currency: 'XAF' })).toBe(2);
+    expect(await ledger.balanceByKey(db, { type: 'fee_expense', currency: 'XAF' })).toBe(2);
+  });
+
+  it('lets the shortfall take processing revenue below zero rather than bend the books', async () => {
+    // A route with no processing fee: 103 requested and quoted, 102 reachable. Revenue goes to -1.
+    await db.transaction().execute(async (tx) => {
+      const float = await ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId, countryCode: 'CM', currency: 'XAF', direction: 'collection' });
+      await ledger.postCollection(tx, { transactionId: null as unknown as string, projectId, currency: 'XAF', floatAccountId: float,
+        fees: { requested: 103, processingFee: 0, platformFee: 0, processingBearer: 'counterparty', platformBearer: 'counterparty', actualProviderFee: 2, counterpartyDebit: 102 } });
+    });
+    expect(await ledger.balanceByKey(db, { type: 'float', providerAccountId, countryCode: 'CM', currency: 'XAF', direction: 'collection' })).toBe(100);
+    expect(await ledger.balanceByKey(db, { type: 'project_available', projectId, currency: 'XAF' })).toBe(103);
+    expect(await ledger.balanceByKey(db, { type: 'processing_revenue', currency: 'XAF' })).toBe(-1);
+  });
+
   it('omits the platform posting where the fee is zero', async () => {
     await db.transaction().execute(async (tx) => {
       const float = await ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId, countryCode: 'CM', currency: 'XAF', direction: 'collection' });

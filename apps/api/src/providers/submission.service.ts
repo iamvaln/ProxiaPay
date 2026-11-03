@@ -10,6 +10,7 @@ import { TransactionService } from '../transactions/transaction.service';
 import { ProviderUnavailableError, type SubmitResult } from './adapter';
 import { CircuitBreaker } from './circuit-breaker';
 import { ProviderAccountService } from './provider-account.service';
+import { amountToSend } from './amount-to-send';
 
 /**
  * Sends a created transaction to a provider (spec 5.2–5.4). The request is recorded as sent
@@ -56,7 +57,7 @@ export class SubmissionService {
       const txn = await this.transactions.lock(tx, transactionId);
       if (txn.state !== 'created') return null;
       const tried = (await tx.selectFrom('transaction_attempt').select('provider_account_id').where('transaction_id', '=', txn.id).execute()).map((a) => a.provider_account_id);
-      const candidates = (await this.resolver.availableBindings(tx, txn.route_version_id, txn.requested_amount)).filter((b) => !tried.includes(b.provider_account_id));
+      const candidates = (await this.resolver.availableBindings(tx, txn.route_version_id, txn.direction === 'collection' ? txn.charged_amount : txn.expected_settled_amount)).filter((b) => !tried.includes(b.provider_account_id));
       // Preferred: the binding selected at confirmation; then fallback order.
       const ordered = [...candidates.filter((b) => b.id === txn.binding_id), ...candidates.filter((b) => b.id !== txn.binding_id)];
       let binding = ordered[0];
@@ -88,8 +89,21 @@ export class SubmissionService {
       const route = await tx.selectFrom('route').selectAll().where('id', '=', txn.route_id).executeTakeFirstOrThrow();
       const currency = await tx.selectFrom('currency').select('exponent').where('code', '=', txn.currency_code).executeTakeFirstOrThrow();
       const { ctx, adapterKey } = await this.accounts.context(tx, binding.provider_account_id, txn.correlation_id, txn.id);
+      // What the provider is sent depends on how it charges its fee (amount-to-send.ts): the largest
+      // amount within the payer's quote on a collection, enough to deliver the promised amount on a
+      // payout at a provider that deducts its fee. What was sent and what the counterparty should
+      // then experience travel with the attempt, so settlement can tell a provider that did
+      // something else from one that did exactly what was asked.
+      const caps = this.accounts.adapter(adapterKey).capabilities();
+      const leg = amountToSend(txn.direction as 'collection' | 'disbursement', caps,
+        { bps: binding.expected_fee_bps, fixed: binding.expected_fee_fixed }, { charged: txn.charged_amount, settled: txn.expected_settled_amount });
+      const amount = leg.amount;
+      await tx.updateTable('transaction_attempt').set({ binding_snapshot: JSON.stringify({
+        ...attempt.binding_snapshot as object, sent_amount: leg.amount,
+        ...(txn.direction === 'collection' ? { expected_debit: leg.counterparty } : caps.disbursementFee === 'deducted' ? { expected_delivery: leg.counterparty } : {}),
+      }) }).where('id', '=', attempt.id).execute();
       const req = {
-        transactionReference: txn.reference, direction: txn.direction as 'collection' | 'disbursement', amount: txn.direction === 'collection' ? txn.requested_amount : txn.expected_settled_amount,
+        transactionReference: txn.reference, direction: txn.direction as 'collection' | 'disbursement', amount,
         currency: txn.currency_code, currencyExponent: currency.exponent, country: route.country_code, paymentMethod: route.payment_method_code,
         msisdn: this.crypto.openString(txn.msisdn_ciphertext, 'msisdn'), counterpartyName: txn.counterparty_name, counterpartyEmail: txn.counterparty_email,
       };

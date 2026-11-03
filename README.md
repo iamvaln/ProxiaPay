@@ -10,8 +10,9 @@ This repository implements the three specifications in `docs/spec/`: the functio
 |---|---|
 | `apps/api` | The platform: project interface (`/v1`), console interface (`/console`), provider webhooks (`/providers`), and the background worker. TypeScript on NestJS over PostgreSQL. |
 | `apps/console` | The administration console. React on Vite; served separately and proxied to the API. |
-| `docs/` | Integration guide, going-live checklist, operations runbook, design decisions. |
+| `docs/` | Integration guide, going-live checklist, operations runbook, sandbox deployment, design decisions. |
 | `docker-compose.yml` | A local PostgreSQL 16. |
+| `docker-compose.deploy.yml` | The deployed stack: database, migrations, API, worker, console, behind the VPS's shared Traefik. |
 
 ## Running locally
 
@@ -61,4 +62,4 @@ The running API serves the same document at `/docs/openapi.json`, and the integr
 - Console API: `apps/api/src/console-api/`; console UI: `apps/console/src/pages/`.
 - Configured values (spec 14.7): seeded into `platform_setting` from `apps/api/src/seed/catalogue.ts`.
 
-See `docs/decisions.md` for the choices made where the specification left room, and `docs/operations.md` for deployment, backups, key handling and the restore rehearsal.
+See `docs/decisions.md` for the choices made where the specification left room, `docs/operations.md` for backups, key handling and the restore rehearsal, and `docs/sandbox-deployment.md` for the sandbox at `sandbox.pay.proxia-digital.com`.

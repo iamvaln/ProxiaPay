@@ -1,0 +1,137 @@
+# ProxiaPay — the deployed stack, one project among several on a shared VPS.
+# Routing and TLS belong to the VPS's single Traefik, on the external `web`
+# network; this file only declares what it should route where.
+#
+#   docker compose --env-file .env.sandbox -f docker-compose.deploy.yml up -d
+#
+# NOT docker-compose.yml. That one is the local PostgreSQL for development and
+# nothing else; this one is never brought up on a workstation.
+#
+# THE PROJECT NAME FOLLOWS `STACK`, and that is not cosmetic. A name frozen in
+# this file would make every directory holding a checkout drive the SAME Compose
+# project: an `up` from the sandbox directory would recreate the production
+# containers with the sandbox's environment and images. That exact failure cost
+# lehno a 404 on production on 14 September; the deploy workflow now asks Compose
+# what project it thinks it is before touching anything.
+name: ${STACK:-proxiapay}
+
+services:
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - proxiapay-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [internal]
+
+  # ── One-shot: apply the SQL migrations, then exit. ─────────────────────────
+  # A dedicated service rather than a step inside the API's own start-up: the
+  # API and the worker both boot from this image, and two processes racing the
+  # same migration is a deadlock waiting for the first busy morning.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-api:${IMAGE_TAG:-latest}
+    env_file: ${ENV_FILE:-.env.production}
+    command: ['node', 'dist/cli/migrate.js']
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+
+  # ── The platform: /v1, /console, /providers, /docs ─────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: ${ENV_FILE:-.env.production}
+    environment:
+      # EXACTLY ONE proxy stands in front of this container: the shared Traefik.
+      # The value is safe only because no port is published here — the container
+      # is reachable through Traefik alone, and Traefik rewrites X-Forwarded-For.
+      # Publish a port one day and a caller can forge that header, name its own
+      # origin, and walk through the allowlist (docs/operations.md).
+      TRUSTED_PROXY_HOPS: '1'
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [internal, web]
+    # HEALTHCHECK comes from the image (apps/api/Dockerfile).
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=web
+      # The API owns four prefixes; the console owns everything else on the same
+      # host. Explicit priorities rather than trusting Traefik's rule-length
+      # ordering: the tie-break is documented behaviour, but a future edit to
+      # either rule would silently reorder them.
+      - traefik.http.routers.${STACK:-proxiapay}-api.rule=Host(`${APP_DOMAIN}`) && (PathPrefix(`/v1`) || PathPrefix(`/console`) || PathPrefix(`/providers`) || PathPrefix(`/docs`))
+      - traefik.http.routers.${STACK:-proxiapay}-api.priority=100
+      - traefik.http.routers.${STACK:-proxiapay}-api.entrypoints=websecure
+      - traefik.http.routers.${STACK:-proxiapay}-api.tls.certresolver=${CERT_RESOLVER:-le}
+      - traefik.http.services.${STACK:-proxiapay}-api.loadbalancer.server.port=3000
+
+  # ── Background work ────────────────────────────────────────────────────────
+  # The status sweep every 10 s, preview expiry, notification delivery and its
+  # retries, reconciliation runs, alert evaluation and escalation, float cover,
+  # and hourly housekeeping. Every lock and counter lives in PostgreSQL, so this
+  # scales by adding replicas — but one is right for a sandbox.
+  worker:
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: ${ENV_FILE:-.env.production}
+    command: ['node', 'dist/main.worker.js']
+    # NO HEALTHCHECK: the worker serves no port, and the image's probe would
+    # curl a socket that isn't listening — a permanently unhealthy container.
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # `internal` only. It answers no request; it has nothing to expose.
+    networks: [internal]
+
+  # ── The administration console (static, nginx) ─────────────────────────────
+  # NO env_file: nothing is read at runtime, and handing this container the file
+  # that holds the master key would put it in a process with no use for it.
+  console:
+    build:
+      context: .
+      dockerfile: apps/console/Dockerfile
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-console:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    # `web` only: the browser calls the platform at the same origin, routed by
+    # Traefik to the api container. Nothing is proxied here.
+    networks: [web]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=web
+      - traefik.http.routers.${STACK:-proxiapay}-console.rule=Host(`${APP_DOMAIN}`)
+      - traefik.http.routers.${STACK:-proxiapay}-console.priority=1
+      - traefik.http.routers.${STACK:-proxiapay}-console.entrypoints=websecure
+      - traefik.http.routers.${STACK:-proxiapay}-console.tls.certresolver=${CERT_RESOLVER:-le}
+      - traefik.http.services.${STACK:-proxiapay}-console.loadbalancer.server.port=80
+
+volumes:
+  proxiapay-db:
+
+networks:
+  internal: # private: db ↔ migrate, api, worker
+  web: # the VPS's shared proxy network (created once: `docker network create web`)
+    external: true

@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { loadEnv } from './cli/env';
-import { WorkerModule, registerJobHandlers } from './worker.module';
+import { RECURRING_JOBS, WorkerModule, registerJobHandlers } from './worker.module';
 import { loadConfig } from './config/config';
 import { rootLogger } from './logging/logger';
 import { Worker } from './jobs/worker';
@@ -32,7 +32,7 @@ async function bootstrap() {
 
 /** Recurring jobs re-arm themselves; seeding them here means a fresh deployment has them from the first minute. */
 export async function scheduleRecurring(queue: JobQueue, db: Db): Promise<void> {
-  for (const kind of ['sweep.tick', 'preview.expire', 'alerts.evaluate', 'float.cover', 'reconciliation.weekly', 'housekeeping']) {
+  for (const kind of RECURRING_JOBS) {
     await queue.enqueue(db, kind, {}, { dedupeKey: kind, maxAttempts: 1_000_000 });
   }
 }

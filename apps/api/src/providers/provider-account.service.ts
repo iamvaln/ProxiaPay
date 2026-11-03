@@ -5,6 +5,7 @@ import { DB_TOKEN, type Db, type Executor } from '../db/database';
 import type { AdapterContext } from './adapter';
 import { ProviderRegistry } from './provider-registry';
 import { AuditService } from '../audit/audit.service';
+import { CredentialConfigError, credentialsFromEnv } from './provider-credentials';
 
 /** Provider accounts: credentials sealed at rest, read at use, never returned (spec 3.3, 10). */
 @Injectable()
@@ -46,9 +47,37 @@ export class ProviderAccountService {
     return this.registry.get(key);
   }
 
-  async setCredentials(exec: Executor, providerAccountId: string, credentials: Record<string, string>, actorId: string, confirmationId?: string): Promise<void> {
+  async setCredentials(exec: Executor, providerAccountId: string, credentials: Record<string, string>, actorId: string | null, confirmationId?: string): Promise<void> {
     await exec.updateTable('provider_account').set({ credential_ciphertext: this.crypto.seal(JSON.stringify(credentials), `provider_account:${providerAccountId}`) }).where('id', '=', providerAccountId).execute();
     await this.audit.record(exec, { actorId, action: 'provider_account.credentials_replaced', subjectType: 'provider_account', subjectId: providerAccountId, next: { keys: Object.keys(credentials) }, confirmationId });
+  }
+
+  /**
+   * Brings every provider account's sealed credentials in line with a parsed credentials file, as a
+   * deployment does on each run. A set is sealed only when it differs from what opens today, so a
+   * deploy that changes nothing writes nothing to the audit trail; a provider the file does not
+   * mention keeps what it has. The actor is the system, recorded as such. With one account per
+   * provider the file names providers, not accounts — and two accounts of one provider are refused
+   * rather than guessed between.
+   */
+  async syncCredentials(env: Record<string, string | undefined>): Promise<{ accountId: string; provider: string; status: 'sealed' | 'unchanged' | 'absent' | 'not_needed' }[]> {
+    const rows = await this.db.selectFrom('provider_account as pa').innerJoin('provider as p', 'p.code', 'pa.provider_code')
+      .select(['pa.id', 'pa.provider_code', 'pa.credential_ciphertext', 'p.adapter_key']).orderBy('pa.provider_code').execute();
+    const results: { accountId: string; provider: string; status: 'sealed' | 'unchanged' | 'absent' | 'not_needed' }[] = [];
+    for (const row of rows) {
+      const keys = this.adapter(row.adapter_key).capabilities().credentialKeys;
+      if (keys.length === 0) { results.push({ accountId: row.id, provider: row.provider_code, status: 'not_needed' }); continue; }
+      const lookup = credentialsFromEnv(env, row.provider_code, keys);
+      if (lookup.status === 'absent') { results.push({ accountId: row.id, provider: row.provider_code, status: 'absent' }); continue; }
+      if (rows.filter((r) => r.provider_code === row.provider_code).length > 1) {
+        throw new CredentialConfigError(`more than one ${row.provider_code} account exists; a credentials file names providers, so it cannot tell them apart.`);
+      }
+      const current = row.credential_ciphertext ? (JSON.parse(this.crypto.openString(row.credential_ciphertext, `provider_account:${row.id}`)) as Record<string, string>) : {};
+      if (sameCredentials(current, lookup.values)) { results.push({ accountId: row.id, provider: row.provider_code, status: 'unchanged' }); continue; }
+      await this.db.transaction().execute((tx) => this.setCredentials(tx, row.id, lookup.values, null));
+      results.push({ accountId: row.id, provider: row.provider_code, status: 'sealed' });
+    }
+    return results;
   }
 
   async setStatus(exec: Executor, providerAccountId: string, status: 'active' | 'suspended', actorId: string): Promise<void> {
@@ -68,4 +97,9 @@ export class ProviderAccountService {
 export function normaliseBaseUrl(raw: string): string {
   const cleaned = raw.replace(/^\uFEFF/, '').trim().replace(/\/+$/, '');
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
+}
+
+function sameCredentials(a: Record<string, string>, b: Record<string, string>): boolean {
+  const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && a[k] === b[k]);
 }

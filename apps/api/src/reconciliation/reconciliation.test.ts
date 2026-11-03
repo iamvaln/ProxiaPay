@@ -13,6 +13,7 @@ import { StatementService } from './statement.service';
 import { ReconciliationService } from './reconciliation.service';
 import { DiscrepancyService } from './discrepancy.service';
 import { NotificationService } from '../notifications/notification.service';
+import { TreasuryService } from '../treasury/treasury.service';
 import { normaliseStatementStatus, parseCsv, parseStatement } from './statement-format';
 
 let t: TestContext;
@@ -150,5 +151,115 @@ describe('a run against a statement', () => {
     const float = (await ledger.findAccount(t.db, { type: 'float', providerAccountId, countryCode: 'CM', currency: 'XAF', direction: 'collection' }))!;
     expect(await ledger.balance(t.db, float)).toBe(1000);
     expect((await t.db.selectFrom('discrepancy').select('resolving_entry_id').where('id', '=', d.id).executeTakeFirstOrThrow()).resolving_entry_id).toBeTruthy();
+  });
+});
+
+// The first live Ejara collections debited the payer one unit under the quote and the books
+// claimed otherwise, and nothing noticed: the provider's reported debit was compared to nothing at
+// settlement, and float drift was only ever measured inside a reconciliation run, which for a
+// provider without transaction listing waits for a statement nobody had uploaded.
+describe('continuous checks', () => {
+  const alertsLike = (prefix: string) => t.db.selectFrom('alert').selectAll().where('fingerprint', 'like', `${prefix}%`).where('status', '<>', 'cleared').execute();
+
+  async function submitted(reference: string) {
+    const p = await previews.create(principal, { direction: 'collection', amount: 1000, currency: 'XAF', country: 'CM', payment_method: 'MOMO', counterparty: { msisdn: '677123456' }, reference });
+    const { transactionId } = await transactions.confirm(principal, p.reference, 'collection');
+    await submission.submit(transactionId);
+    return transactionId;
+  }
+
+  it('stays quiet when the provider debits exactly what the amount it was sent implies', async () => {
+    await collect('677123456', 'quiet-1');
+    expect(await alertsLike('debit_divergence:')).toHaveLength(0);
+  });
+
+  it('raises an alert at settlement when the provider reports a different debit', async () => {
+    const id = await submitted('diverge-1');
+    // Sent 1005 for a quote of 1025; the provider claims it debited 1024.
+    await t.db.transaction().execute(async (tx) => {
+      const row = await transactions.lock(tx, id);
+      await transactions.finalizeSuccess(tx, row, { actualProviderFee: 20, chargedAmount: 1024, providerAccountId, attemptId: row.current_attempt_id, source: 'status_check' });
+    });
+    const [alert] = await alertsLike('debit_divergence:');
+    expect(alert).toMatchObject({ category: 'reconciliation', severity: 'warning' });
+    expect(alert!.detail).toMatchObject({ sent: 1005, expected_debit: 1025, reported_debit: 1024 });
+  });
+
+  it('measures float drift on a schedule, without a statement, and clears it when the balances agree', async () => {
+    await collect('677123456', 'drift-1'); // ledger float 1005
+    SimulatorAdapter.wallets = [{ country: 'CM', currency: 'XAF', direction: 'collection', balance: 1000 }];
+    expect(await recon.checkFloatDrift()).toMatchObject({ drifting: 1 });
+    const [alert] = await alertsLike('float_drift:');
+    expect(alert).toMatchObject({ category: 'reconciliation', severity: 'warning' });
+    // provider − ledger, the convention the float_drift discrepancy already uses.
+    expect(alert!.detail).toMatchObject({ provider_balance: 1000, ledger_balance: 1005, difference: -5 });
+    SimulatorAdapter.wallets = [{ country: 'CM', currency: 'XAF', direction: 'collection', balance: 1005 }];
+    expect(await recon.checkFloatDrift()).toMatchObject({ drifting: 0 });
+    expect(await alertsLike('float_drift:')).toHaveLength(0);
+  });
+
+  describe('float transfers, confirmed on the provider\'s own balances', () => {
+    // A registered transfer sat pending until a reconciliation run, and for a provider without
+    // listing a run waits for a statement — while a client may be waiting on the refund it funds.
+    async function registered(amount: number) {
+      await collect('677123456', `t-${amount}`); // collection float 1005
+      return t.db.transaction().execute(async (tx) => {
+        const source = (await ledger.findAccount(tx, { type: 'float', providerAccountId, countryCode: 'CM', currency: 'XAF', direction: 'collection' }))!;
+        const destination = await ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId, countryCode: 'CM', currency: 'XAF', direction: 'disbursement' });
+        return t.app.get(TreasuryService).registerTransfer(tx, { sourceAccountId: source, destinationAccountId: destination, amount, providerFee: 0, actorId: project.adminId });
+      });
+    }
+    const statusOf = async (id: string) => (await t.db.selectFrom('float_transfer').select(['status', 'confirmed_at']).where('id', '=', id).executeTakeFirstOrThrow());
+
+    it('confirms as soon as both wallets show the move', async () => {
+      const id = await registered(500);
+      SimulatorAdapter.wallets = [
+        { country: 'CM', currency: 'XAF', direction: 'collection', balance: 505 },
+        { country: 'CM', currency: 'XAF', direction: 'disbursement', balance: 500 },
+      ];
+      expect(await recon.confirmPendingTransfers()).toMatchObject({ confirmed: 1 });
+      expect((await statusOf(id)).status).toBe('confirmed');
+      expect((await statusOf(id)).confirmed_at).toBeTruthy();
+    });
+
+    it('waits while the provider has not moved the money yet', async () => {
+      const id = await registered(500);
+      SimulatorAdapter.wallets = [
+        { country: 'CM', currency: 'XAF', direction: 'collection', balance: 1005 },
+        { country: 'CM', currency: 'XAF', direction: 'disbursement', balance: 0 },
+      ];
+      expect(await recon.confirmPendingTransfers()).toMatchObject({ confirmed: 0, pending: 1 });
+      expect((await statusOf(id)).status).toBe('pending');
+    });
+
+    it('does not confirm on balances read while a payment is in flight', async () => {
+      const id = await registered(500);
+      await submitted('in-flight-t');
+      SimulatorAdapter.wallets = [
+        { country: 'CM', currency: 'XAF', direction: 'collection', balance: 505 },
+        { country: 'CM', currency: 'XAF', direction: 'disbursement', balance: 500 },
+      ];
+      expect(await recon.confirmPendingTransfers()).toMatchObject({ confirmed: 0 });
+      expect((await statusOf(id)).status).toBe('pending');
+    });
+
+    it('records who confirmed it: the provider\'s balances, not a reconciliation run', async () => {
+      const id = await registered(500);
+      SimulatorAdapter.wallets = [
+        { country: 'CM', currency: 'XAF', direction: 'collection', balance: 505 },
+        { country: 'CM', currency: 'XAF', direction: 'disbursement', balance: 500 },
+      ];
+      await recon.confirmPendingTransfers();
+      const audit = await t.db.selectFrom('audit_record').select(['actor_id', 'action']).where('subject_id', '=', id).where('action', '=', 'float_transfer.confirm').execute();
+      expect(audit).toEqual([{ actor_id: null, action: 'float_transfer.confirm' }]);
+    });
+  });
+
+  it('does not compare an account while a payment is in flight, since the provider credits before we post', async () => {
+    await collect('677123456', 'drift-2');
+    await submitted('in-flight-1'); // processing: the provider may already have credited its wallet
+    SimulatorAdapter.wallets = [{ country: 'CM', currency: 'XAF', direction: 'collection', balance: 2010 }];
+    expect(await recon.checkFloatDrift()).toMatchObject({ skipped: 1, drifting: 0 });
+    expect(await alertsLike('float_drift:')).toHaveLength(0);
   });
 });

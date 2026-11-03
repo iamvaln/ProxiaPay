@@ -1,5 +1,5 @@
 import type { FailureReason } from '../common/errors';
-import type { Direction } from '../money/money';
+import type { Direction, ProviderRounding } from '../money/money';
 
 /** The internal contract every provider presents (spec 11). */
 export interface AdapterCapabilities {
@@ -10,6 +10,24 @@ export interface AdapterCapabilities {
   tokenModel: 'concurrent' | 'single';
   statementFormat?: string;
   supportsCodeSubmission: boolean;
+  /**
+   * How the provider rounds the fee it adds on top of a collection amount. The platform sends the
+   * largest amount whose debit stays within the payer's quote (money.providerAmountWithin), so this
+   * decides where the payer's debit lands. Declared per provider: each rounds its own way.
+   */
+  collectionFeeRounding: ProviderRounding;
+  /**
+   * The credential keys the adapter reads from `ctx.account.credentials`. A credentials file is held
+   * to exactly these (see provider-credentials.ts): a key the adapter never reads would be stored and
+   * then sent as an empty value, and the provider would blame the credential.
+   */
+  credentialKeys: readonly string[];
+  /**
+   * How the provider charges its fee on a payout: added on top of what it is sent, or deducted from
+   * it with the recipient's amount rounded down. Ejara deducts — 520 sent delivers 512 at 1.5
+   * percent — so it must be sent more than the recipient was promised (see amount-to-send.ts).
+   */
+  disbursementFee: 'on_top' | 'deducted';
 }
 
 export interface AdapterAccount {

@@ -27,7 +27,7 @@ export class EjaraAdapter implements ProviderAdapter {
   private readonly tokens = new Map<string, { token: string; expiresAt: number }>();
 
   capabilities(): AdapterCapabilities {
-    return { supportsTransfers: false, supportsListing: false, hasTestEnvironment: false, tokenModel: 'concurrent', statementFormat: 'ejara_csv_v1', supportsCodeSubmission: false };
+    return { supportsTransfers: false, supportsListing: false, hasTestEnvironment: false, tokenModel: 'concurrent', statementFormat: 'ejara_csv_v1', supportsCodeSubmission: false, collectionFeeRounding: 'ceil', credentialKeys: ['clientKey', 'clientSecret'], disbursementFee: 'deducted' };
   }
 
   private async token(ctx: AdapterContext): Promise<string> {
@@ -124,9 +124,12 @@ export class EjaraAdapter implements ProviderAdapter {
     try {
       const body = JSON.parse(rawBody.toString('utf8')) as { event?: string; data?: Record<string, unknown> };
       const data = body.data ?? {};
-      const providerReference = firstString(data, ['paymentReference', 'reference', 'id']);
+      // Observed from the prodbox: our reference arrives as internalReference — the id initiation
+      // returned as internalPaymentId — and ours as externalTransactionReference. data.providerReference
+      // is the operator's own id and must never be matched on: it looks right and finds nothing.
+      const providerReference = firstString(data, ['internalReference', 'internalPaymentId', 'paymentReference', 'reference']);
       if (!providerReference || !body.event) return null;
-      return { providerReference, externalReference: firstString(data, ['externalReference']), eventKey: body.event, asserts: body.event.endsWith('.confirmed') ? 'succeeded' : body.event.endsWith('.rejected') ? 'failed' : undefined };
+      return { providerReference, externalReference: firstString(data, ['externalTransactionReference', 'externalReference']), eventKey: body.event, asserts: body.event.endsWith('.confirmed') ? 'succeeded' : body.event.endsWith('.rejected') ? 'failed' : undefined };
     } catch {
       return null;
     }

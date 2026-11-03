@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { get, post } from '../lib/api';
 import { useSession } from '../lib/session';
-import { Amount, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, When, useLoad } from '../components/common';
+import { Amount, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
 
 /** Reconciliation (console spec 9.1–9.3): runs, statement upload with what was read, and the discrepancy queue with recurrence shown prominently. */
 export function ReconciliationPage() {
@@ -27,15 +27,15 @@ export function ReconciliationPage() {
           <select value={f.type ?? ''} onChange={(e) => setF({ ...f, type: e.target.value })}><option value="">Type</option>{['float_drift', 'fee_variance', 'orphan_transaction', 'missing_transaction', 'state_divergence', 'stale_undetermined', 'unconfirmed_transfer', 'checkpoint_mismatch'].map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}</select>
           <select value={f.status ?? ''} onChange={(e) => setF({ ...f, status: e.target.value })}><option value="">Status</option><option value="open">open</option><option value="under_review">under review</option><option value="resolved">resolved</option></select>
           <label className="row"><input type="checkbox" checked={f.recurred === 'true'} onChange={(e) => setF({ ...f, recurred: e.target.checked ? 'true' : '' })} /> recurred after resolution</label>
-          {f.run && <span className="pill primary">run {f.run.slice(0, 8)} <a href="#" onClick={(e) => { e.preventDefault(); setF({ ...f, run: '' }); }}>×</a></span>}
+          {f.run && <Tag family="tag">run {f.run.slice(0, 8)} <a href="#" onClick={(e) => { e.preventDefault(); setF({ ...f, run: '' }); }}>×</a></Tag>}
         </div>
         <ErrorLine error={disc.error} />
         {disc.data && <ScopeNote scoped={disc.data.scoped} />}
         {disc.data && (disc.data.discrepancies.length === 0 ? <Empty text="No discrepancy. Discrepancies are raised by a reconciliation run, weekly or from an uploaded statement." /> : (
           <table><thead><tr><th>Type</th><th>Subject</th><th>Expected</th><th>Observed</th><th className="num">Difference</th><th>Status</th><th>First detected</th><th className="num">Runs seen</th><th>Assignee</th></tr></thead>
             <tbody>{disc.data.discrepancies.map((d: any) => <tr key={d.id}>
-              <td><Link to={`/reconciliation/discrepancies/${d.id}`}>{d.type.replace(/_/g, ' ')}</Link>{d.recurrences_after_resolution > 0 && <><br /><span className="pill critical">recurred ×{d.recurrences_after_resolution}</span></>}</td>
-              <td>{d.transaction_reference ? <Link to={`/transactions/${d.transaction_reference}`}>{d.transaction_reference}</Link> : d.subject_reference}</td>
+              <td><Link to={`/reconciliation/discrepancies/${d.id}`}>{d.type.replace(/_/g, ' ')}</Link>{d.recurrences_after_resolution > 0 && <><br /><Tag family="refused">recurred ×{d.recurrences_after_resolution}</Tag></>}</td>
+              <td>{d.transaction_reference ? <Link to={`/transactions/${d.transaction_reference}`} className="mono">{d.transaction_reference}</Link> : d.subject_reference}</td>
               <td className="small">{JSON.stringify(d.expected)}</td><td className="small">{JSON.stringify(d.observed)}</td>
               <td className="num">{d.difference != null ? <Amount minor={d.difference} currency={d.currency_code ?? ''} /> : '—'}</td>
               <td><Pill value={d.status} />{d.decision && <><br /><span className="small">{d.decision}</span></>}</td><td><When value={d.first_detected_at} /></td><td className="num">{d.runs_seen}</td><td>{d.assignee_name ?? '—'}</td>

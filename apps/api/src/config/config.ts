@@ -37,6 +37,11 @@ const schema = z.object({
   MAIL_FROM: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   PUBLIC_BASE_URL: z.string().url().optional(),
+  /**
+   * Sandbox only: the console's second factor accepts any six digits and skips enrolment. Refused at
+   * boot in production — see loadConfig — so a configuration slip cannot waive it where money is real.
+   */
+  SANDBOX_ANY_SECOND_FACTOR: z.string().optional().transform((v) => v === 'true'),
   /** Worker instance name, used when claiming jobs. */
   INSTANCE_NAME: z.string().default(() => `${process.pid}@${require('node:os').hostname()}`),
 });
@@ -53,6 +58,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Invalid configuration: ${issues}`);
   }
   if (parsed.data.RESEND_API_KEY && !parsed.data.MAIL_FROM) throw new Error('Invalid configuration: MAIL_FROM is required when RESEND_API_KEY is set');
+  if (parsed.data.SANDBOX_ANY_SECOND_FACTOR && parsed.data.PROXIAPAY_ENV === 'production') throw new Error('Invalid configuration: SANDBOX_ANY_SECOND_FACTOR is refused in production');
   cached = parsed.data;
   return cached;
 }

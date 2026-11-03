@@ -12,7 +12,7 @@ export function SearchPage() {
       <ErrorLine error={error} />
       {data && (data.results.length === 0 ? <Empty text="No record matches that reference." /> : (
         <table><thead><tr><th>Kind</th><th>Reference</th><th>State</th></tr></thead>
-          <tbody>{data.results.map((r) => <tr key={r.kind + r.id}><td>{r.kind}</td><td>{r.kind === 'transaction' ? <Link to={`/transactions/${r.reference}`}>{r.reference}</Link> : <Link to={`/transactions/previews?reference=${r.reference}`}>{r.reference}</Link>}</td><td><Pill value={r.state} /></td></tr>)}</tbody></table>
+          <tbody>{data.results.map((r) => <tr key={r.kind + r.id}><td>{r.kind}</td><td>{r.kind === 'transaction' ? <Link to={`/transactions/${r.reference}`} className="mono">{r.reference}</Link> : <Link to={`/transactions/previews?reference=${r.reference}`} className="mono">{r.reference}</Link>}</td><td><Pill value={r.state} /></td></tr>)}</tbody></table>
       ))}
     </>
   );

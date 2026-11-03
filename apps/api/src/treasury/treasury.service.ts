@@ -190,6 +190,19 @@ export class TreasuryService {
     return row.id;
   }
 
+  /**
+   * Confirms a pending transfer on the provider's own balances: both wallets read what the ledger
+   * says, with the transfer already posted, so the provider has moved the money. Recorded with the
+   * system as actor and the balances as evidence.
+   */
+  async confirmTransferOnBalances(tx: Tx, transferId: string, evidence: Record<string, unknown>): Promise<boolean> {
+    const updated = await tx.updateTable('float_transfer').set({ status: 'confirmed', confirmed_at: sql`now()` }).where('id', '=', transferId).where('status', '=', 'pending').returning('id').executeTakeFirst();
+    if (!updated) return false;
+    await this.audit.record(tx, { actorId: null, action: 'float_transfer.confirm', subjectType: 'float_transfer', subjectId: transferId, next: { evidence } });
+    await this.alerts.clear(`unconfirmed_transfer:${transferId}`, tx);
+    return true;
+  }
+
   async confirmTransfer(tx: Tx, transferId: string, runId: string): Promise<void> {
     await tx.updateTable('float_transfer').set({ status: 'confirmed', confirmed_at: sql`now()`, confirming_run_id: runId }).where('id', '=', transferId).where('status', '=', 'pending').execute();
     await this.alerts.clear(`unconfirmed_transfer:${transferId}`, tx);

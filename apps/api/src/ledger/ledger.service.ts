@@ -53,6 +53,11 @@ export interface FeeSplit {
   processingBearer: Bearer;
   platformBearer: Bearer;
   actualProviderFee: number;
+  /**
+   * What the provider actually debited the payer, where it reported it. A provider that rounds its
+   * on-top fee can leave the payer under the quote (R + X); absent, the quote is assumed.
+   */
+  counterpartyDebit?: number | null;
 }
 
 export class InsufficientBalanceError extends Error {
@@ -228,12 +233,20 @@ export class LedgerService {
     };
   }
 
-  /** Collection: float rises by R + X − P, project credited R − Y, revenues booked, provider fee expensed. */
+  /**
+   * Collection: float rises by D − P, where D is what the payer was actually debited (R + X unless the
+   * provider reported less); project credited R − Y; revenues booked; provider fee expensed. When D
+   * falls short of the quote, the shortfall comes out of processing revenue — below zero if need be,
+   * booked as a debit, because the books follow the money rather than the quote.
+   */
   async postCollection(tx: Tx, args: { transactionId: string; projectId: string; currency: string; floatAccountId: string; fees: FeeSplit; entryType?: 'collection' }): Promise<string> {
     const { x, y } = this.splits(args.fees);
     const f = args.fees;
-    const floatDelta = subtract(sum(f.requested, x), f.actualProviderFee);
+    const quote = sum(f.requested, x);
+    const debit = f.counterpartyDebit ?? quote;
+    const floatDelta = subtract(debit, f.actualProviderFee);
     if (floatDelta <= 0) throw new RangeError('provider fee consumes the whole collection; refusing to post');
+    const processing = subtract(f.processingFee, subtract(quote, debit));
     const available = await this.getOrCreateAccount(tx, { type: 'project_available', projectId: args.projectId, currency: args.currency });
     const fa = await this.feeAccounts(tx, args.currency);
     return this.post(tx, {
@@ -243,7 +256,9 @@ export class LedgerService {
         { accountId: args.floatAccountId, side: 'debit', amount: floatDelta },
         { accountId: fa.expense, side: 'debit', amount: f.actualProviderFee },
         { accountId: available, side: 'credit', amount: subtract(f.requested, y) },
-        { accountId: fa.processing, side: 'credit', amount: f.processingFee },
+        processing >= 0
+          ? { accountId: fa.processing, side: 'credit', amount: processing }
+          : { accountId: fa.processing, side: 'debit', amount: subtract(0, processing) },
         { accountId: fa.platform, side: 'credit', amount: f.platformFee },
       ],
     });

@@ -1,0 +1,17 @@
+# Everything the images never need. Keeping the context small is not only speed:
+# `.env` carries the real keys, and a stray copy inside a layer outlives any later `rm`.
+.git
+.github
+node_modules
+**/node_modules
+**/dist
+.env
+.env.*
+!.env.example
+!.env.sandbox.example
+docs/openapi.*.json
+apps/console/dist
+apps/api/dist
+**/*.test.ts
+**/.vite
+.DS_Store

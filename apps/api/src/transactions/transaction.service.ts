@@ -6,7 +6,7 @@ import { newTransactionReference } from '../crypto/references';
 import { dbNow, DB_TOKEN, type Db, type Tx } from '../db/database';
 import { InsufficientBalanceError, LedgerService } from '../ledger/ledger.service';
 import { log } from '../logging/logger';
-import { sum, type Bearer } from '../money/money';
+import { subtract, sum, type Bearer } from '../money/money';
 import { NotificationService, type NotificationEvent } from '../notifications/notification.service';
 import type { ProjectPrincipal } from '../project-auth/project-auth.service';
 import { RouteResolver } from '../routes/route-resolver';
@@ -77,10 +77,11 @@ export class TransactionService {
         .where('requested_amount', '=', preview.requested_amount).where('msisdn_index', '=', preview.msisdn_index).where('state', 'in', [...OPEN_STATES, 'undetermined']).executeTakeFirst();
       if (pending) throw new PlatformError('SIMILAR_PAYMENT_PENDING', 'A similar payment is already pending for this counterparty.', { details: { transaction: pending.reference } });
 
-      const bindings = await this.resolver.availableBindings(tx, preview.route_version_id, preview.requested_amount);
+      const bindings = await this.resolver.availableBindings(tx, preview.route_version_id, direction === 'collection' ? preview.charged_amount : preview.settled_amount);
       if (bindings.length === 0) throw new PlatformError('NO_PROVIDER_AVAILABLE', 'No provider is available for this route at the moment.');
-      const binding = bindings.find((b) => b.id === preview.binding_id) ?? bindings[0]!;
-
+      // Preferred: the binding the preview quoted; then the rest by priority.
+      const ordered = [...bindings.filter((b) => b.id === preview.binding_id), ...bindings.filter((b) => b.id !== preview.binding_id)];
+      const binding = ordered[0]!;
       const ceiling = await this.settings.number(direction === 'collection' ? 'sweep.ceiling_collection_seconds' : 'sweep.ceiling_disbursement_seconds');
       const reference = newTransactionReference();
       const projectFees = sum(preview.processing_fee_bearer === 'project' ? preview.processing_fee : 0, preview.platform_fee_bearer === 'project' ? preview.platform_fee : 0);
@@ -134,15 +135,30 @@ export class TransactionService {
           if (e instanceof InsufficientBalanceError) throw new PlatformError('BALANCE_INSUFFICIENT', "The project's available balance falls short.", { details: { shortfall: e.shortfall, currency: e.currency } });
           throw e;
         }
-        const floatAccount = await this.ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId: binding.provider_account_id, countryCode: resolution.route.countryCode, currency: preview.currency_code, direction: 'disbursement' });
-        try {
-          await this.treasury.checkLiquidity(tx, floatAccount, sum(preview.settled_amount, preview.expected_provider_fee), txn.id);
-        } catch (e) {
-          if (e instanceof FloatInsufficientError) {
-            // The whole transaction rolls back (no record, no reservation); the alert is raised outside it.
-            throw new FloatShort(floatAccount, sum(preview.settled_amount, preview.expected_provider_fee));
+        // A payout goes to the first provider whose float covers it, not only the first by priority:
+        // when one provider in the country runs dry the next one pays. Decided after the project's
+        // balance is reserved, so a project short of funds hears that and not a liquidity refusal,
+        // and before anything is sent, so it cannot pay twice — unlike fallback after submission,
+        // which stays off for payouts because a provider that timed out may already have paid. Each
+        // float is locked as it is examined, in priority order, so concurrent confirmations cannot
+        // jointly overdraw one.
+        const required = sum(preview.settled_amount, preview.expected_provider_fee);
+        const floatFor = (b: typeof binding) => this.ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId: b.provider_account_id, countryCode: resolution.route.countryCode, currency: preview.currency_code, direction: 'disbursement' });
+        let chosen: typeof binding | undefined;
+        for (const b of ordered) {
+          try {
+            await this.treasury.checkLiquidity(tx, await floatFor(b), required, txn.id);
+            chosen = b;
+            break;
+          } catch (e) {
+            if (!(e instanceof FloatInsufficientError)) throw e;
           }
-          throw e;
+        }
+        // No provider can cover it: the whole transaction rolls back, and the alert names the
+        // provider the preview chose.
+        if (!chosen) throw new FloatShort(await floatFor(binding), required);
+        if (chosen.id !== binding.id) {
+          await tx.updateTable('transaction').set({ binding_id: chosen.id, selected_provider_account_id: chosen.provider_account_id }).where('id', '=', txn.id).execute();
         }
       }
       // Safety net: if the synchronous submission below is interrupted, the worker submits within a minute.
@@ -181,6 +197,32 @@ export class TransactionService {
     return this.ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId, countryCode: route.country_code, currency: txn.currency_code, direction: txn.direction as 'collection' | 'disbursement' });
   }
 
+  /**
+   * A provider charges its fee in a known way, so for what it was sent it should report a known
+   * amount: the payer's debit on a collection, the recipient's receipt on a payout at a provider that
+   * deducts its fee. When it reports anything else the books and the money part company — the first
+   * live Ejara collections overcharged nobody but booked revenue never collected, and the first live
+   * payout delivered 512 against 520 promised — so it is raised the moment it is known. Compared with
+   * the amount expected for what was sent, not the quote: one unit under an unreachable quote is
+   * what was asked for. A provider adding its fee on top of a payout delivers exactly what it was
+   * sent, so nothing is recorded to compare and nothing is raised.
+   */
+  private async checkReportedAmount(tx: Tx, txn: TransactionRow, attemptId: string | null, reported: number | null): Promise<void> {
+    if (reported == null || !attemptId) return;
+    const attempt = await tx.selectFrom('transaction_attempt').select(['binding_snapshot', 'provider_account_id']).where('id', '=', attemptId).executeTakeFirst();
+    const snapshot = (attempt?.binding_snapshot ?? {}) as { sent_amount?: number; expected_debit?: number; expected_delivery?: number };
+    const collection = txn.direction === 'collection';
+    const expected = collection ? snapshot.expected_debit : snapshot.expected_delivery;
+    if (expected == null || expected === reported) return;
+    const [kind, what] = collection ? ['debit', 'debited the payer'] : ['delivery', 'delivered to the recipient'];
+    await this.alerts.raise({
+      category: 'reconciliation', severity: 'warning', subjectType: 'transaction', subjectReference: txn.reference,
+      fingerprint: `${kind}_divergence:${txn.id}`, title: `The provider ${what} a different amount than expected`,
+      detail: { transaction: txn.reference, sent: snapshot.sent_amount ?? null, [`expected_${kind}`]: expected, [`reported_${kind}`]: reported, difference: subtract(reported, expected), provider_account_id: attempt?.provider_account_id ?? null },
+      actionReference: `/transactions/${txn.reference}`,
+    }, tx);
+  }
+
   /** Success: amounts and fees recorded, ledger posted, project notified. From processing, action_required or undetermined (via correction). */
   async finalizeSuccess(tx: Tx, txn: TransactionRow, r: { actualProviderFee: number | null; chargedAmount?: number | null; operatorReference?: string | null; providerAccountId: string } & OutcomeDetail): Promise<void> {
     if (TERMINAL_STATES.includes(txn.state as never)) return;
@@ -188,17 +230,19 @@ export class TransactionService {
     const settled = txn.expected_settled_amount;
     const floatAccount = await this.floatAccountFor(tx, txn, r.providerAccountId);
     if (txn.direction === 'collection') {
-      await this.ledger.postCollection(tx, { transactionId: txn.id, projectId: txn.project_id, currency: txn.currency_code, floatAccountId: floatAccount, fees: this.fees(txn, actualFee) });
+      await this.ledger.postCollection(tx, { transactionId: txn.id, projectId: txn.project_id, currency: txn.currency_code, floatAccountId: floatAccount, fees: { ...this.fees(txn, actualFee), counterpartyDebit: r.chargedAmount ?? null } });
     } else {
       await this.ledger.settleDisbursement(tx, { transactionId: txn.id, projectId: txn.project_id, currency: txn.currency_code, floatAccountId: floatAccount, fees: this.fees(txn, actualFee), from: txn.state === 'undetermined' ? 'suspense' : 'reserved' });
     }
     await tx.updateTable('transaction').set({
       state: 'succeeded', settled_amount: settled, actual_provider_fee: actualFee, terminal_at: sql`now()`, next_status_check_at: null, action_url_ciphertext: null,
-      ...(r.chargedAmount != null && r.chargedAmount !== txn.charged_amount ? {} : {}),
+      // A collection records what the payer was actually debited; the quote stays on the preview.
+      ...(txn.direction === 'collection' && r.chargedAmount != null ? { charged_amount: r.chargedAmount } : {}),
       ...(r.discrepancyId ? { reconciliation_status: 'corrected' } : {}),
     }).where('id', '=', txn.id).execute();
     if (r.attemptId) await tx.updateTable('transaction_attempt').set({ state: 'succeeded', actual_provider_fee: actualFee, operator_reference: r.operatorReference ?? null, ended_at: sql`now()`, response_payload_id: r.payloadId ?? null }).where('id', '=', r.attemptId).execute();
     await this.event(tx, txn.id, txn.state, 'succeeded', { ...r, detail: { ...(r.detail ?? {}), actual_provider_fee: actualFee, provider_charged_amount: r.chargedAmount ?? null } });
+    await this.checkReportedAmount(tx, txn, r.attemptId ?? txn.current_attempt_id, r.chargedAmount ?? null);
     await this.notify(tx, txn.id, 'transaction.succeeded');
     await this.alerts.clear(`undetermined:${txn.id}`, tx);
   }

@@ -4,28 +4,41 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ProxiaPay Integration</title>
+<link rel="icon" href="/docs/brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/docs/brand/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/docs/brand/apple-touch-icon.png">
 <style>
+  /* ProxiaPay's identity: black on white, colour only for meaning. Fonts are this process's own copies. */
+  @font-face { font-family: Manrope; font-weight: 400; font-display: swap; src: url(/docs/fonts/manrope-latin-400-normal.woff2) format("woff2"); }
+  @font-face { font-family: Manrope; font-weight: 500; font-display: swap; src: url(/docs/fonts/manrope-latin-500-normal.woff2) format("woff2"); }
+  @font-face { font-family: Manrope; font-weight: 600; font-display: swap; src: url(/docs/fonts/manrope-latin-600-normal.woff2) format("woff2"); }
+  @font-face { font-family: Manrope; font-weight: 700; font-display: swap; src: url(/docs/fonts/manrope-latin-700-normal.woff2) format("woff2"); }
+  @font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-display: swap; src: url(/docs/fonts/ibm-plex-mono-latin-400-normal.woff2) format("woff2"); }
+  @font-face { font-family: "IBM Plex Mono"; font-weight: 500; font-display: swap; src: url(/docs/fonts/ibm-plex-mono-latin-500-normal.woff2) format("woff2"); }
   :root {
-    --ink: #1b2430; --ink-2: #4a5566; --muted: #6b7686; --ground: #f5f7fa; --panel: #ffffff; --panel-2: #eef1f5; --line: #dfe4ea;
-    --accent: #1f5fd6; --sandbox: #2f6fb7; --production: #1d7a4f; --warn-bg: #fff7dc; --warn-line: #e8c96a;
-    --code-bg: #1b2430; --code-ink: #e6ebf2;
-    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --ink: #0b0d12; --ink-2: #454b59; --muted: #5b6170; --ground: #ffffff; --panel: #ffffff; --panel-2: #f6f7f9; --line: #eceef2;
+    --accent: #0b0d12; --warn-bg: #fff4dc; --warn-line: #f1dfb0;
+    --code-bg: #0b0d12; --code-ink: #f2f3f5; --code-line: transparent;
+    --hazard: #f5b400; --hazard-ink: #0b0d12;
+    --sans: Manrope, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --ink: #e6ebf2; --ink-2: #b8c2d0; --muted: #8d98a8; --ground: #0f141b; --panel: #161c25; --panel-2: #1e2632; --line: #2a3442;
-      --accent: #6f9df0; --sandbox: #4d8ad8; --production: #3ea672; --warn-bg: #2a2410; --warn-line: #7a6320;
-      --code-bg: #0b0f14; --code-ink: #dfe6ef;
+      --ink: #f2f3f5; --ink-2: #c4c8d0; --muted: #9aa0ac; --ground: #0b0d12; --panel: #111318; --panel-2: #14171d; --line: #262a33;
+      --accent: #f2f3f5; --warn-bg: #33270c; --warn-line: #5c4714;
+      --code-bg: #14171d; --code-ink: #f2f3f5; --code-line: #262a33;
     }
   }
   * { box-sizing: border-box; }
-  html { color-scheme: light dark; }
+  html { color-scheme: light dark; accent-color: var(--ink); }
+  ::selection { background: var(--ink); color: var(--ground); }
   body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.55; }
-  a { color: var(--accent); }
+  a { color: var(--accent); text-underline-offset: 0.15em; }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
   code, pre, kbd { font-family: var(--mono); }
   code { font-size: 0.9em; background: var(--panel-2); padding: 0.05em 0.35em; border-radius: 3px; }
-  pre { background: var(--code-bg); color: var(--code-ink); padding: 0.9rem 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.84rem; line-height: 1.5; margin: 0.75rem 0; }
+  pre { background: var(--code-bg); color: var(--code-ink); border: 1px solid var(--code-line); padding: 0.9rem 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.84rem; line-height: 1.5; margin: 0.75rem 0; }
   pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
   h1, h2, h3 { text-wrap: balance; line-height: 1.2; margin: 0; }
   h1 { font-size: 1.9rem; font-weight: 600; }
@@ -38,11 +51,14 @@
 
   .mast { position: sticky; top: 0; z-index: 10; background: var(--panel); border-bottom: 1px solid var(--line); }
   .mast-inner { display: flex; align-items: center; gap: 1.25rem; padding: 0.7rem 1.25rem; flex-wrap: wrap; }
-  .brand { font-weight: 600; font-size: 1.05rem; }
-  .brand small { color: var(--muted); font-weight: 400; margin-left: 0.4rem; }
-  .env { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #fff; padding: 0.3rem 0.8rem; border-radius: 999px; }
-  .env[data-env="sandbox"] { background: var(--sandbox); }
-  .env[data-env="production"] { background: var(--production); }
+  /* The sandbox wears a hazard stripe; production names itself quietly (console spec 2). */
+  .mast:has(.env[data-env="sandbox"])::before { content: ""; display: block; height: 6px; background: repeating-linear-gradient(-45deg, var(--hazard) 0 10px, var(--hazard-ink) 10px 20px); }
+  .brand { display: flex; align-items: center; gap: 0.55rem; font-weight: 700; font-size: 1.15rem; letter-spacing: -0.03em; }
+  .brand svg { width: 1.6rem; height: 1.6rem; flex: none; }
+  .brand small { color: var(--muted); font-weight: 500; font-size: 0.82rem; letter-spacing: 0; margin-left: 0.2rem; }
+  .env { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 0.22rem 0.6rem; border-radius: 999px; }
+  .env[data-env="sandbox"] { background: var(--hazard); color: var(--hazard-ink); }
+  .env[data-env="production"] { color: var(--ink); box-shadow: inset 0 0 0 1px currentColor; }
   .server { font-family: var(--mono); font-size: 0.82rem; color: var(--muted); overflow-x: auto; white-space: nowrap; }
   .server b { color: var(--ink); font-weight: 500; }
   .meta { margin-left: auto; font-size: 0.78rem; color: var(--muted); }
@@ -90,7 +106,9 @@
   #reference { border-top: 1px solid var(--line); scroll-margin-top: 4.5rem; }
   #reference .ref-head { max-width: 1180px; margin: 0 auto; padding: 1.5rem 1.25rem 0.5rem; }
   /* The reference renderer's stylesheet is light-only, so it sits on an explicitly light surface in both themes. */
-  #redoc { background: #ffffff; color: #1b2430; }
+  #redoc { background: #ffffff; color: #0b0d12; }
+  /* Redoc hard-codes Verdana on method badges and leaves buttons on the browser default: both take the identity's face. */
+  #redoc .operation-type, #redoc button { font-family: var(--sans); }
   @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 </style>
 </head>
@@ -98,7 +116,7 @@
 
 <header class="mast">
   <div class="mast-inner">
-    <div class="brand">ProxiaPay<small>Integration · API v{{VERSION}}</small></div>
+    <div class="brand"><svg viewBox="0 0 40 40" role="img" aria-label="ProxiaPay"><circle cx="20" cy="20" r="20" fill="currentColor"/><rect x="10" y="12.5" width="20" height="5" rx="1" fill="var(--ground)"/><rect x="10" y="22.5" width="20" height="5" rx="1" fill="var(--ground)"/></svg><span aria-hidden="true">ProxiaPay</span><small>Integration · API v{{VERSION}}</small></div>
     <span class="env" data-env="{{ENV}}">{{ENV}}</span>
     <div class="server">base URL <b>{{SERVER}}</b></div>
     <div class="meta"><a href="/docs/openapi.json">openapi.json</a></div>
@@ -335,10 +353,10 @@ function verify(secret, headers, rawBody) {
     Redoc.init('/docs/openapi.json', {
       hideDownloadButton: true, disableSearch: true, expandResponses: '200,201', scrollYOffset: '.mast',
       theme: {
-        colors: { primary: { main: '#1f5fd6' }, text: { primary: '#1b2430', secondary: '#6b7686' } },
-        typography: { fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', fontSize: '14px', headings: { fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', fontWeight: '600' }, code: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: '13px' } },
-        sidebar: { backgroundColor: '#f5f7fa', textColor: '#1b2430' },
-        rightPanel: { backgroundColor: '#1b2430' }
+        colors: { primary: { main: '#0b0d12' }, text: { primary: '#0b0d12', secondary: '#5b6170' } },
+        typography: { fontFamily: 'Manrope, system-ui, sans-serif', fontSize: '14px', headings: { fontFamily: 'Manrope, system-ui, sans-serif', fontWeight: '600' }, code: { fontFamily: '"IBM Plex Mono", ui-monospace, monospace', fontSize: '13px' } },
+        sidebar: { backgroundColor: '#f6f7f9', textColor: '#0b0d12' },
+        rightPanel: { backgroundColor: '#0b0d12' }
       }
     }, document.getElementById('redoc'));
     // Project card and go-live ticks: per-viewer conveniences, kept in this browser only.

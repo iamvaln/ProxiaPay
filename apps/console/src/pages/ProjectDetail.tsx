@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { del, get, post, put } from '../lib/api';
 import { useSession } from '../lib/session';
-import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, When, useLoad } from '../components/common';
+import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
 
 /** Project detail (console spec 6.2): credentials as a rotation sequence, origins with refusals, entitlements with overrides beside the route's own, notification endpoint. */
 export function ProjectDetailPage() {
@@ -33,7 +33,7 @@ export function ProjectDetailPage() {
           <h2>Credentials</h2>
           <p className="small muted">Rotation: <b className={stage === 'none' ? 'negative' : ''}>{stage === 'none' ? 'no working credential' : stage === 'primary' ? 'one primary; issue a secondary to begin a rotation' : 'primary and secondary both authenticate; promote the secondary, then delete the retired one'}</b></p>
           <table><thead><tr><th>Key</th><th>Role</th><th>Status</th><th>Issued</th><th /></tr></thead>
-            <tbody>{data.credentials.map((c: any) => <tr key={c.id}><td className="small">{c.key}<br /><span className="muted">{c.scopes.join(', ')}</span></td><td><Pill value={c.role} /></td><td><Pill value={c.status} /></td><td><When value={c.issued_at} /></td><td>
+            <tbody>{data.credentials.map((c: any) => <tr key={c.id}><td className="small"><span className="mono">{c.key}</span><br /><span className="muted">{c.scopes.join(', ')}</span></td><td><Pill value={c.role} /></td><td><Pill value={c.status} /></td><td><When value={c.issued_at} /></td><td>
               {c.status === 'active' && has('projects.credentials') && <div className="row">
                 {c.role === 'secondary' && <ConfirmedAction operationType="credential.promote" values={{ credential_id: c.id }} path={`/projects/${id}/credentials/${c.id}/promote`} label="Promote" onDone={reload} />}
                 {c.role === 'secondary' && active.length > 1 && <ConfirmedAction operationType="credential.delete" values={{ credential_id: c.id }} path={`/projects/${id}/credentials/${c.id}`} label="Delete" onDone={reload} />}
@@ -58,13 +58,13 @@ export function ProjectDetailPage() {
         </div>
         <div className="card" id="notifications">
           <h2>Notification endpoint</h2>
-          {data.notification_endpoint ? <p>{data.notification_endpoint.url} <span className="pill active">secret set</span></p> : <Empty text="No endpoint registered; the project receives no events until one is set." />}
+          {data.notification_endpoint ? <p>{data.notification_endpoint.url} <Tag family="confirmed">secret set</Tag></p> : <Empty text="No endpoint registered; the project receives no events until one is set." />}
           {has('projects.notifications') && <>
             <form className="row" onSubmit={async (e) => { e.preventDefault(); const r = await put<{ signing_secret: string }>(`/projects/${id}/notification-endpoint`, { url }); setSecretShown(r.signing_secret); reload(); }}><input placeholder="https://…" value={url} onChange={(e) => setUrl(e.target.value)} style={{ width: 320 }} required /><button>Set address</button></form>
             {data.notification_endpoint && <ConfirmedAction operationType="notification_endpoint.regenerate" values={{ project_id: id }} path={`/projects/${id}/notification-endpoint/regenerate-secret`} label="Regenerate secret" summary={<p className="small warnbox">Regenerating replaces the secret for <b>{p.name}</b>; its signature checks fail until it deploys the new value.</p>} onDone={(r: any) => setSecretShown(r.signing_secret)} />}
           </>}
           <h3>Recent deliveries</h3>
-          {data.deliveries.length === 0 ? <Empty /> : <table><tbody>{data.deliveries.map((d: any) => <tr key={d.id}><td><Link to={`/transactions/${d.transaction_reference}`}>{d.transaction_reference}</Link></td><td>{d.event_type}</td><td><Pill value={d.status} /></td><td className="num">{d.attempt}</td><td><When value={d.created_at} /></td></tr>)}</tbody></table>}
+          {data.deliveries.length === 0 ? <Empty /> : <table><tbody>{data.deliveries.map((d: any) => <tr key={d.id}><td><Link to={`/transactions/${d.transaction_reference}`} className="mono">{d.transaction_reference}</Link></td><td>{d.event_type}</td><td><Pill value={d.status} /></td><td className="num">{d.attempt}</td><td><When value={d.created_at} /></td></tr>)}</tbody></table>}
         </div>
       </div>
       <div className="card" id="entitlements">
@@ -108,7 +108,7 @@ export function ProjectDetailPage() {
       </div>
       <div className="card">
         <h2>Activity</h2>
-        {data.activity.length === 0 ? <Empty /> : <table><tbody>{data.activity.map((a: any) => <tr key={a.reference}><td><Link to={`/transactions/${a.reference}`}>{a.reference}</Link></td><td>{a.direction}</td><td>{a.country_code} · {a.payment_method_code}</td><td className="num"><Amount minor={a.requested_amount} currency={a.currency_code} /></td><td><Pill value={a.state} /></td><td><When value={a.created_at} /></td></tr>)}</tbody></table>}
+        {data.activity.length === 0 ? <Empty /> : <table><tbody>{data.activity.map((a: any) => <tr key={a.reference}><td><Link to={`/transactions/${a.reference}`} className="mono">{a.reference}</Link></td><td>{a.direction}</td><td>{a.country_code} · {a.payment_method_code}</td><td className="num"><Amount minor={a.requested_amount} currency={a.currency_code} /></td><td><Pill value={a.state} /></td><td><When value={a.created_at} /></td></tr>)}</tbody></table>}
       </div>
     </>
   );

@@ -5,7 +5,7 @@ import { CoreModule } from '../core.module';
 import { DB_TOKEN, type Db } from '../db/database';
 import { resetConfigForTests } from '../config/config';
 import { seedReferenceData } from '../seed/seed';
-import { truncateAll } from './db';
+import { testDb, truncateAll } from './db';
 import { CredentialService } from '../project-auth/credential.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { AdminAuthService } from '../admin-auth/admin-auth.service';
@@ -25,6 +25,12 @@ export interface TestContext {
 
 export async function createTestContext(): Promise<TestContext> {
   resetConfigForTests();
+  // The schema must exist before reset() truncates it. This context draws its Db from
+  // CoreModule, which connects but never migrates; testDb does migrate, and is idempotent.
+  // Without this call the files using this helper depend on a file using testDb winning the
+  // race to migrate first — which against a fresh database, as CI builds every run, leaves
+  // pg_tables empty and truncateAll emitting `truncate table  restart identity cascade`.
+  await testDb();
   const app = await NestFactory.createApplicationContext(CoreModule, { logger: ['error'], abortOnError: false });
   const db = app.get<Db>(DB_TOKEN);
   registerJobHandlers(app);

@@ -9,6 +9,7 @@ import { SettingsService } from '../settings/settings.service';
 import { ConfirmationService } from '../admin-auth/confirmation.service';
 import { AuditService } from '../audit/audit.service';
 import { AlertService } from '../alerts/alert.service';
+import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
 
@@ -30,6 +31,7 @@ export class TreasuryController {
     private readonly confirmations: ConfirmationService,
     private readonly audit: AuditService,
     private readonly alerts: AlertService,
+    private readonly reconciliation: ReconciliationService,
   ) {}
 
   @Get('balances')
@@ -105,7 +107,12 @@ export class TreasuryController {
     const { confirmation, ...input } = parseBody(transferSchema, body);
     const id = await withConfirmation(this.db, this.confirmations, req.principal, 'float_transfer.register', input, confirmation, (tx, c) =>
       this.treasury.registerTransfer(tx, { sourceAccountId: input.source_account_id, destinationAccountId: input.destination_account_id, amount: input.amount, providerFee: input.provider_fee, providerReference: input.provider_reference, note: input.note, actorId: req.principal.administratorId, confirmationId: c }));
-    return { transfer_id: id, status: 'pending' };
+    // Usually the money was moved in the provider's console before being registered here, so the
+    // balances can confirm it at once; otherwise the worker keeps checking every minute.
+    const transfer = await this.db.selectFrom('float_transfer').select('provider_account_id').where('id', '=', id).executeTakeFirstOrThrow();
+    await this.reconciliation.confirmPendingTransfers(transfer.provider_account_id);
+    const { status } = await this.db.selectFrom('float_transfer').select('status').where('id', '=', id).executeTakeFirstOrThrow();
+    return { transfer_id: id, status };
   }
 
   @Get('cashouts')

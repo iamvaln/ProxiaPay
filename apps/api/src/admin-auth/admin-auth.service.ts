@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import { PlatformError } from '../common/errors';
 import { CryptoService } from '../crypto/crypto.service';
 import { generateTotpSecret, totpUri, verifyTotp } from '../crypto/totp';
+import { CONFIG, type AppConfig } from '../config/config';
 import { DB_TOKEN, type Db, type Executor } from '../db/database';
 import { SettingsService } from '../settings/settings.service';
 import { AuditService } from '../audit/audit.service';
@@ -31,6 +32,7 @@ export class AdminAuthService {
     private readonly crypto: CryptoService,
     private readonly settings: SettingsService,
     private readonly audit: AuditService,
+    @Inject(CONFIG) private readonly config: Pick<AppConfig, 'SANDBOX_ANY_SECOND_FACTOR'>,
   ) {}
 
   async createAdministrator(exec: Executor, input: { name: string; email: string; password: string; language?: 'en' | 'fr'; createdBy?: string | null }): Promise<{ id: string }> {
@@ -77,7 +79,8 @@ export class AdminAuthService {
       })
       .execute();
     await this.recordAuthEvent({ email: normalised, administratorId: admin.id, outcome: 'success', reason: 'password accepted; second factor pending', client });
-    return { sessionToken: token, secondFactor: admin.totp_enrolled_at ? 'verify' : 'enrol' };
+    // A sandbox waiving the second factor asks for a code without ever asking to enrol.
+    return { sessionToken: token, secondFactor: admin.totp_enrolled_at || this.config.SANDBOX_ANY_SECOND_FACTOR ? 'verify' : 'enrol' };
   }
 
   /** Begins enrolment of an authenticator for an administrator who has none. The secret is sealed and shown once. */
@@ -92,6 +95,17 @@ export class AdminAuthService {
   /** Completes the second factor for a session, whether verifying an enrolled authenticator or finishing enrolment. */
   async completeSecondFactor(principal: SessionPrincipal, code: string, client: Client): Promise<void> {
     const admin = await this.db.selectFrom('administrator').selectAll().where('id', '=', principal.administratorId).executeTakeFirstOrThrow();
+    if (this.config.SANDBOX_ANY_SECOND_FACTOR) {
+      // Sandbox only (refused at boot in production): any six digits complete the session, so the
+      // form behaves as it will in production without an authenticator to keep. Recorded as such.
+      if (!/^\d{6}$/.test(code)) throw new PlatformError('CREDENTIALS_INVALID', 'The code was not accepted.');
+      await this.db.transaction().execute(async (tx) => {
+        await tx.updateTable('admin_session').set({ second_factor_at: new Date(), last_seen_at: new Date() }).where('id', '=', principal.sessionId).execute();
+        await tx.updateTable('administrator').set({ last_sign_in_at: new Date(), locked_until: null }).where('id', '=', admin.id).execute();
+      });
+      await this.recordAuthEvent({ email: admin.email, administratorId: admin.id, outcome: 'success', reason: 'second factor waived on the sandbox', client });
+      return;
+    }
     if (!admin.totp_secret_ciphertext) throw new PlatformError('SECOND_FACTOR_REQUIRED', 'Enrol an authenticator first.');
     const secret = this.crypto.openString(admin.totp_secret_ciphertext, `totp:${admin.id}`);
     if (!verifyTotp(secret, code)) {
