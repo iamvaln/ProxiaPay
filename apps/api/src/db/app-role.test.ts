@@ -26,6 +26,7 @@ beforeAll(async () => {
   t = await createTestContext();
   owner = createPool(process.env.DATABASE_URL!, 2);
   await dropRole(); // a previous aborted run
+  await owner.query('drop table if exists app_role_probe');
   await ensureAppRole(owner, ROLE, PASSWORD);
   ({ revoked } = await grantAppRole(owner, ROLE));
   app = asRole();
@@ -60,7 +61,8 @@ describe('least-privilege app role', () => {
   it('derives the revoke list from refuse_mutation triggers', () => {
     const both = ['ledger_entry', 'ledger_posting', 'ledger_checkpoint', 'transaction_event', 'audit_record', 'authentication_event',
       'discrepancy_comment', 'route_binding', 'ledger_account', 'route'];
-    const expected = [...both.flatMap((x) => [`${x}:UPDATE`, `${x}:DELETE`]), 'route_version:DELETE', 'entitlement_version:DELETE'];
+    const expected = [...both.flatMap((x) => [`${x}:UPDATE`, `${x}:DELETE`]), 'route_version:DELETE', 'entitlement_version:DELETE',
+      'schema_migrations:INSERT', 'schema_migrations:UPDATE', 'schema_migrations:DELETE'];
     expect([...revoked].sort()).toEqual(expected.sort());
     expect(revoked).not.toContain('route_version:UPDATE');
   });
@@ -77,5 +79,45 @@ describe('least-privilege app role', () => {
     expect(() => appRoleFromEnv({ APP_DB_PASSWORD: 'x' })).toThrow(/together/);
     expect(appRoleFromEnv({})).toBeNull();
     expect(appRoleFromEnv({ APP_DB_ROLE: 'r', APP_DB_PASSWORD: 'p' })).toEqual({ role: 'r', password: 'p' });
+  });
+
+  it('the app role cannot rewrite migration history', async () => {
+    await expect(app.query('select count(*) from schema_migrations')).resolves.toBeDefined();
+    await expect(app.query("insert into schema_migrations (name, checksum) values ('x.sql', 'x')")).rejects.toThrow(/permission denied/);
+    await expect(app.query('update schema_migrations set checksum = checksum')).rejects.toThrow(/permission denied/);
+    await expect(app.query('delete from schema_migrations')).rejects.toThrow(/permission denied/);
+  });
+
+  it('grants and revokes are one transaction: a failure part-way leaves nothing granted', async () => {
+    await owner.query(`revoke all on all tables in schema public from ${ROLE}`);
+    const failing = {
+      query: (...a: unknown[]) => owner.query(...(a as [string])),
+      async connect() {
+        const c = await owner.connect();
+        const q = c.query.bind(c) as (...x: unknown[]) => Promise<unknown>;
+        (c as { query: unknown }).query = (...x: unknown[]) =>
+          typeof x[0] === 'string' && /^revoke /.test(x[0]) ? Promise.reject(new Error('boom')) : q(...x);
+        const release = c.release.bind(c);
+        c.release = () => { (c as { query: unknown }).query = q; release(); }; // the pooled client must not stay sabotaged
+        return c;
+      },
+    } as unknown as Pool;
+    await expect(grantAppRole(failing, ROLE)).rejects.toThrow(/boom/);
+    const { rows } = await owner.query('select has_table_privilege($1, \'project\', \'SELECT\') as ok', [ROLE]);
+    expect(rows[0].ok).toBe(false);
+    await grantAppRole(owner, ROLE); // and the real thing still works afterwards
+  });
+
+  it('refuses the owner and any superuser role before changing anything', async () => {
+    await expect(ensureAppRole(owner, 'postgres', 'x')).rejects.toThrow(/owner|superuser/);
+    await expect(grantAppRole(owner, 'postgres')).rejects.toThrow(/owner|superuser/);
+    await owner.query('drop role if exists app_role_su_test');
+    await owner.query('create role app_role_su_test superuser');
+    try {
+      await expect(ensureAppRole(owner, 'app_role_su_test', 'x')).rejects.toThrow(/superuser/);
+      await expect(grantAppRole(owner, 'app_role_su_test')).rejects.toThrow(/superuser/);
+    } finally {
+      await owner.query('drop role app_role_su_test');
+    }
   });
 });
