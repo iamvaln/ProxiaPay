@@ -53,7 +53,7 @@ export class ReconciliationController {
   async run(@Param('id') id: string, @Req() req: ConsoleRequest) {
     const run = await this.db.selectFrom('reconciliation_run').selectAll().where('id', '=', id).executeTakeFirst();
     if (!run || !req.auth.canReachProvider('reconciliation.read', run.provider_account_id)) throw new PlatformError('NOT_FOUND', 'No such run.');
-    return { run, discrepancies: await this.discrepancies.list({ run: id }, null, 500) };
+    return { run };
   }
 
   @Post('runs')

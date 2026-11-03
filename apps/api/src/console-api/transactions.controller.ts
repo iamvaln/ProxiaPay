@@ -54,7 +54,7 @@ export class ConsoleTransactionsController {
       .innerJoin('route as r', 'r.id', 't.route_id')
       .innerJoin('project as p', 'p.id', 't.project_id')
       .leftJoin('transaction_attempt as a', 'a.id', 't.current_attempt_id')
-      .select(['t.id', 't.reference', 't.project_reference', 't.direction', 't.state', 't.reconciliation_status', 't.currency_code', 't.requested_amount', 't.charged_amount', 't.settled_amount', 't.failure_reason', 't.created_at', 't.terminal_at', 't.msisdn_masked',
+      .select(['t.id', 't.reference', 't.project_reference', 't.direction', 't.state', 't.reconciliation_status', 't.currency_code', 't.requested_amount', 't.charged_amount', 't.settled_amount', 't.failure_reason', 't.created_at', 't.terminal_at', 't.msisdn_masked', 't.processing_fee', 't.platform_fee', 't.processing_fee_bearer', 't.platform_fee_bearer',
         'p.name as project_name', 'p.id as project_id', 'r.country_code', 'r.payment_method_code', 'a.provider_reference', 'a.operator_reference', 'a.provider_account_id']);
     const scope = this.scopeIds(req);
     if (scope) query = query.where('t.project_id', 'in', scope);
@@ -225,7 +225,9 @@ export class ConsoleTransactionsController {
     if (q.q) qb = qb.where('p.reference', 'like', prefixPattern(q.q));
     if (q.created_after) qb = qb.where('p.created_at', '>', new Date(q.created_after));
     if (q.created_before) qb = qb.where('p.created_at', '<', new Date(q.created_before));
-    const { rows: repeat } = await sql<{ msisdn_masked: string; n: number }>`select msisdn_masked, count(*)::int as n from preview where status = 'expired' and created_at > now() - interval '24 hours' group by 1 having count(*) >= 3 order by 2 desc limit 20`.execute(this.db);
-    return { ...(await paginate(qb, q, { sorts: { created: 'p.created_at' }, defaultSort: 'created', id: 'p.id' })), repeat_unconfirmed: repeat, scoped: scope !== null };
+    // Payers who previewed and let it lapse: within the administrator's projects, 21 fetched so a stop at 20 can be told.
+    const inScope = scope ? sql`and project_id in (${sql.join(scope)})` : sql``;
+    const { rows: repeatRows } = await sql<{ msisdn_masked: string; n: number }>`select msisdn_masked, count(*)::int as n from preview where status = 'expired' and created_at > now() - interval '24 hours' ${inScope} group by 1 having count(*) >= 3 order by 2 desc, 1 limit 21`.execute(this.db);
+    return { ...(await paginate(qb, q, { sorts: { created: 'p.created_at' }, defaultSort: 'created', id: 'p.id' })), repeat_unconfirmed: repeatRows.slice(0, 20), repeat_capped: repeatRows.length > 20, scoped: scope !== null };
   }
 }

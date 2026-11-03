@@ -1,13 +1,60 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { del, get, post, put } from '../lib/api';
-import { useSession } from '../lib/session';
+import { useSession, useT } from '../lib/session';
 import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
+import { DataTable, SummaryGrid, type Column, type DataTableProps, type RowAction } from '../components/table/DataTable';
+import { chip, fetchPage, periodFilter, useReload } from './list-support';
+import { TransactionTable } from './Transactions';
+
+type Row = Record<string, any>;
+type Tr = (k: string, v?: Record<string, string | number>) => string;
+type Lists = Pick<DataTableProps<Row>, 'columns' | 'filters' | 'actions' | 'summary' | 'rowKey' | 'defaultSort' | 'defaultOrder' | 'empty'>;
+const DELIVERY_EVENTS = ['transaction.succeeded', 'transaction.failed', 'transaction.expired', 'transaction.action_required', 'transaction.undetermined', 'transaction.corrected'];
+
+/** Requests refused for coming from an address the project has not declared. */
+export function refusalList({ t }: { t: Tr }): Lists {
+  const columns: Column<Row>[] = [
+    { key: 'when', label: t('col.when'), sortKey: 'when', render: (r) => <When value={r.occurred_at} /> },
+    { key: 'address', label: t('col.address'), mono: true, render: (r) => r.origin_address },
+    { key: 'credential', label: t('col.credential'), mono: true, render: (r) => r.credential_key },
+  ];
+  return { columns, filters: [periodFilter<Row>(t)], rowKey: (r) => String(r.id), defaultSort: 'when', defaultOrder: 'desc', empty: { none: t('l.refusal_none'), why: t('l.refusal_why') } };
+}
+
+/** Notifications sent to the project's endpoint; a failed one can be replayed from here. */
+export function deliveryList({ t, has, reload }: { t: Tr; has: (p: string) => boolean; reload: () => void }): Lists & Pick<DataTableProps<Row>, 'actions'> {
+  const columns: Column<Row>[] = [
+    { key: 'event', label: t('col.event'), render: (d) => d.event_type },
+    { key: 'transaction', label: t('col.transaction'), mono: true, render: (d) => <Link to={`/transactions/${d.transaction_reference}`}>{d.transaction_reference}</Link> },
+    { key: 'status', label: t('col.status'), render: (d) => <Pill value={d.status} /> },
+    { key: 'attempts', label: t('col.attempts'), align: 'end', render: (d) => d.attempt },
+    { key: 'attempted', label: t('col.last_attempt'), sortKey: 'attempted', render: (d) => <When value={d.created_at} /> },
+  ];
+  const actions: RowAction<Row>[] = [
+    { label: t('l.replay'), when: () => has('transactions.replay_notification'), run: async (d) => { await post(`/transactions/${d.transaction_reference}/notifications/${d.id}/replay`); reload(); } },
+  ];
+  const summary = (d: Row) => (
+    <SummaryGrid items={[
+      { label: t('l.next_retry'), value: d.next_attempt_at ? <When value={d.next_attempt_at} /> : '—' },
+      { label: t('l.delivered_at'), value: d.delivered_at ? <When value={d.delivered_at} /> : '—' },
+      { label: t('l.event_id'), value: <span className="mono small">{d.event_id}</span> },
+      ...(d.replayed_from ? [{ label: t('l.replayed_from'), value: <span className="mono small">{d.replayed_from}</span> }] : []),
+    ]} />
+  );
+  return {
+    columns, actions, summary, rowKey: (d) => d.id, defaultSort: 'attempted', defaultOrder: 'desc',
+    filters: [...chip<Row>('status', t('col.status'), ['pending', 'delivered', 'exhausted']), ...chip<Row>('event', t('col.event'), DELIVERY_EVENTS)],
+    empty: { none: t('l.delivery_none'), why: t('l.delivery_why') },
+  };
+}
 
 /** Project detail (console spec 6.2): credentials as a rotation sequence, origins with refusals, entitlements with overrides beside the route's own, notification endpoint. */
 export function ProjectDetailPage() {
   const { id } = useParams();
   const { has } = useSession();
+  const t = useT();
+  const [deliveriesRev, reloadDeliveries] = useReload();
   const { data, error, reload } = useLoad(() => get<any>(`/projects/${id}`), [id]);
   const [origin, setOrigin] = useState({ cidr: '', description: '' });
   const [url, setUrl] = useState('');
@@ -53,7 +100,6 @@ export function ProjectDetailPage() {
           {has('projects.origins') && <form className="row" onSubmit={async (e) => { e.preventDefault(); setErr(null); try { await post(`/projects/${id}/origins`, origin); setOrigin({ cidr: '', description: '' }); reload(); } catch (x) { setErr((x as Error).message); } }}>
             <input placeholder="10.0.0.0/8" value={origin.cidr} onChange={(e) => setOrigin({ ...origin, cidr: e.target.value })} required /><input placeholder="Description" value={origin.description} onChange={(e) => setOrigin({ ...origin, description: e.target.value })} /><button>Add</button>
           </form>}
-          {data.origin_refusals.length > 0 && <><h3>Recent refusals on origin</h3><table><tbody>{data.origin_refusals.map((r: any) => <tr key={r.id}><td>{r.origin_address}</td><td className="small muted">{r.credential_key}</td><td><When value={r.occurred_at} /></td></tr>)}</tbody></table></>}
           <ErrorLine error={err} />
         </div>
         <div className="card" id="notifications">
@@ -63,8 +109,6 @@ export function ProjectDetailPage() {
             <form className="row" onSubmit={async (e) => { e.preventDefault(); const r = await put<{ signing_secret: string }>(`/projects/${id}/notification-endpoint`, { url }); setSecretShown(r.signing_secret); reload(); }}><input placeholder="https://…" value={url} onChange={(e) => setUrl(e.target.value)} style={{ width: 320 }} required /><button>Set address</button></form>
             {data.notification_endpoint && <ConfirmedAction operationType="notification_endpoint.regenerate" values={{ project_id: id }} path={`/projects/${id}/notification-endpoint/regenerate-secret`} label="Regenerate secret" summary={<p className="small warnbox">Regenerating replaces the secret for <b>{p.name}</b>; its signature checks fail until it deploys the new value.</p>} onDone={(r: any) => setSecretShown(r.signing_secret)} />}
           </>}
-          <h3>Recent deliveries</h3>
-          {data.deliveries.length === 0 ? <Empty /> : <table><tbody>{data.deliveries.map((d: any) => <tr key={d.id}><td><Link to={`/transactions/${d.transaction_reference}`} className="mono">{d.transaction_reference}</Link></td><td>{d.event_type}</td><td><Pill value={d.status} /></td><td className="num">{d.attempt}</td><td><When value={d.created_at} /></td></tr>)}</tbody></table>}
         </div>
       </div>
       <div className="card" id="entitlements">
@@ -106,9 +150,17 @@ export function ProjectDetailPage() {
           </form>
         )}
       </div>
-      <div className="card">
-        <h2>Activity</h2>
-        {data.activity.length === 0 ? <Empty /> : <table><tbody>{data.activity.map((a: any) => <tr key={a.reference}><td><Link to={`/transactions/${a.reference}`} className="mono">{a.reference}</Link></td><td>{a.direction}</td><td>{a.country_code} · {a.payment_method_code}</td><td className="num"><Amount minor={a.requested_amount} currency={a.currency_code} /></td><td><Pill value={a.state} /></td><td><When value={a.created_at} /></td></tr>)}</tbody></table>}
+      <div className="card" id="refusals">
+        <h2>{t('l.refusals')}</h2>
+        <DataTable<Row> prefix="ref_" search={false} {...refusalList({ t })} fetch={fetchPage<Row>(`/projects/${id}/origin-refusals`, { period: 'after' })} />
+      </div>
+      <div className="card" id="deliveries">
+        <h2>{t('l.deliveries')}</h2>
+        <DataTable<Row> key={deliveriesRev} prefix="del_" search={false} {...deliveryList({ t, has, reload: reloadDeliveries })} fetch={fetchPage<Row>(`/projects/${id}/deliveries`)} />
+      </div>
+      <div className="card" id="activity">
+        <h2>{t('l.activity')}</h2>
+        <TransactionTable fixedProject={id} prefix="act_" />
       </div>
     </>
   );

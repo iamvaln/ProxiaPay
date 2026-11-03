@@ -70,7 +70,7 @@ export class OversightController {
   async alert(@Param('id') id: string) {
     const alert = await this.db.selectFrom('alert').selectAll().where('id', '=', id).executeTakeFirst();
     if (!alert) throw new PlatformError('NOT_FOUND', 'No such alert.');
-    return { alert, deliveries: await this.db.selectFrom('alert_delivery').selectAll().where('alert_id', '=', id).orderBy('id').execute() };
+    return { alert };
   }
 
   @Get('alerts/:id/deliveries')

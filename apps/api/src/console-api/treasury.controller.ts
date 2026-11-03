@@ -91,9 +91,8 @@ export class TreasuryController {
     const all = await this.treasury.floatAccounts(this.db, req.auth.providerScope('treasury.read_float'));
     const acct = all.find((a) => a.id === id);
     if (!acct) throw new PlatformError('NOT_FOUND', 'No such float account.');
-    const entries = await this.ledger.entriesForAccount(this.db, id, 50);
     const withdrawable = req.auth.has('treasury.cashout.initiate') ? await this.treasury.withdrawable(this.db, id) : null;
-    return { account: acct, entries, withdrawable, paired_collection: all.find((a) => a.providerAccountId === acct.providerAccountId && a.countryCode === acct.countryCode && a.currency === acct.currency && a.direction !== acct.direction) ?? null };
+    return { account: acct, withdrawable, paired_collection: all.find((a) => a.providerAccountId === acct.providerAccountId && a.countryCode === acct.countryCode && a.currency === acct.currency && a.direction !== acct.direction) ?? null };
   }
 
   @Get('float/:id/entries')

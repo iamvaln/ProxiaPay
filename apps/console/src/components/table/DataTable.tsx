@@ -17,7 +17,7 @@ type Fetched<T> = { data: T[]; total: number; scoped?: boolean };
 export type DataTableProps<T> = {
   rows?: T[]; fetch?: (state: TableState) => Promise<Fetched<T>>; prefix?: string;
   columns: Column<T>[]; filters?: Filter<T>[]; actions?: RowAction<T>[]; summary?: (row: T, openAction?: string) => ReactNode;
-  rowKey: (row: T) => string; defaultSort: string; defaultOrder?: 'asc' | 'desc'; searchLabel?: string;
+  rowKey: (row: T) => string; defaultSort: string; defaultOrder?: 'asc' | 'desc'; searchLabel?: string; /** false for a list whose endpoint has nothing to match a search against: a box that finds nothing is worse than none. */ search?: boolean;
   empty: { none: string; why: string }; bare?: boolean;
 };
 
@@ -104,7 +104,7 @@ function FullTable<T>(props: DataTableProps<T>) {
   return (
     <div className="dt">
       <form className="dt-bar" role="search" onSubmit={(e) => e.preventDefault()}>
-        <SearchBox value={state.q} label={props.searchLabel ?? t('table.search')} onCommit={(q) => setState({ q })} />
+        {props.search !== false && <SearchBox value={state.q} label={props.searchLabel ?? t('table.search')} onCommit={(q) => setState({ q })} />}
         {filters.map((f) => <FilterChip key={f.key} filter={f} value={state.filters[f.key] ?? ''} onChange={(v) => setState({ filters: { ...state.filters, [f.key]: v } })} />)}
       </form>
       {error && <div className="dt-error"><ErrorLine error={error} /><button type="button" onClick={() => setAttempt((n) => n + 1)}>{t('table.retry')}</button></div>}

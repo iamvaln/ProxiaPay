@@ -80,13 +80,10 @@ export class ConsoleProjectsController {
     if (!project) throw new PlatformError('NOT_FOUND', 'No such project.');
     const credentials = await this.credentials.listForProject(id);
     const origins = await this.db.selectFrom('project_origin').selectAll().where('project_id', '=', id).where('active', '=', true).orderBy('created_at').execute();
-    const refusals = await this.db.selectFrom('origin_refusal').selectAll().where('project_id', '=', id).orderBy('occurred_at', 'desc').limit(20).execute();
     const endpoint = await this.db.selectFrom('project_notification_endpoint').select(['id', 'url', 'active', 'verified_at', 'created_at']).where('project_id', '=', id).where('active', '=', true).executeTakeFirst();
     return {
-      project, balances: await this.ledger.projectBalances(this.db, id), credentials, origins, origin_refusals: refusals,
+      project, balances: await this.ledger.projectBalances(this.db, id), credentials, origins,
       entitlements: await this.entitlements.listForProject(id), notification_endpoint: endpoint ? { ...endpoint, secret_set: true } : null,
-      deliveries: await this.notifications.recentDeliveries(id, 25),
-      activity: await this.db.selectFrom('transaction as t').innerJoin('route as r', 'r.id', 't.route_id').select(['t.reference', 't.direction', 't.state', 't.requested_amount', 't.currency_code', 't.created_at', 'r.country_code', 'r.payment_method_code']).where('t.project_id', '=', id).orderBy('t.created_at', 'desc').limit(25).execute(),
     };
   }
 

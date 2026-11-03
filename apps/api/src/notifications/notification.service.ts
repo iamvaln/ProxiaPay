@@ -159,10 +159,6 @@ export class NotificationService {
       .where('e.project_id', '=', projectId);
   }
 
-  recentDeliveries(projectId: string, limit = 50) {
-    return this.deliveriesQuery(projectId).orderBy('d.created_at', 'desc').limit(limit).execute();
-  }
-
   async deliveriesForTransaction(transactionId: string) {
     const deliveries = await this.db.selectFrom('notification_delivery').select(['id', 'event_id', 'event_type', 'attempt', 'status', 'next_attempt_at', 'delivered_at', 'created_at', 'replayed_from']).where('transaction_id', '=', transactionId).orderBy('created_at', 'desc').execute();
     const ids = deliveries.map((d) => d.id);

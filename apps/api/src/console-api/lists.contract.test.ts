@@ -17,6 +17,8 @@ import { ReconciliationController } from './reconciliation.controller';
 import { TreasuryController } from './treasury.controller';
 import { OversightController } from './oversight.controller';
 import { ConsoleProjectsController } from './projects.controller';
+import { EntitlementService } from './entitlement.service';
+import { CredentialService } from '../project-auth/credential.service';
 
 let t: TestContext;
 // CoreModule carries the services, not the console controllers, so each controller is assembled from them;
@@ -29,6 +31,7 @@ const controllers = {
   treasury: () => new TreasuryController(t.db, get(LedgerService), get(TreasuryService), nul, nul, nul, nul, nul),
   oversight: () => new OversightController(t.db, nul, nul, nul, nul, nul, nul, nul),
   projects: () => new ConsoleProjectsController(t.db, get(LedgerService), nul, get(NotificationService), nul, nul, nul),
+  projectDetail: () => new ConsoleProjectsController(t.db, get(LedgerService), get(CredentialService), get(NotificationService), nul, new EntitlementService(t.db, get(AuditService)), nul),
 };
 
 beforeAll(async () => { t = await createTestContext(); });
@@ -289,6 +292,54 @@ describe('what is particular to each list', () => {
     expect(res.total).toBe(1);
     expect(res.scoped).toBe(false);
     expect((await controllers.transactions().previews({ q: '%' }, req())).total).toBe(0);
+  });
+});
+
+describe('detail endpoints no longer embed capped sub-lists', () => {
+  it('project detail no longer embeds capped sub-lists', async () => {
+    const p = await LONG_LISTS.find((l) => l.name === 'projects/:id/origin-refusals')!.seed();
+    const project = await controllers.projectDetail().detail(p.id!, req());
+    for (const k of ['origin_refusals', 'deliveries', 'activity']) expect(project, k).not.toHaveProperty(k);
+
+    const f = await LONG_LISTS.find((l) => l.name === 'treasury/float/:id entries')!.seed();
+    expect(await controllers.treasury().floatDetail(f.id!, req())).not.toHaveProperty('entries');
+
+    const a = await LONG_LISTS.find((l) => l.name === 'oversight/alerts/:id deliveries')!.seed();
+    expect(await controllers.oversight().alert(a.id!)).not.toHaveProperty('deliveries');
+
+    await LONG_LISTS.find((l) => l.name === 'reconciliation/discrepancies')!.seed();
+    const run = await t.db.selectFrom('reconciliation_run').select('id').executeTakeFirstOrThrow();
+    expect(await controllers.reconciliation().run(run.id, req())).not.toHaveProperty('discrepancies');
+  });
+});
+
+describe('previews: payers previewing repeatedly', () => {
+  /** n expired previews per payer number on the project, cloned from its one real preview. */
+  async function repeaters(o: Awaited<ReturnType<typeof oneTransaction>>, numbers: string[]) {
+    await clonePreviews(o.previewReference, numbers.length * 3);
+    const rows = await t.db.selectFrom('preview').select('reference').where('project_id', '=', o.project.id).where('reference', 'like', `${o.previewReference}-c%`).orderBy('reference').execute();
+    for (const [i, r] of rows.entries()) await t.db.updateTable('preview').set({ status: 'expired', msisdn_masked: numbers[i % numbers.length]! }).where('reference', '=', r.reference).execute();
+  }
+
+  it('a scoped administrator sees only their own projects\' repeat payers', async () => {
+    const mine = await oneTransaction('mine');
+    const theirs = await oneTransaction('theirs');
+    await repeaters(mine, ['+237•••0001']);
+    await repeaters(theirs, ['+237•••0002']);
+    const res = await controllers.transactions().previews({}, consoleRequest(t, { scope: [mine.project.id] }));
+    expect(res.repeat_unconfirmed.map((r) => r.msisdn_masked)).toEqual(['+237•••0001']);
+    const all = await controllers.transactions().previews({}, req());
+    expect(all.repeat_unconfirmed.map((r) => r.msisdn_masked).sort()).toEqual(['+237•••0001', '+237•••0002']);
+  });
+
+  it('says when the panel stopped at 20', async () => {
+    const o = await oneTransaction();
+    await repeaters(o, range(21).map((i) => `+237•••${String(i).padStart(4, '0')}`));
+    const res = await controllers.transactions().previews({}, req());
+    expect(res.repeat_unconfirmed).toHaveLength(20);
+    expect(res.repeat_capped).toBe(true);
+    const few = await controllers.transactions().previews({}, consoleRequest(t, { scope: [] }));
+    expect(few.repeat_capped).toBe(false);
   });
 });
 

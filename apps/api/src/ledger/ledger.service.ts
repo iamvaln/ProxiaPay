@@ -452,8 +452,4 @@ export class LedgerService {
       .select(['p.id', 'p.entry_id', 'p.side', 'p.amount', 'e.entry_type', 'e.occurred_at', 'e.transaction_id', 'e.author_id', 'e.justification', 'e.reference', 'e.discrepancy_id', 't.reference as transaction_reference'])
       .where('p.account_id', '=', accountId);
   }
-
-  async entriesForAccount(exec: Executor, accountId: string, limit = 50) {
-    return this.entriesQuery(exec, accountId).orderBy('p.id', 'desc').limit(limit).execute();
-  }
 }
