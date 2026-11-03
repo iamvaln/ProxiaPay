@@ -59,6 +59,10 @@ services:
     restart: unless-stopped
     env_file: ${ENV_FILE:-.env.production}
     environment:
+      # Production sets APP_DATABASE_URL (the least-privilege proxiapay_app role, which
+      # migrate creates and re-grants); the sandbox does not, and keeps its one URL. Only the
+      # --env-file reaches this interpolation, not env_file: above.
+      DATABASE_URL: ${APP_DATABASE_URL:-${DATABASE_URL}}
       # EXACTLY ONE proxy stands in front of this container: the shared Traefik.
       # The value is safe only because no port is published here — the container
       # is reachable through Traefik alone, and Traefik rewrites X-Forwarded-For.
@@ -95,6 +99,8 @@ services:
     restart: unless-stopped
     env_file: ${ENV_FILE:-.env.production}
     command: ['node', 'dist/main.worker.js']
+    environment:
+      DATABASE_URL: ${APP_DATABASE_URL:-${DATABASE_URL}}
     # NO HEALTHCHECK: the worker serves no port, and the image's probe would
     # curl a socket that isn't listening — a permanently unhealthy container.
     healthcheck:
