@@ -28,8 +28,10 @@ services:
     env_file: ${OWNER_ENV_FILE:-${ENV_FILE:-.env.production}}
     volumes:
       - proxiapay-db:/var/lib/postgresql/data
+    # Over TCP, on purpose: the image's first-boot init server listens on the unix socket only,
+    # so a socket probe passes on it and migrate would start against a server about to restart.
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB']
       interval: 5s
       timeout: 5s
       retries: 12
