@@ -30,6 +30,11 @@ const STRINGS: Record<string, { en: string; fr: string }> = {
   'txn.amount': { en: 'Requested', fr: 'Demandé' }, 'txn.created': { en: 'Created', fr: 'Créé' }, 'txn.terminal': { en: 'Terminal', fr: 'Terminé' }, 'txn.recon': { en: 'Reconciliation', fr: 'Rapprochement' },
   'txn.export': { en: 'Export CSV', fr: 'Exporter CSV' }, 'txn.previews': { en: 'Previews', fr: 'Aperçus' }, 'txn.reveal': { en: 'Reveal identifier', fr: 'Révéler l’identifiant' },
   'txn.recheck': { en: 'Force status re-check', fr: 'Forcer une vérification' }, 'txn.replay': { en: 'Replay', fr: 'Renvoyer' },
+  'table.search': { en: 'Search', fr: 'Rechercher' }, 'table.range': { en: '{from}–{to} of {total}', fr: '{from}–{to} sur {total}' },
+  'table.page_size': { en: 'per page', fr: 'par page' }, 'table.no_match': { en: 'No results for these filters', fr: 'Aucun résultat pour ces filtres' },
+  'table.clear_filters': { en: 'Clear filters', fr: 'Retirer les filtres' }, 'table.clear_filter': { en: 'Clear {filter}', fr: 'Retirer {filter}' },
+  'table.retry': { en: 'Retry', fr: 'Réessayer' }, 'table.actions': { en: 'Actions', fr: 'Actions' }, 'table.open': { en: 'Open', fr: 'Ouvrir' },
+  'table.details': { en: 'Details', fr: 'Détails' }, 'table.page': { en: 'Page', fr: 'Page' }, 'table.prev': { en: 'Previous page', fr: 'Page précédente' }, 'table.next': { en: 'Next page', fr: 'Page suivante' },
 };
 
 export function t(lang: Lang, key: string, vars: Record<string, string | number> = {}): string {
