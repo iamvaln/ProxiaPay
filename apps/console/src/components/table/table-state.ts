@@ -2,7 +2,8 @@ import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 export type TableState = { q: string; filters: Record<string, string>; sort?: string; order: 'asc' | 'desc'; page: number; pageSize: 25 | 50 | 100 };
-export type TableDefaults = { sort: string; order: 'asc' | 'desc'; filterKeys: string[] };
+/** `sorts` and `filterValues`, when given, are the only values accepted from the URL. */
+export type TableDefaults = { sort: string; order: 'asc' | 'desc'; filterKeys: string[]; sorts?: string[]; filterValues?: Record<string, string[]> };
 
 export const PAGE_SIZES = [25, 50, 100] as const;
 
@@ -24,12 +25,13 @@ export function readTableState(params: URLSearchParams, prefix: string, defaults
   const page = Number(get('page'));
   const size = Number(get('page_size'));
   const order = get('order');
+  const sort = get('sort');
   const filters: Record<string, string> = {};
-  for (const key of defaults.filterKeys) { const v = get(key); if (v) filters[key] = v; }
+  for (const key of defaults.filterKeys) { const v = get(key); if (v && (!defaults.filterValues?.[key] || defaults.filterValues[key]!.includes(v))) filters[key] = v; }
   return {
     q: get('q') ?? '',
     filters,
-    sort: get('sort') || defaults.sort,
+    sort: sort && (!defaults.sorts || defaults.sorts.includes(sort)) ? sort : defaults.sort,
     order: order === 'asc' || order === 'desc' ? order : defaults.order,
     page: Number.isInteger(page) && page >= 1 ? page : 1,
     pageSize: (PAGE_SIZES as readonly number[]).includes(size) ? (size as 25 | 50 | 100) : 25,
@@ -51,7 +53,7 @@ export function writeTableState(state: TableState, prefix: string, current: URLS
 
 export function useTableState(prefix: string, defaults: TableDefaults): [TableState, (patch: Partial<TableState>) => void] {
   const [params, setParams] = useSearchParams();
-  const key = defaults.sort + defaults.order + defaults.filterKeys.join(',');
+  const key = JSON.stringify(defaults);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const d = useMemo(() => defaults, [key]);
   const state = useMemo(() => readTableState(params, prefix, d), [params, prefix, d]);

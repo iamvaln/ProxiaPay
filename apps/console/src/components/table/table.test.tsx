@@ -2,7 +2,7 @@ import { renderToStaticMarkup as html } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { clientRows } from './client-rows';
-import { DataTable, type Column, type Filter, type RowAction } from './DataTable';
+import { DataTable, formatRange, pageToRequest, runRowAction, type Column, type Filter, type RowAction } from './DataTable';
 import { pageItems } from './pager';
 import { clampPage, patchTableState, readTableState, writeTableState, type TableState } from './table-state';
 
@@ -24,6 +24,19 @@ describe('table state', () => {
   it('readTableState ignores invalid values', () => {
     const s = readTableState(new URLSearchParams('page=abc&page_size=7&order=up'), '', D);
     expect([s.page, s.pageSize, s.order, s.sort]).toEqual([1, 25, 'asc', 'name']);
+  });
+  it('falls back to defaults for an unknown sort, a negative or fractional page, and an unknown filter value', () => {
+    const d = { ...D, sorts: ['name', 'n'], filterValues: { state: ['a', 'b'] } };
+    const s = readTableState(new URLSearchParams('sort=zzz&page=-1&state=nope'), '', d);
+    expect([s.sort, s.page, s.filters]).toEqual(['name', 1, {}]);
+    expect(readTableState(new URLSearchParams('page=1.5'), '', d).page).toBe(1);
+    const ok = readTableState(new URLSearchParams('sort=n&state=a'), '', d);
+    expect([ok.sort, ok.filters]).toEqual(['n', { state: 'a' }]);
+  });
+  it('clearing a filter removes its param', () => {
+    const out = writeTableState({ ...base, filters: { state: '' } }, '', new URLSearchParams('state=a&keep=1'));
+    expect(out.has('state')).toBe(false);
+    expect(out.get('keep')).toBe('1');
   });
   it('writeTableState namespaces with a prefix', () => {
     const out = writeTableState({ ...base, page: 2 }, 'del_', new URLSearchParams('keep=1'));
@@ -107,11 +120,33 @@ describe('DataTable', () => {
     expect(out).toContain('State : Alpha');
     expect(out).toContain('Clear State');
   });
-  it('moves to the last page when the server says the page is past the end', async () => {
-    // The rule DataTable applies to a server answer: data [] with total 30 at page 3 asks for page 2.
-    expect(clampPage(3, 30, 25)).toBe(2);
-    // Server mode renders its loading state before the first answer and never calls fetch statically.
-    const fetch = vi.fn();
-    expect(render({ rows: undefined, fetch }, '/?page=3')).toContain('Loading…');
+  it('asks for the last page when the server says the page is past the end', () => {
+    expect(pageToRequest(3, 30, 25)).toBe(2);
+    expect(pageToRequest(2, 30, 25)).toBeNull();
+    expect(pageToRequest(1, 0, 25)).toBeNull();
+    expect(render({ rows: undefined, fetch: vi.fn() }, '/?page=3')).toContain('Loading…');
+  });
+  it('formats the range with the language grouping', () => {
+    expect(formatRange('fr', 1, 25, 1204)).toBe('1–25 sur 1\u202f204');
+    expect(formatRange('en', 1, 25, 1204)).toBe('1–25 of 1,204');
+    expect(formatRange('en', 1, 25, 0)).toBe('0–0 of 0');
+    expect(formatRange('en', 49, 25, 1204)).toBe('1,201–1,204 of 1,204');
+  });
+  it('a bare table renders its rows as given, with no router, no paging, no sort', () => {
+    const out = html(<DataTable<Row> bare rows={make(30)} columns={cols} rowKey={(r) => r.id} defaultSort="name" empty={empty} />);
+    expect(out.match(/<tr/g)).toHaveLength(31);
+    expect(out).not.toContain('aria-sort');
+    expect(out).not.toContain('<button');
+  });
+  it('a failed action is reported, not swallowed', async () => {
+    const boom: RowAction<Row> = { label: 'Go', run: async () => { throw new Error('refused by server'); } };
+    expect(await runRowAction(boom, make(1)[0]!)).toBe('refused by server');
+    expect(await runRowAction({ label: 'Ok', run: () => undefined }, make(1)[0]!)).toBeNull();
+  });
+  it('a plain action never opens the summary; only opens: true does', () => {
+    const out = render({ rows: make(1), summary: () => <i>S</i>, actions: [{ label: 'Plain', run: () => undefined }, { label: 'Confirm', opens: true }] });
+    expect(out).toContain('aria-expanded="false"');
+    expect(out).toContain('Plain');
+    expect(out).toContain('Confirm');
   });
 });

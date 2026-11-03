@@ -5,12 +5,13 @@ import { Empty, ErrorLine, ScopeNote } from '../common';
 import { clientRows } from './client-rows';
 import { pageItems } from './pager';
 import { clampPage, PAGE_SIZES, useTableState, type TableState } from './table-state';
+import { t as translate, type Lang } from '../../lib/i18n';
 
 export type { TableState } from './table-state';
 
 export type Column<T> = { key: string; label: string; render: (row: T) => ReactNode; text?: (row: T) => string; sortValue?: (row: T) => string | number; sortKey?: string; align?: 'end'; mono?: boolean };
 export type Filter<T> = { key: string; label: string; options: { value: string; label: string }[]; match?: (row: T, value: string) => boolean };
-export type RowAction<T> = { label: string; when?: (row: T) => boolean; to?: (row: T) => string; run?: (row: T) => void | Promise<void>; primary?: boolean };
+export type RowAction<T> = { label: string; when?: (row: T) => boolean; to?: (row: T) => string; run?: (row: T) => void | Promise<void>; primary?: boolean; opens?: boolean };
 type Fetched<T> = { data: T[]; total: number; scoped?: boolean };
 
 export type DataTableProps<T> = {
@@ -22,17 +23,50 @@ export type DataTableProps<T> = {
 
 const MAX_ACTIONS = 3;
 
+/** The page to ask for instead of `requested`, or null when it is fine: past the end falls back to the last page. */
+export function pageToRequest(requested: number, total: number, pageSize: number): number | null {
+  const page = clampPage(requested, total, pageSize);
+  return page === requested ? null : page;
+}
+
+/** "1–25 of 1,204" / "1–25 sur 1 204", numbers grouped the way the language groups them. */
+export function formatRange(lang: Lang, page: number, pageSize: number, total: number): string {
+  const n = new Intl.NumberFormat(lang === 'fr' ? 'fr-FR' : 'en-US');
+  return translate(lang, 'table.range', { from: n.format(total === 0 ? 0 : (page - 1) * pageSize + 1), to: n.format(Math.min(page * pageSize, total)), total: n.format(total) });
+}
+
+/** Runs a row action; a rejection comes back as its message instead of vanishing. */
+export async function runRowAction<T>(a: RowAction<T>, row: T): Promise<string | null> {
+  try { await a.run?.(row); return null; } catch (e) { return e instanceof Error ? e.message : String(e); }
+}
+
 /** A summary laid out as labelled values on a grid. */
 export function SummaryGrid({ items }: { items: { label: string; value: ReactNode }[] }) {
   return <div className="sumgrid">{items.map((i) => <div key={i.label}><span>{i.label}</span>{i.value}</div>)}</div>;
 }
 
+/** `bare` is the look alone: rows as given, no URL state, no sort, no toolbar, no footer. */
 export function DataTable<T>(props: DataTableProps<T>) {
-  const { columns, filters = [], actions = [], summary, rowKey, bare = false } = props;
+  if (props.bare) {
+    const rows = props.rows ?? [];
+    return rows.length === 0
+      ? <Empty text={`${props.empty.none} ${props.empty.why}`} />
+      : <TableGrid rows={rows} columns={props.columns} actions={props.actions ?? []} summary={props.summary} rowKey={props.rowKey} />;
+  }
+  return <FullTable {...props} />;
+}
+
+function FullTable<T>(props: DataTableProps<T>) {
+  const { columns, filters = [], actions = [], summary, rowKey } = props;
   const t = useT();
   const { lang } = useSession();
-  const [state, setState] = useTableState(props.prefix ?? '', { sort: props.defaultSort, order: props.defaultOrder ?? 'asc', filterKeys: filters.map((f) => f.key) });
   const server = !props.rows && !!props.fetch;
+  const sortKeyOf = (c: Column<T>) => (server ? c.sortKey : c.sortValue ? c.key : undefined);
+  const [state, setState] = useTableState(props.prefix ?? '', {
+    sort: props.defaultSort, order: props.defaultOrder ?? 'asc', filterKeys: filters.map((f) => f.key),
+    sorts: [props.defaultSort, ...columns.flatMap((c) => sortKeyOf(c) ?? [])],
+    filterValues: Object.fromEntries(filters.map((f) => [f.key, f.options.map((o) => o.value)])),
+  });
   const number = new Intl.NumberFormat(lang === 'fr' ? 'fr-FR' : 'en-US');
 
   if (actions.length > MAX_ACTIONS && import.meta.env?.DEV) console.error(`DataTable: ${actions.length} row actions declared, at most ${MAX_ACTIONS} are shown`);
@@ -50,8 +84,8 @@ export function DataTable<T>(props: DataTableProps<T>) {
     setError(null);
     fetchRef.current!(state).then((res) => {
       if (!live) return;
-      const page = clampPage(state.page, res.total, state.pageSize);
-      if (page !== state.page) { setState({ page }); return; } // past the end: ask again for the last page
+      const page = pageToRequest(state.page, res.total, state.pageSize);
+      if (page !== null) { setState({ page }); return; } // past the end: ask again for the last page
       setRemote(res);
     }).catch((e: Error) => { if (live) setError(e.message); });
     return () => { live = false; };
@@ -65,22 +99,65 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const last = Math.max(1, Math.ceil(total / state.pageSize));
   const loading = server && !remote && !error;
 
-  const sortKeyOf = (c: Column<T>) => (server ? c.sortKey : c.sortValue ? c.key : undefined);
-  const [expanded, setExpanded] = useState<Record<string, string>>({});
-  const toggle = (k: string) => setExpanded((e) => { const n = { ...e }; if (k in n) delete n[k]; else n[k] = ''; return n; });
-
   const filtering = !!state.q || Object.values(state.filters).some(Boolean);
   const clearFilters = () => setState({ q: '', filters: Object.fromEntries(Object.keys(state.filters).map((k) => [k, ''])) });
+  return (
+    <div className="dt">
+      <form className="dt-bar" role="search" onSubmit={(e) => e.preventDefault()}>
+        <SearchBox value={state.q} label={props.searchLabel ?? t('table.search')} onCommit={(q) => setState({ q })} />
+        {filters.map((f) => <FilterChip key={f.key} filter={f} value={state.filters[f.key] ?? ''} onChange={(v) => setState({ filters: { ...state.filters, [f.key]: v } })} />)}
+      </form>
+      {error && <div className="dt-error"><ErrorLine error={error} /><button type="button" onClick={() => setAttempt((n) => n + 1)}>{t('table.retry')}</button></div>}
+      {loading && <p className="muted">{t('common.loading')}</p>}
+      {!loading && !error && total === 0 && (
+        <div className="dt-empty">
+          {filtering
+            ? <><p><strong>{t('table.no_match')}</strong></p><button type="button" onClick={clearFilters}>{t('table.clear_filters')}</button></>
+            : <><p><strong>{props.empty.none}</strong></p><p className="muted">{props.empty.why}</p></>}
+        </div>
+      )}
+      {total > 0 && <TableGrid rows={rows} columns={columns} actions={actions} summary={summary} rowKey={rowKey} sort={{ state, keyOf: sortKeyOf, onSort: setState }} />}
+      {total > 0 && (
+        <div className="dt-foot">
+          <span>{formatRange(lang, page, state.pageSize, total)}</span>
+          <span className="sp" />
+          <nav className="pg" aria-label={t('table.page')}>
+            <button type="button" aria-label={t('table.prev')} disabled={page <= 1} onClick={() => setState({ page: page - 1 })}>‹</button>
+            {pageItems(page, last).map((it, i) => it === '…'
+              ? <span key={`gap${i}`} className="gap" aria-hidden="true">…</span>
+              : <button key={it} type="button" className={it === page ? 'primary' : undefined} aria-current={it === page ? 'page' : undefined} aria-label={`${t('table.page')} ${it}`} onClick={() => setState({ page: it })}>{number.format(it)}</button>)}
+            <button type="button" aria-label={t('table.next')} disabled={page >= last} onClick={() => setState({ page: page + 1 })}>›</button>
+          </nav>
+          <label className="dt-size"><span className="sr-only">{t('table.page_size')}</span>
+            <select value={state.pageSize} onChange={(e) => setState({ pageSize: Number(e.target.value) as 25 | 50 | 100 })}>
+              {PAGE_SIZES.map((n) => <option key={n} value={n}>{n} {t('table.page_size')}</option>)}
+            </select>
+          </label>
+        </div>
+      )}
+      <ScopeNote scoped={server ? remote?.scoped : undefined} />
+    </div>
+  );
+}
+
+function TableGrid<T>({ rows, columns, actions, summary, rowKey, sort }: {
+  rows: T[]; columns: Column<T>[]; actions: RowAction<T>[]; summary?: (row: T, openAction?: string) => ReactNode; rowKey: (row: T) => string;
+  sort?: { state: TableState; keyOf: (c: Column<T>) => string | undefined; onSort: (patch: Partial<TableState>) => void };
+}) {
+  const t = useT();
+  const [expanded, setExpanded] = useState<Record<string, string>>({});
+  const [failure, setFailure] = useState<string | null>(null);
+  const toggle = (k: string) => setExpanded((e) => { const n = { ...e }; if (k in n) delete n[k]; else n[k] = ''; return n; });
   const shownActions = (row: T) => {
     const list = actions.filter((a) => !a.when || a.when(row));
     return [...list.filter((a) => a.primary), ...list.filter((a) => !a.primary)].slice(0, MAX_ACTIONS);
   };
   const hasActions = actions.length > 0;
   const span = columns.length + (summary ? 1 : 0) + (hasActions ? 1 : 0);
-
-  const runAction = async (a: RowAction<T>, row: T) => {
-    await a.run?.(row);
-    if (summary) setExpanded((e) => ({ ...e, [rowKey(row)]: a.label }));
+  // Only an action declaring `opens` unfolds the row, handing its label to the summary.
+  const act = async (a: RowAction<T>, row: T) => {
+    setFailure(await runRowAction(a, row));
+    if (a.opens && summary) setExpanded((e) => ({ ...e, [rowKey(row)]: a.label }));
   };
 
   const head = (
@@ -88,14 +165,14 @@ export function DataTable<T>(props: DataTableProps<T>) {
       <tr>
         {summary && <th className="chev"><span className="sr-only">{t('table.details')}</span></th>}
         {columns.map((c) => {
-          const sk = bare ? undefined : sortKeyOf(c);
+          const sk = sort?.keyOf(c);
           const cls = c.align === 'end' ? 'num' : undefined;
           if (!sk) return <th key={c.key} className={cls}>{c.label}</th>;
-          const on = state.sort === sk;
+          const on = sort!.state.sort === sk;
           return (
-            <th key={c.key} className={cls} aria-sort={on ? (state.order === 'asc' ? 'ascending' : 'descending') : 'none'}>
-              <button type="button" className="sort" onClick={() => setState(on ? { order: state.order === 'asc' ? 'desc' : 'asc' } : { sort: sk, order: 'asc' })}>
-                {c.label}<span className={on ? 's on' : 's'} aria-hidden="true">{on ? (state.order === 'asc' ? '▲' : '▼') : '▲▼'}</span>
+            <th key={c.key} className={cls} aria-sort={on ? (sort!.state.order === 'asc' ? 'ascending' : 'descending') : 'none'}>
+              <button type="button" className="sort" onClick={() => sort!.onSort(on ? { order: sort!.state.order === 'asc' ? 'desc' : 'asc' } : { sort: sk, order: 'asc' })}>
+                {c.label}<span className={on ? 's on' : 's'} aria-hidden="true">{on ? (sort!.state.order === 'asc' ? '▲' : '▼') : '▲▼'}</span>
               </button>
             </th>
           );
@@ -122,7 +199,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
               <td className="act">
                 {shownActions(row).map((a) => a.to
                   ? <Link key={a.label} to={a.to(row)} className={a.primary ? 'btn primary' : 'btn'}>{a.label}</Link>
-                  : <button key={a.label} type="button" className={a.primary ? 'primary' : undefined} onClick={() => void runAction(a, row)}>{a.label}</button>)}
+                  : <button key={a.label} type="button" className={a.primary ? 'primary' : undefined} onClick={() => void act(a, row)}>{a.label}</button>)}
               </td>
             )}
           </tr>,
@@ -132,49 +209,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
     </tbody>
   );
 
-  if (bare) {
-    return rows.length === 0 && !loading
-      ? <Empty text={`${props.empty.none} ${props.empty.why}`} />
-      : <table>{head}{body}</table>;
-  }
-
-  return (
-    <div className="dt">
-      <form className="dt-bar" role="search" onSubmit={(e) => e.preventDefault()}>
-        <SearchBox value={state.q} label={props.searchLabel ?? t('table.search')} onCommit={(q) => setState({ q })} />
-        {filters.map((f) => <FilterChip key={f.key} filter={f} value={state.filters[f.key] ?? ''} onChange={(v) => setState({ filters: { ...state.filters, [f.key]: v } })} />)}
-      </form>
-      {error && <div className="dt-error"><ErrorLine error={error} /><button type="button" onClick={() => setAttempt((n) => n + 1)}>{t('table.retry')}</button></div>}
-      {loading && <p className="muted">{t('common.loading')}</p>}
-      {!loading && !error && total === 0 && (
-        <div className="dt-empty">
-          {filtering
-            ? <><p><strong>{t('table.no_match')}</strong></p><button type="button" onClick={clearFilters}>{t('table.clear_filters')}</button></>
-            : <><p><strong>{props.empty.none}</strong></p><p className="muted">{props.empty.why}</p></>}
-        </div>
-      )}
-      {total > 0 && <table>{head}{body}</table>}
-      {total > 0 && (
-        <div className="dt-foot">
-          <span>{t('table.range', { from: number.format((page - 1) * state.pageSize + 1), to: number.format(Math.min(page * state.pageSize, total)), total: number.format(total) })}</span>
-          <span className="sp" />
-          <nav className="pg" aria-label={t('table.page')}>
-            <button type="button" aria-label={t('table.prev')} disabled={page <= 1} onClick={() => setState({ page: page - 1 })}>‹</button>
-            {pageItems(page, last).map((it, i) => it === '…'
-              ? <span key={`gap${i}`} className="gap" aria-hidden="true">…</span>
-              : <button key={it} type="button" className={it === page ? 'primary' : undefined} aria-current={it === page ? 'page' : undefined} aria-label={`${t('table.page')} ${it}`} onClick={() => setState({ page: it })}>{number.format(it)}</button>)}
-            <button type="button" aria-label={t('table.next')} disabled={page >= last} onClick={() => setState({ page: page + 1 })}>›</button>
-          </nav>
-          <label className="dt-size"><span className="sr-only">{t('table.page_size')}</span>
-            <select value={state.pageSize} onChange={(e) => setState({ pageSize: Number(e.target.value) as 25 | 50 | 100 })}>
-              {PAGE_SIZES.map((n) => <option key={n} value={n}>{n} {t('table.page_size')}</option>)}
-            </select>
-          </label>
-        </div>
-      )}
-      <ScopeNote scoped={server ? remote?.scoped : undefined} />
-    </div>
-  );
+  return <>
+    <ErrorLine error={failure} />
+    <table>{head}{body}</table>
+  </>;
 }
 
 /** The typed text is kept locally and committed to the URL a moment after the last keystroke, or on Enter. */
