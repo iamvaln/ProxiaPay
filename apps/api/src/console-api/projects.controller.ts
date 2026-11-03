@@ -48,11 +48,14 @@ export class ConsoleProjectsController {
     let q = this.db.selectFrom('project').selectAll().orderBy('name');
     if (scope) q = q.where('id', 'in', scope.length ? scope : ['00000000-0000-0000-0000-000000000000']);
     const projects = await q.execute();
+    // One grouped query for every project's last 30 days. Amounts only add up inside a currency, so the value is a list per currency.
+    const { rows: activity } = await sql<{ project_id: string; currency_code: string; n: number; value: string }>`select project_id, currency_code, count(*)::int as n, coalesce(sum(requested_amount), 0)::bigint as value from transaction where created_at > now() - interval '30 days' and project_id = any(${projects.map((p) => p.id)}::uuid[]) group by 1, 2 order by 1, 2`.execute(this.db);
+    const { rows: creds } = await sql<{ project_id: string; n: number }>`select project_id, count(*)::int as n from project_credential where status = 'active' and project_id = any(${projects.map((p) => p.id)}::uuid[]) group by 1`.execute(this.db);
     const out = [];
     for (const p of projects) {
-      const { rows } = await sql<{ n: number; value: number }>`select count(*)::int as n, coalesce(sum(requested_amount), 0)::bigint as value from transaction where project_id = ${p.id} and created_at > now() - interval '30 days'`.execute(this.db);
+      const mine = activity.filter((a) => a.project_id === p.id);
       const { rows: routes } = await sql<{ n: number }>`select count(*)::int as n from entitlement e join entitlement_version v on v.entitlement_id = e.id and v.valid_to is null and v.active where e.project_id = ${p.id}`.execute(this.db);
-      out.push({ ...p, volume_30d: rows[0]!.n, value_30d: rows[0]!.value, balances: await this.ledger.projectBalances(this.db, p.id), routes_granted: routes[0]!.n });
+      out.push({ ...p, volume_30d: mine.reduce((n, a) => n + a.n, 0), value_30d: mine.map((a) => ({ currency: a.currency_code, value: Number(a.value) })), balances: await this.ledger.projectBalances(this.db, p.id), routes_granted: routes[0]!.n, credentials_active: creds.find((c) => c.project_id === p.id)?.n ?? 0 });
     }
     return { projects: out, scoped: scope !== null };
   }

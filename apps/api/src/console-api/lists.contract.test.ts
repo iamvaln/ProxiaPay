@@ -295,6 +295,21 @@ describe('what is particular to each list', () => {
   });
 });
 
+describe('the project list carries its 30-day activity', () => {
+  it('counts the last 30 days per project and sums their value per currency, from one grouped query', async () => {
+    const a = await oneTransaction('busy');
+    const old = await oneTransaction('old');
+    const idle = await t.project('idle');
+    await t.db.updateTable('transaction').set({ created_at: new Date(Date.now() - 40 * 86_400_000) }).where('id', '=', old.transactionId).execute();
+    const rows = (await controllers.projects().list(req())).projects;
+    const by = (id: string) => rows.find((p) => p.id === id)!;
+    expect(by(a.project.id)).toMatchObject({ volume_30d: 1, value_30d: [{ currency: 'XAF', value: 1000 }] });
+    expect(by(old.project.id)).toMatchObject({ volume_30d: 0, value_30d: [] });
+    expect(by(idle.id)).toMatchObject({ volume_30d: 0, value_30d: [] });
+    expect(by(a.project.id).credentials_active).toBeGreaterThan(0);
+  });
+});
+
 describe('detail endpoints no longer embed capped sub-lists', () => {
   it('project detail no longer embeds capped sub-lists', async () => {
     const p = await LONG_LISTS.find((l) => l.name === 'projects/:id/origin-refusals')!.seed();

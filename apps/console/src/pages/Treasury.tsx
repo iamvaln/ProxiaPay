@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { get } from '../lib/api';
 import { useSession, useT } from '../lib/session';
-import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
+import { Amount, ConfirmedAction, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type Filter } from '../components/table/DataTable';
-import { chip, fetchPage, periodFilter, useReload } from './list-support';
+import { chip, chipBy, distinct, fetchPage, periodFilter, useReload } from './list-support';
 
 type Row = Record<string, any>;
 type Tr = (k: string, v?: Record<string, string | number>) => string;
@@ -63,6 +63,59 @@ export function cashoutList({ t, accounts, currencies, currency }: { t: Tr; acco
   return { columns, filters: MOVEMENT_FILTERS(t, ['pending_approval', 'approved', 'declined', 'confirmed'], accounts, currencies), summary, rowKey: (r) => r.id, defaultSort: 'created', defaultOrder: 'desc', empty: { none: t('l.cashout_none'), why: t('l.cashout_why') } };
 }
 
+type Listed = Pick<DataTableProps<Row>, 'columns' | 'filters' | 'actions' | 'summary' | 'rowKey' | 'defaultSort' | 'empty'>;
+const NO_COVER = 1e12; // a wallet with no cover figure sorts after every one that has it
+
+/** Float accounts, the least covered first. Opening one is the action; the figures behind the band are in the summary. */
+export function floatAccountList({ t, rows }: { t: Tr; rows: Row[] }): Listed {
+  const columns: Column<Row>[] = [
+    { key: 'provider', label: t('col.provider'), text: (a) => a.providerAccountName, sortValue: (a) => a.providerAccountName, render: (a) => a.providerAccountName },
+    { key: 'country', label: t('l.country'), text: (a) => a.countryCode, render: (a) => a.countryCode },
+    { key: 'currency', label: t('l.currency'), text: (a) => a.currency, render: (a) => a.currency },
+    { key: 'direction', label: t('col.type'), text: (a) => a.direction, render: (a) => t(`l.${a.direction}`) },
+    { key: 'cover', label: t('col.cover_band'), sortValue: (a) => a.coverHours ?? NO_COVER, render: (a) => <Pill value={a.band} /> },
+    { key: 'balance', label: t('col.balance'), align: 'end', render: (a) => <Amount minor={a.balance} currency={a.currency} /> },
+  ];
+  const summary = (a: Row) => (
+    <SummaryGrid items={[
+      { label: t('l.free_liquidity'), value: <Amount minor={a.freeLiquidity} currency={a.currency} /> },
+      { label: t('l.open_disbursements'), value: <Amount minor={a.openDisbursements} currency={a.currency} /> },
+      { label: t('l.recent_outflow'), value: <span><Amount minor={a.outflowPerHour} currency={a.currency} /> <span className="small muted">{t('l.per_hour')}</span></span> },
+      { label: t('l.cover_hours'), value: a.coverHours == null ? '—' : `${a.coverHours} h` },
+      { label: t('l.proposed_transfer'), value: a.proposedTransfer != null ? <Amount minor={a.proposedTransfer} currency={a.currency} /> : '—' },
+    ]} />
+  );
+  return {
+    columns, summary, rowKey: (a) => a.id, defaultSort: 'cover',
+    filters: [
+      ...chipBy<Row>('band', t('col.cover_band'), ['critical', 'watch', 'healthy'], (a) => a.band),
+      ...chipBy<Row>('currency', t('l.currency'), distinct(rows, (a) => a.currency), (a) => a.currency),
+      ...chipBy<Row>('direction', t('col.type'), [{ value: 'collection', label: t('l.collection') }, { value: 'disbursement', label: t('l.disbursement') }], (a) => a.direction),
+    ],
+    actions: [{ label: t('table.open'), primary: true, to: (a) => `/treasury/float/${a.id}` }],
+    empty: { none: t('l.float_none'), why: t('l.float_why') },
+  };
+}
+
+/** What each project holds, one row per currency; a project with no balance keeps a row saying so. */
+export function projectBalanceList({ t, rows }: { t: Tr; rows: Row[] }): Listed {
+  const columns: Column<Row>[] = [
+    { key: 'project', label: t('col.project'), text: (r) => r.project.name, sortValue: (r) => r.project.name, render: (r) => r.project.name },
+    { key: 'currency', label: t('l.currency'), text: (r) => r.currency ?? '', render: (r) => r.currency ?? <span className="muted">{t('l.no_balance')}</span> },
+    { key: 'available', label: t('col.available'), align: 'end', render: (r) => (r.currency ? <Amount minor={r.available} currency={r.currency} /> : '') },
+    { key: 'reserved', label: t('col.reserved'), align: 'end', render: (r) => (r.currency ? <Amount minor={r.reserved} currency={r.currency} /> : '') },
+  ];
+  return {
+    columns, rowKey: (r) => r.project.id + (r.currency ?? ''), defaultSort: 'project',
+    filters: chipBy<Row>('currency', t('l.currency'), distinct(rows, (r) => r.currency), (r) => r.currency),
+    actions: [{ label: t('l.open_project'), primary: true, to: (r) => `/projects/${r.project.id}` }],
+    empty: { none: t('l.balance_none'), why: t('l.balance_why') },
+  };
+}
+
+/** One row per project and currency, from the endpoint's per-project lists. */
+export const balanceRows = (projects: Row[]): Row[] => projects.flatMap((p) => (p.balances.length ? p.balances.map((b: Row) => ({ project: p.project, ...b })) : [{ project: p.project, currency: null }]));
+
 /** Treasury (console spec 8): balances, float ordered by cover, transfers, cashouts, funding and adjustments. */
 export function TreasuryPage() {
   const { has } = useSession();
@@ -92,16 +145,12 @@ export function TreasuryPage() {
         {float.data && <>
           <ScopeNote scoped={float.data.scoped} />
           <div className="row" style={{ marginBottom: 12 }}>{float.data.coverage.map((c: any) => <div className="card" key={c.currency}><b>{c.currency}</b> coverage {c.ratio ?? '—'} {c.ratio != null && c.ratio < 1 && <Tag family="refused">below one: project balances exceed what backs them</Tag>}<br /><span className="small muted">float <Amount minor={c.float} currency={c.currency} /> · encumbered <Amount minor={c.encumbered} currency={c.currency} /></span></div>)}</div>
-          {accounts.length === 0 ? <Empty text="No float account yet; one appears with the first collection or funding at a provider." /> : (
-            <table><thead><tr><th>Account</th><th className="num">Wallet balance</th><th className="num">Open disbursements</th><th className="num">Free liquidity</th><th className="num">Cover</th><th>Band</th><th className="num">Proposed transfer</th></tr></thead>
-              <tbody>{accounts.map((a: any) => <tr key={a.id}><td><Link to={`/treasury/float/${a.id}`}>{a.providerAccountName} · {a.countryCode} · {a.currency} · {a.direction}</Link></td><td className="num"><Amount minor={a.balance} currency={a.currency} /></td><td className="num"><Amount minor={a.openDisbursements} currency={a.currency} /></td><td className="num"><Amount minor={a.freeLiquidity} currency={a.currency} /></td><td className="num">{a.coverHours == null ? '—' : `${a.coverHours} h`}</td><td><Pill value={a.band} /></td><td className="num">{a.proposedTransfer != null ? <Amount minor={a.proposedTransfer} currency={a.currency} /> : '—'}</td></tr>)}</tbody></table>
-          )}
+          <DataTable<Row> prefix="fa_" rows={accounts} {...floatAccountList({ t, rows: accounts })} />
         </>}
       </>)}
       {tab === 'balances' && (<>
         <ErrorLine error={balances.error} />
-        {balances.data ? (balances.data.projects.length === 0 ? <Empty /> : <table><thead><tr><th>Project</th><th>Currency</th><th className="num">Available</th><th className="num">Reserved</th></tr></thead>
-          <tbody>{balances.data.projects.flatMap((p: any) => p.balances.length ? p.balances.map((b: any) => <tr key={p.project.id + b.currency}><td><Link to={`/projects/${p.project.id}`}>{p.project.name}</Link></td><td>{b.currency}</td><td className="num"><Amount minor={b.available} currency={b.currency} /></td><td className="num"><Amount minor={b.reserved} currency={b.currency} /></td></tr>) : [<tr key={p.project.id}><td><Link to={`/projects/${p.project.id}`}>{p.project.name}</Link></td><td colSpan={3} className="muted">no balance</td></tr>])}</tbody></table>) : <NeedsPermission permission="treasury.read_balances" />}
+        {balances.data ? <DataTable<Row> prefix="bal_" rows={balanceRows(balances.data.projects)} {...projectBalanceList({ t, rows: balanceRows(balances.data.projects) })} /> : <NeedsPermission permission="treasury.read_balances" />}
       </>)}
       {tab === 'transfers' && (<>
         {has('treasury.read_float') ? (float.data

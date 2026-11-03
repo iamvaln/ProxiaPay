@@ -4,7 +4,7 @@ import { get, post, put } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type RowAction } from '../components/table/DataTable';
-import { chip, fetchPage, periodFilter, useAdministrators, useReload } from './list-support';
+import { chip, chipBy, distinct, fetchPage, periodFilter, useAdministrators, useReload } from './list-support';
 import { pct } from '../lib/format';
 
 /** Oversight (console spec 10): alerts, health, reporting, export verification, administrators, roles, audit and authentication history. */
@@ -166,8 +166,62 @@ function Exports() {
   </>);
 }
 
+/**
+ * Administrators. Désactiver and Réactiver unfold the summary, where the code-confirmed change and each role's removal
+ * are exactly what the table row used to hold.
+ */
+export function administratorList({ t, me, reload }: { t: Tr; me?: string; reload: () => void }, rows: Row[] = []): Lists {
+  const columns: Column<Row>[] = [
+    { key: 'name', label: t('col.name'), text: (a) => a.name, sortValue: (a) => a.name, render: (a) => <>{a.name}{a.id === me && <span className="small muted"> ({t('l.you')})</span>}</> },
+    { key: 'email', label: t('col.email'), text: (a) => a.email, render: (a) => a.email },
+    { key: 'status', label: t('col.status'), text: (a) => a.status, render: (a) => <><Pill value={a.status} />{!a.totp_enrolled_at && <span className="small muted"> · {t('l.no_authenticator')}</span>}{a.locked_until && new Date(a.locked_until) > new Date() && <Tag family="refused">{t('l.locked')}</Tag>}</> },
+    { key: 'last', label: t('col.last_sign_in'), sortValue: (a) => (a.last_sign_in_at ? Date.parse(a.last_sign_in_at) : 0), render: (a) => <When value={a.last_sign_in_at} /> },
+  ];
+  const summary = (a: Row) => (
+    <SummaryGrid items={[
+      { label: t('l.roles_scope'), value: a.assignments.length ? a.assignments.map((x: Row) => <div key={x.id}>{x.role_name} <span className="small muted">{x.scope_type}{x.scopes.length ? `: ${x.scopes.map((s: Row) => (s.project_id ?? s.provider_account_id).slice(0, 8)).join(', ')}` : ''}</span> {a.id !== me && <ConfirmedAction operationType="role.change" values={{ kind: 'assignment_remove', assignment_id: x.id }} path="/oversight/roles/changes" label="×" onDone={reload} />}</div>) : '—' },
+      { label: t('l.language'), value: a.language },
+      { label: t('l.timezone'), value: a.timezone },
+      { label: t('col.status'), value: a.id === me ? <span className="small muted">{t('l.own_status_locked')}</span> : <ConfirmedAction operationType="administrator.amend" values={{ id: a.id, status: a.status === 'active' ? 'disabled' : 'active' }} path={`/oversight/administrators/${a.id}`} method="PATCH" label={a.status === 'active' ? t('l.disable') : t('l.enable')} onDone={reload} /> },
+    ]} />
+  );
+  return {
+    columns, summary, rowKey: (a) => a.id, defaultSort: 'name',
+    filters: [
+      ...chipBy<Row>('status', t('col.status'), distinct(rows, (a) => a.status), (a) => a.status),
+      ...chip<Row>('role', t('col.role'), [...new Set(rows.flatMap((a) => a.assignments.map((x: Row) => x.role_name as string)))].sort()).map((f) => ({ ...f, match: (a: Row, v: string) => a.assignments.some((x: Row) => x.role_name === v) })),
+    ],
+    actions: [
+      { label: t('l.disable'), opens: true, when: (a) => a.id !== me && a.status === 'active' },
+      { label: t('l.enable'), opens: true, when: (a) => a.id !== me && a.status !== 'active' },
+    ],
+    empty: { none: t('l.admin_none'), why: t('l.admin_why') },
+  };
+}
+
+/** Roles, with who holds each and the permission list in the summary. Modifier opens the editor beside the table. */
+export function roleList({ t, edit }: { t: Tr; edit: (r: Row) => void }): Lists {
+  const columns: Column<Row>[] = [
+    { key: 'name', label: t('col.name'), text: (r) => `${r.name} ${r.description}`, sortValue: (r) => r.name, render: (r) => <>{r.name}{r.seeded && <span className="small muted"> ({t('l.seeded')})</span>}</> },
+    { key: 'members', label: t('col.members'), text: (r) => r.administrators.map((a: Row) => a.name).join(' '), sortValue: (r) => r.administrators.length, render: (r) => <span className="small">{r.administrators.map((a: Row) => a.name).join(', ') || '—'}</span> },
+    { key: 'permissions', label: t('col.permissions'), align: 'end', sortValue: (r) => r.permissions.length, render: (r) => r.permissions.length },
+  ];
+  const summary = (r: Row) => (
+    <SummaryGrid items={[
+      { label: t('col.description'), value: r.description || '—' },
+      { label: t('col.permissions'), value: r.permissions.length ? <ul className="small">{r.permissions.map((p: string) => <li key={p} className="mono">{p}</li>)}</ul> : '—' },
+    ]} />
+  );
+  return {
+    columns, summary, rowKey: (r) => r.id, defaultSort: 'name', filters: [],
+    actions: [{ label: t('l.modify'), run: edit }],
+    empty: { none: t('l.role_none'), why: t('l.role_why') },
+  };
+}
+
 function Administrators() {
   const { me } = useSession();
+  const t = useT();
   const { data, error, reload } = useLoad(() => get<any>('/oversight/administrators'));
   const roles = useLoad(() => get<any>('/oversight/roles').catch(() => null));
   const [form, setForm] = useState({ name: '', email: '', password: '', language: 'en' });
@@ -175,11 +229,7 @@ function Administrators() {
   if (error) return <ErrorLine error={error} />;
   if (!data) return null;
   return (<>
-    <table><thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Roles and scope</th><th>Language</th><th>Last sign-in</th><th /></tr></thead>
-      <tbody>{data.administrators.map((a: any) => <tr key={a.id}><td>{a.name}{a.id === me?.administrator.id && <span className="small muted"> (you)</span>}</td><td>{a.email}</td><td><Pill value={a.status} />{!a.totp_enrolled_at && <span className="small muted"> · no authenticator</span>}{a.locked_until && new Date(a.locked_until) > new Date() && <Tag family="refused">locked</Tag>}</td>
-        <td>{a.assignments.map((x: any) => <div key={x.id}>{x.role_name} <span className="small muted">{x.scope_type}{x.scopes.length ? `: ${x.scopes.map((s: any) => (s.project_id ?? s.provider_account_id).slice(0, 8)).join(', ')}` : ''}</span> {a.id !== me?.administrator.id && <ConfirmedAction operationType="role.change" values={{ kind: 'assignment_remove', assignment_id: x.id }} path="/oversight/roles/changes" label="×" onDone={reload} />}</div>)}</td>
-        <td>{a.language}</td><td><When value={a.last_sign_in_at} /></td>
-        <td>{a.id === me?.administrator.id ? <span className="small muted">You cannot alter your own status or roles.</span> : <ConfirmedAction operationType="administrator.amend" values={{ id: a.id, status: a.status === 'active' ? 'disabled' : 'active' }} path={`/oversight/administrators/${a.id}`} method="PATCH" label={a.status === 'active' ? 'Disable' : 'Enable'} onDone={reload} />}</td></tr>)}</tbody></table>
+    <DataTable<Row> prefix="adm_" rows={data.administrators} {...administratorList({ t, me: me?.administrator.id, reload }, data.administrators)} />
     <div className="grid2" style={{ marginTop: 16 }}>
       <div className="card"><h2>New administrator</h2>
         <ConfirmedAction operationType="administrator.create" values={{ name: form.name, email: form.email, language: form.language, password: form.password }} path="/oversight/administrators" label="Create" disabled={!form.name || !form.email || form.password.length < 12} onDone={() => { setForm({ name: '', email: '', password: '', language: 'en' }); reload(); }}
@@ -195,6 +245,7 @@ function Administrators() {
 }
 
 function Roles() {
+  const t = useT();
   const { data, error, reload } = useLoad(() => get<any>('/oversight/roles'));
   const [editing, setEditing] = useState<any>(null);
   const [impact, setImpact] = useState<any>(null);
@@ -202,8 +253,7 @@ function Roles() {
   if (!data) return null;
   const domains = [...new Set(Object.keys(data.permissions).map((k) => k.split('.')[0]))];
   return (<div className="grid2">
-    <div><table><thead><tr><th>Role</th><th>Description</th><th className="num">Permissions</th><th>Administrators</th><th /></tr></thead>
-      <tbody>{data.roles.map((r: any) => <tr key={r.id}><td>{r.name}{r.seeded && <span className="small muted"> (seeded)</span>}</td><td className="small">{r.description}</td><td className="num">{r.permissions.length}</td><td className="small">{r.administrators.map((a: any) => a.name).join(', ') || '—'}</td><td><button onClick={() => { setEditing({ kind: 'role_permissions', role_id: r.id, name: r.name, description: r.description, permissions: [...r.permissions] }); setImpact(null); }}>Edit</button></td></tr>)}</tbody></table>
+    <div><DataTable<Row> prefix="role_" rows={data.roles} {...roleList({ t, edit: (r) => { setEditing({ kind: 'role_permissions', role_id: r.id, name: r.name, description: r.description, permissions: [...r.permissions] }); setImpact(null); } })} />
       <button style={{ marginTop: 8 }} onClick={() => setEditing({ kind: 'role_permissions', name: '', description: '', permissions: [] })}>New role</button></div>
     {editing && <div className="card">
       <h2>{editing.role_id ? `Edit ${editing.name}` : 'New role'}</h2>

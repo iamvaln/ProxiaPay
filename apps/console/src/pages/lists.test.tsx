@@ -151,25 +151,28 @@ describe('the other lists', () => {
 describe('every list page', () => {
   const dir = __dirname;
   const read = (f: string) => readFileSync(join(dir, f), 'utf8');
-  // Tables kept as plain markup for Task 6: short, ordered or non-list tables on these pages.
-  const KEPT: Record<string, number> = {
-    'Transactions.tsx': 0, 'Previews.tsx': 0, 'Search.tsx': 0, 'Reconciliation.tsx': 0, 'FloatDetail.tsx': 0,
-    'Treasury.tsx': 2, // float accounts, project balances
-    'ProjectDetail.tsx': 3, // credentials, declared origins, entitlements
-    'Oversight.tsx': 5, // health measures (2), reporting pivot, administrators, roles
+  // Every page is checked. The only raw tables left are not lists: they are laid out by hand and carry no rows to search, sort or page.
+  const PAGES = readdirSync(dir).filter((f) => f.endsWith('.tsx') && !f.endsWith('.test.tsx')).sort();
+  const NOT_LISTS: Record<string, number> = {
+    'Home.tsx': 6, // dashboard cards
+    'TransactionDetail.tsx': 3, // ledger T-accounts
+    'Discrepancy.tsx': 1, // the postings preview of a correction
+    'Oversight.tsx': 3, // health measures (the per-dimension helper and failure reasons) and the reporting pivot
   };
-  it('renders no raw <table> outside DataTable', () => {
-    for (const [file, kept] of Object.entries(KEPT)) expect([file, (read(file).match(/<table/g) ?? []).length]).toEqual([file, kept]);
+  it('renders no raw <table> outside DataTable, bar the non-list tables named here', () => {
+    expect(PAGES.length).toBeGreaterThan(15);
+    for (const file of PAGES) expect([file, (read(file).match(/<table/g) ?? []).length]).toEqual([file, NOT_LISTS[file] ?? 0]);
+    for (const file of Object.keys(NOT_LISTS)) expect(PAGES).toContain(file);
   });
   it('reads no sub-list the server no longer embeds', () => {
-    const src = Object.keys(KEPT).map(read).join('\n');
+    const src = PAGES.map(read).join('\n');
     expect(src).not.toMatch(/data\.(origin_refusals|deliveries|activity|entries|results)\b/);
     expect(src).not.toMatch(/\.(discrepancies|runs)\.map/);
   });
   it('has every interface string in both languages', () => {
     const i18n = readFileSync(join(dir, '..', 'lib', 'i18n.ts'), 'utf8');
     const used = new Set<string>();
-    for (const f of [...Object.keys(KEPT), 'list-support.tsx']) for (const m of read(f).matchAll(/\bt\('([a-z_]+\.[a-z_0-9]+)'/g)) used.add(m[1]!);
+    for (const f of PAGES) for (const m of read(f).matchAll(/\bt\('([a-z_]+\.[a-z_0-9]+)'/g)) used.add(m[1]!);
     for (const k of used) expect(i18n, k).toMatch(new RegExp(`'${k.replace('.', '\\.')}': \\{ en: .*fr: `));
     expect(readdirSync(dir).length).toBeGreaterThan(0);
   });

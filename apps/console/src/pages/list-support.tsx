@@ -80,3 +80,16 @@ export function useAdministrators(): { id: string; name: string }[] {
   }, []);
   return admins;
 }
+
+/** A chip over values read from the rows themselves; the list is held in memory, so the chip filters it there. */
+export function chipBy<T>(key: string, label: string, values: string[] | { value: string; label: string }[], of: (r: T) => string | null | undefined): Filter<T>[] {
+  return chip<T>(key, label, values).map((f) => ({ ...f, match: (r, v) => of(r) === v }));
+}
+
+/** The distinct non-empty values of a column, sorted: what a chip over an in-memory list offers. */
+export const distinct = <T,>(rows: T[], of: (r: T) => string | null | undefined): string[] => [...new Set(rows.flatMap((r) => of(r) ?? []))].sort();
+
+/** Yes/no chip over a boolean column. */
+export function yesNo<T>(key: string, label: string, t: (k: string) => string, of: (r: T) => boolean): Filter<T>[] {
+  return chipBy<T>(key, label, [{ value: 'yes', label: t('l.yes') }, { value: 'no', label: t('l.no') }], (r) => (of(r) ? 'yes' : 'no'));
+}
