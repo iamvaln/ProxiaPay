@@ -3,8 +3,8 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { DB_TOKEN, type Db } from '../db/database';
 import { parseBody } from '../http/validation';
-import { LedgerService } from '../ledger/ledger.service';
-import { TreasuryService } from '../treasury/treasury.service';
+import { TreasuryService, type FloatAccountView } from '../treasury/treasury.service';
+import { HomeService } from './home.service';
 import { ApprovalService } from './approval.service';
 import { SessionGuard, type ConsoleRequest } from './session.guard';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
@@ -19,10 +19,10 @@ const decisionSchema = z.object({ decision: z.enum(['approve', 'decline']), reas
 export class HomeController {
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
-    private readonly ledger: LedgerService,
     private readonly treasury: TreasuryService,
     private readonly approvals: ApprovalService,
     private readonly confirmations: ConfirmationService,
+    private readonly homeService: HomeService,
   ) {}
 
   @Get('home')
@@ -31,40 +31,29 @@ export class HomeController {
     const cards: Record<string, unknown> = {};
     const approvals = await this.approvals.pending(req.principal.administratorId, auth.permissions());
     cards.awaiting_your_approval = approvals.filter((a) => a.can_act).map((a) => ({ id: a.id, type: a.type, summary: a.summary, amount: a.amount, currency: a.currency_code, initiator: a.initiator_name, created_at: a.created_at }));
-    if (auth.has('oversight.alerts.read')) {
-      const { rows } = await sql<{ severity: string; n: number }>`select severity, count(*)::int as n from alert where status in ('open', 'acknowledged') group by 1`.execute(this.db);
-      const recent = await this.db.selectFrom('alert').select(['id', 'title', 'severity', 'raised_at', 'action_reference']).where('status', 'in', ['open', 'acknowledged']).where('severity', '=', 'critical').orderBy('raised_at', 'desc').limit(5).execute();
-      cards.open_alerts = { by_severity: Object.fromEntries(rows.map((r) => [r.severity, r.n])), recent_critical: recent };
-    }
-    if (auth.has('treasury.read_float')) {
-      const scope = auth.providerScope('treasury.read_float');
-      const floats = await this.treasury.floatAccounts(this.db, scope);
-      cards.float_cover = { scoped: scope !== null, accounts: floats.filter((f) => f.band !== 'healthy').map((f) => ({ id: f.id, provider: f.providerAccountName, country: f.countryCode, currency: f.currency, direction: f.direction, cover_hours: f.coverHours, band: f.band, free_liquidity: f.freeLiquidity })) };
-      cards.coverage_ratio = await this.treasury.coverageByCurrency(this.db);
-    }
-    if (auth.has('reconciliation.read')) {
-      const { rows } = await sql<{ type: string; n: number }>`select type, count(*)::int as n from discrepancy where status <> 'resolved' group by 1`.execute(this.db);
-      const mine = await this.db.selectFrom('discrepancy').select(['id', 'type', 'subject_reference', 'difference', 'currency_code']).where('assignee_id', '=', req.principal.administratorId).where('status', '<>', 'resolved').limit(10).execute();
-      cards.open_discrepancies = { by_type: Object.fromEntries(rows.map((r) => [r.type, r.n])), assigned_to_me: mine };
-    }
+    const alerts = auth.has('oversight.alerts.read');
+    const providers = auth.has('providers.read');
+    if (alerts || providers) cards.verdict = { problems: await this.homeService.problems({ alerts, providers }) };
     if (auth.has('oversight.reports')) {
       const scope = auth.projectScope('oversight.reports');
+      cards.success_rate = await this.homeService.overallSuccess(scope);
+      cards.collected_today = await this.homeService.collectedToday(scope);
+      cards.undetermined = await this.homeService.undetermined(scope);
+      cards.routes = { scoped: scope !== null, series: await this.homeService.routeSeries(scope, alerts) };
       const scopeFilter = scope ? sql`and project_id in (${sql.join(scope.length ? scope : ['00000000-0000-0000-0000-000000000000'])})` : sql``;
-      const { rows } = await sql<{ direction: string; currency_code: string; n: number; value: number; succeeded: number; terminal: number }>`
-        select direction, currency_code, count(*)::int as n, coalesce(sum(requested_amount), 0)::bigint as value,
-               count(*) filter (where state = 'succeeded')::int as succeeded, count(*) filter (where terminal_at is not null)::int as terminal
-          from transaction where created_at > date_trunc('day', now()) ${scopeFilter} group by 1, 2`.execute(this.db);
-      const { rows: base } = await sql<{ direction: string; rate: number | null }>`
-        select direction, (count(*) filter (where state = 'succeeded'))::float / nullif(count(*) filter (where terminal_at is not null), 0) as rate
-          from transaction where created_at > now() - interval '7 days' and created_at < date_trunc('day', now()) ${scopeFilter} group by 1`.execute(this.db);
-      cards.todays_activity = { scoped: scope !== null, rows: rows.map((r) => ({ ...r, success_rate: r.terminal ? r.succeeded / r.terminal : null, baseline_success_rate: base.find((b) => b.direction === r.direction)?.rate ?? null })) };
       const { rows: earn } = await sql<{ currency_code: string; platform: number; processing: number; provider: number }>`
         select currency_code, coalesce(sum(platform_fee), 0)::bigint as platform, coalesce(sum(processing_fee), 0)::bigint as processing, coalesce(sum(actual_provider_fee), 0)::bigint as provider
           from transaction where state = 'succeeded' and terminal_at > date_trunc('month', now()) ${scopeFilter} group by 1`.execute(this.db);
       cards.earnings = { period: 'month_to_date', scoped: scope !== null, rows: earn.map((e) => ({ currency: e.currency_code, platform_revenue: e.platform, margin: subtract(e.processing, e.provider) })) };
     }
-    if (auth.has('providers.read')) {
-      cards.provider_status = await this.db.selectFrom('provider_account').select(['id', 'name', 'status']).orderBy('name').execute();
+    if (auth.has('treasury.read_float')) {
+      const views = await this.treasury.floatAccounts(this.db, auth.providerScope('treasury.read_float'));
+      let lowest: FloatAccountView | null = null;
+      for (const f of views) if (f.coverHours !== null && (lowest === null || f.coverHours < (lowest.coverHours as number))) lowest = f;
+      cards.lowest_float = lowest && { id: lowest.id, provider: lowest.providerAccountName, country: lowest.countryCode, currency: lowest.currency, direction: lowest.direction, cover_hours: lowest.coverHours, band: lowest.band, proposed_transfer: lowest.proposedTransfer };
+    }
+    if (auth.has('reconciliation.read')) {
+      cards.assigned_discrepancies = await this.db.selectFrom('discrepancy').select(['id', 'type', 'subject_reference', 'difference', 'currency_code']).where('assignee_id', '=', req.principal.administratorId).where('status', '<>', 'resolved').limit(10).execute();
     }
     return { cards };
   }
