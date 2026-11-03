@@ -1,0 +1,195 @@
+name: release
+
+# Production, from a `v*` tag on main:
+#
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# gate (tag is on main) -> verify (same steps as CI) -> build 4 images -> deploy
+# (the `production` environment: a required reviewer approves before SSH).
+#
+# ROLLBACK: Actions > release > Run workflow, with the tag of an earlier release.
+# No verify and no build: the gate checks the tag is on main and that its images
+# exist in GHCR, then the approved deploy puts that version back.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to deploy or roll back to (e.g. v1.0.0)
+        required: true
+
+# Never two deploys onto the same stack, and never cancel one half way through.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/iamvaln
+  # The tag being released: pushed, or chosen for a rollback. Passed to scripts
+  # through the environment, never interpolated into a shell line.
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  # Only main is ever released. A v* tag can be pushed from any branch, and
+  # without this check an unreviewed branch would reach production.
+  gate:
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: read }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Tag is a release tag
+        run: |
+          case "$RELEASE_TAG" in
+            v[0-9]*) ;;
+            *) echo "'$RELEASE_TAG' is not a v<number> release tag"; exit 1 ;;
+          esac
+      - name: Tag is on main
+        run: bash ops/release/check-tag-on-main.sh "$RELEASE_TAG"
+      - uses: docker/login-action@v3
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # A rollback deploys images that must already exist; all four, since
+      # compose pulls all four and a missing one would fail half way through.
+      - name: Images for the tag exist
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          for image in api console db backup; do
+            docker manifest inspect "$REGISTRY/proxiapay-$image:$RELEASE_TAG" >/dev/null \
+              || { echo "no image $REGISTRY/proxiapay-$image:$RELEASE_TAG"; exit 1; }
+          done
+
+  verify:
+    needs: [gate]
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/verification.yml
+
+  build-api:
+    needs: [verify]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/proxiapay-api:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/proxiapay-api:latest
+          cache-from: type=gha,scope=release-api
+          cache-to: type=gha,scope=release-api,mode=max
+
+  # NO build-args: the console image carries no environment, so this build is
+  # the one the sandbox runs too (see sandbox.yml).
+  build-console:
+    needs: [verify]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/console/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/proxiapay-console:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/proxiapay-console:latest
+          cache-from: type=gha,scope=release-console
+          cache-to: type=gha,scope=release-console,mode=max
+
+  build-db:
+    needs: [verify]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          # Postgres 16 with WAL-G built from source (ops/db): built here, once,
+          # never on the VPS. amd64 only, which is what the VPS runs.
+          context: ./ops/db
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/proxiapay-db:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/proxiapay-db:latest
+          cache-from: type=gha,scope=release-db
+          cache-to: type=gha,scope=release-db,mode=max
+
+  build-backup:
+    needs: [verify]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./ops/backup
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/proxiapay-backup:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/proxiapay-backup:latest
+          cache-from: type=gha,scope=release-backup
+          cache-to: type=gha,scope=release-backup,mode=max
+
+  deploy:
+    needs: [gate, verify, build-api, build-console, build-db, build-backup]
+    # On a tag push every build must have succeeded; on a rollback the builds
+    # are skipped by design, and the gate alone clears the way.
+    if: ${{ !cancelled() && needs.gate.result == 'success' && !contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ env.RELEASE_TAG }}" }
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          envs: IMAGE_TAG,GHCR_USER,GHCR_TOKEN,APP_DIR
+          script_path: ops/release/deploy.sh
+        env:
+          IMAGE_TAG: ${{ env.RELEASE_TAG }}
+          GHCR_USER: ${{ github.actor }}
+          # This run's own token: it expires with the run.
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_DIR: ${{ secrets.VPS_APP_DIR }}
