@@ -27,15 +27,15 @@ export class HomeService {
 
   /** Last-hour success rate against the 7 days before it, over every terminal transaction in scope. */
   async overallSuccess(scope: string[] | null): Promise<RateVsBaseline> {
-    const { rows } = await sql<{ recent_total: number; recent_ok: number; base_total: number; base_ok: number }>`
+    const { rows } = await sql<{ recent_total: number; recent_rate: number | null; base_total: number; base_rate: number | null }>`
       select count(*) filter (where t.terminal_at > now() - interval '1 hour')::int as recent_total,
-             count(*) filter (where t.terminal_at > now() - interval '1 hour' and t.state = 'succeeded')::int as recent_ok,
+             (count(*) filter (where t.terminal_at > now() - interval '1 hour' and t.state = 'succeeded'))::float / nullif(count(*) filter (where t.terminal_at > now() - interval '1 hour'), 0) as recent_rate,
              count(*) filter (where t.terminal_at <= now() - interval '1 hour')::int as base_total,
-             count(*) filter (where t.terminal_at <= now() - interval '1 hour' and t.state = 'succeeded')::int as base_ok
+             (count(*) filter (where t.terminal_at <= now() - interval '1 hour' and t.state = 'succeeded'))::float / nullif(count(*) filter (where t.terminal_at <= now() - interval '1 hour'), 0) as base_rate
         from transaction t
        where t.terminal_at > now() - interval '8 days' ${this.scopeFilter(scope)}`.execute(this.db);
     const r = rows[0]!;
-    return { current: rate(r.recent_ok, r.recent_total), baseline: r.base_total >= DEPARTING.minSample ? rate(r.base_ok, r.base_total) : null, sample: r.recent_total };
+    return { current: r.recent_rate, baseline: r.base_total >= DEPARTING.minSample ? r.base_rate : null, sample: r.recent_total };
   }
 
   /** Succeeded collections settled today, per currency, against the same stretch of the day one week ago. */
@@ -58,12 +58,12 @@ export class HomeService {
 
   /** `withAlerts` is whether the caller may read alerts. One series per route with terminal transactions in the last 8 days: 24 hourly buckets, oldest first, the last being the current hour. */
   async routeSeries(scope: string[] | null, withAlerts: boolean): Promise<RouteSeries[]> {
-    const { rows: rates } = await sql<{ route_id: string; payment_method_code: string; payment_method_name: string; country_code: string; currency: string; direction: string; recent_total: number; recent_ok: number; base_total: number; base_ok: number }>`
+    const { rows: rates } = await sql<{ route_id: string; payment_method_code: string; payment_method_name: string; country_code: string; currency: string; direction: string; recent_total: number; recent_rate: number | null; base_total: number; base_rate: number | null }>`
       select r.id as route_id, r.payment_method_code, pm.name as payment_method_name, r.country_code, r.currency_code as currency, r.direction,
              count(*) filter (where t.terminal_at > now() - interval '1 hour')::int as recent_total,
-             count(*) filter (where t.terminal_at > now() - interval '1 hour' and t.state = 'succeeded')::int as recent_ok,
+             (count(*) filter (where t.terminal_at > now() - interval '1 hour' and t.state = 'succeeded'))::float / nullif(count(*) filter (where t.terminal_at > now() - interval '1 hour'), 0) as recent_rate,
              count(*) filter (where t.terminal_at <= now() - interval '1 hour')::int as base_total,
-             count(*) filter (where t.terminal_at <= now() - interval '1 hour' and t.state = 'succeeded')::int as base_ok
+             (count(*) filter (where t.terminal_at <= now() - interval '1 hour' and t.state = 'succeeded'))::float / nullif(count(*) filter (where t.terminal_at <= now() - interval '1 hour'), 0) as base_rate
         from transaction t
         join route r on r.id = t.route_id
         join payment_method pm on pm.code = r.payment_method_code
@@ -100,7 +100,7 @@ export class HomeService {
         const b = buckets?.get(start);
         return { hour: new Date(start).toISOString(), terminal: b?.terminal ?? 0, succeeded: b?.succeeded ?? 0 };
       });
-      const figures = { current: rate(r.recent_ok, r.recent_total), baseline: r.base_total >= DEPARTING.minSample ? rate(r.base_ok, r.base_total) : null, sample: r.recent_total, alerted: alerted.has(r.route_id) };
+      const figures = { current: r.recent_rate, baseline: r.base_total >= DEPARTING.minSample ? r.base_rate : null, sample: r.recent_total, alerted: alerted.has(r.route_id) };
       return {
         route_id: r.route_id, payment_method_code: r.payment_method_code, payment_method_name: r.payment_method_name, country_code: r.country_code, currency: r.currency, direction: r.direction as RouteSeries['direction'],
         ...figures, departing: isDeparting(figures), hours,
@@ -157,8 +157,4 @@ export class HomeService {
     }
     return names;
   }
-}
-
-function rate(ok: number, total: number): number | null {
-  return total ? ok / total : null;
 }

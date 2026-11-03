@@ -94,6 +94,25 @@ describe('GET /console/home', () => {
     expect((await home()).awaiting_your_approval).toEqual([{ id: 'r1', type: 'x', summary: 's', amount: 5, currency: 'XAF', initiator: 'Ann', created_at: 'now' }]);
   });
 
+  it('passes the project scope and the alerts flag to every figure', async () => {
+    const calls: Record<string, unknown[]> = {};
+    const spy = new HomeService(t.db);
+    for (const name of ['overallSuccess', 'collectedToday', 'undetermined', 'routeSeries'] as const) {
+      const original = spy[name].bind(spy) as (...a: unknown[]) => Promise<unknown>;
+      (spy as unknown as Record<string, unknown>)[name] = (...a: unknown[]) => { calls[name] = a; return original(...a); };
+    }
+    const c = new HomeController(t.db, {} as TreasuryService, { pending: async () => [] } as unknown as ApprovalService, {} as ConfirmationService, spy);
+    const scoped = grant('oversight.reports', { scopeType: 'projects', projectIds: ['11111111-1111-1111-1111-111111111111'] });
+    const cards = (await c.home(requestOf(scoped))).cards as { routes: { scoped: boolean } };
+    expect(cards.routes.scoped).toBe(true);
+    expect(calls.overallSuccess).toEqual([['11111111-1111-1111-1111-111111111111']]);
+    expect(calls.collectedToday).toEqual([['11111111-1111-1111-1111-111111111111']]);
+    expect(calls.undetermined).toEqual([['11111111-1111-1111-1111-111111111111']]);
+    expect(calls.routeSeries).toEqual([['11111111-1111-1111-1111-111111111111'], false]);
+    await c.home(requestOf(scoped, grant('oversight.alerts.read')));
+    expect(calls.routeSeries).toEqual([['11111111-1111-1111-1111-111111111111'], true]);
+  });
+
   it('never emits the removed keys', async () => {
     const cards = await home(...(['oversight.alerts.read', 'providers.read', 'treasury.read_float', 'reconciliation.read', 'oversight.reports'] as Permission[]).map((p) => grant(p)));
     for (const key of removed) expect(cards).not.toHaveProperty(key);
