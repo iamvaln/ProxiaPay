@@ -9,6 +9,10 @@
   --state-checking-text: #7a5200; --state-checking-bg: #fff4dc; --state-checking-line: #f1dfb0;
   --state-information-text: #454b59; --state-information-bg: #f1f2f5;
   --hazard: #f5b400;
+  /* Text and surfaces set on ink: the sidebar and table headers. */
+  --on-ink: #ffffff; --on-ink-muted: #9aa0ac; --ink-raised: #1c1f27;
+  /* What cuts the equals sign out of the disc: the ground the mark sits on. */
+  --mark-cut: var(--surface);
   --font-sans: Manrope, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --radius-control: 6px; --radius-card: 10px;
@@ -37,13 +41,16 @@ a:hover { text-decoration-color: var(--ink); }
 
 .shell { display: grid; grid-template-columns: 232px 1fr; min-height: calc(100vh - 6px); }
 /* The sidebar stays in view, so the chip naming the environment does too (console spec 2). */
-nav.side { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: var(--surface); border-right: 1px solid var(--line); padding: 20px 12px; display: flex; flex-direction: column; }
+nav.side { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: var(--ink); color: var(--on-ink); --mark-cut: var(--ink); padding: 20px 12px; display: flex; flex-direction: column; }
+nav.side .lockup { color: var(--on-ink); }
+nav.side :focus-visible { outline-color: var(--on-ink); }
 nav.side .brand { padding: 0 8px 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
-nav.side a { display: block; color: var(--ink-2); padding: 7px 10px; border-radius: var(--radius-control); text-decoration: none; font-weight: 500; }
-nav.side a:hover { color: var(--ink); background: var(--soft); }
-nav.side a.active { color: var(--surface); background: var(--ink); font-weight: 600; }
-nav.side .foot { margin-top: auto; padding: 16px 10px 0; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
-nav.side .foot a { display: inline; padding: 0; color: var(--ink); }
+nav.side a { display: block; color: var(--on-ink-muted); padding: 7px 10px; border-radius: var(--radius-control); text-decoration: none; font-weight: 500; }
+nav.side a:hover { color: var(--on-ink); background: var(--ink-raised); }
+nav.side a.active { color: var(--ink); background: var(--surface); font-weight: 600; }
+nav.side .foot { margin-top: auto; padding: 16px 10px 0; font-size: 12px; color: var(--on-ink-muted); border-top: 1px solid var(--ink-raised); }
+nav.side .foot a { display: inline; padding: 0; color: var(--on-ink); }
+nav.side .env-chip.production { color: var(--on-ink); box-shadow: inset 0 0 0 1px var(--on-ink); }
 /* A wide table scrolls inside the main column rather than pushing the whole page sideways. */
 main { padding: 24px 32px; max-width: 1400px; min-width: 0; overflow-x: auto; }
 header.top { display: flex; gap: 16px; align-items: center; margin-bottom: 20px; }
@@ -63,7 +70,7 @@ h3 { font-size: 12px; font-weight: 600; margin: 12px 0 6px; color: var(--muted);
 
 table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-card); overflow: hidden; }
 th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; background: var(--soft); }
+th { font-size: 12px; font-weight: 600; color: var(--on-ink); text-transform: uppercase; letter-spacing: 0.05em; background: var(--ink); border-bottom-color: var(--ink); }
 td.num, th.num { text-align: right; }
 .num, .amount { font-variant-numeric: tabular-nums; }
 /* An amount or a time is read whole: it never breaks across lines. */

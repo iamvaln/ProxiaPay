@@ -249,10 +249,11 @@ The work is mostly `styles.css` and the shared pieces in
 where they hard-code styles.
 
 - **Shell:**
-  - the dark navy sidebar becomes white, with a `line` border on its right;
-  - the lockup at the top;
-  - navigation items in `ink-2`, the active one in `ink`, weight 600, on
-    `soft`;
+  - the sidebar is set in `ink`, a clear edge against the white page
+    (Valentine's call, after seeing it white);
+  - the lockup at the top, inverted: a white disc with the bars cut in ink;
+  - navigation items in a light grey (`#9AA0AC`), the active one filled white
+    with `ink` text, weight 600;
   - the administrator's name, time zone and sign-out at the bottom;
   - search stays where it is, restyled.
 
@@ -264,7 +265,7 @@ where they hard-code styles.
   - disabled is 40% opacity.
 - **Links:** `ink`, underlined. There is no accent colour left to mark them.
 - **Tables:**
-  - `soft` header row with small uppercase `muted` labels;
+  - an `ink` header row with small uppercase white labels (Valentine's call);
   - `line` rules;
   - numbers right-aligned and tabular;
   - references in Plex Mono.

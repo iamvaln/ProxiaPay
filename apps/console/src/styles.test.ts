@@ -27,7 +27,7 @@ describe('the console palette', () => {
     ['ink', 'surface'], ['ink-2', 'surface'], ['muted', 'surface'], ['muted', 'soft'],
     ['state-confirmed-text', 'state-confirmed-bg'], ['state-refused-text', 'state-refused-bg'], ['state-pending-text', 'state-pending-bg'],
     ['state-checking-text', 'state-checking-bg'], ['state-information-text', 'state-information-bg'], ['state-refused-text', 'surface'],
-    ['ink', 'hazard'], ['surface', 'ink'],
+    ['ink', 'hazard'], ['surface', 'ink'], ['on-ink', 'ink'], ['on-ink-muted', 'ink'], ['on-ink-muted', 'ink-raised'],
   ];
   for (const [text, ground] of pairs) {
     it(`sets ${text} on ${ground} at 4.5:1 or better`, () => {
@@ -55,9 +55,21 @@ describe('what the components rely on', () => {
 
 describe('the brand colour is black', () => {
   // Wherever a coloured theme would put its accent, ProxiaPay puts ink.
-  it('fills the active navigation item in ink', () => {
-    expect(css).toMatch(/nav\.side a\.active \{[^}]*background: var\(--ink\)[^}]*\}/);
-    expect(css).toMatch(/nav\.side a\.active \{[^}]*color: var\(--surface\)/);
+  it('sets the sidebar in ink, a clear edge against the white page, its active item turned white', () => {
+    expect(css).toMatch(/nav\.side \{[^}]*background: var\(--ink\)[^}]*color: var\(--on-ink\)/);
+    expect(css).toMatch(/nav\.side a\.active \{[^}]*color: var\(--ink\)[^}]*background: var\(--surface\)/);
+  });
+
+  it('inverts the mark on the black sidebar: the disc white, its bars cut in ink', () => {
+    expect(css).toMatch(/nav\.side \{[^}]*--mark-cut: var\(--ink\)/);
+  });
+
+  it('outlines the production chip in white where it sits on ink', () => {
+    expect(css).toMatch(/nav\.side \.env-chip\.production \{[^}]*box-shadow: inset 0 0 0 1px var\(--on-ink\)/);
+  });
+
+  it('heads every table in ink with white labels', () => {
+    expect(css).toMatch(/\nth \{[^}]*color: var\(--on-ink\)[^}]*background: var\(--ink\)/);
   });
 
   it('gives checkboxes, radios and date pickers the ink accent instead of the browser blue', () => {
