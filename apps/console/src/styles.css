@@ -15,6 +15,7 @@
   --mark-cut: var(--surface);
   --font-sans: Manrope, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --operator-momo: #2a78d6; --operator-om: #eb6834; --operator-moov: #1baf7a; --operator-wave: #eda100; --operator-airtel: #e87ba4; --operator-free: #008300; --operator-mpesa: #6250d6;
   --radius-control: 6px; --radius-card: 10px;
   font-family: var(--font-sans); color: var(--ink);
   /* The brand colour is ink: native controls (checkboxes, radios, date pickers) take it instead of the browser blue. */
@@ -141,3 +142,30 @@ pre { background: var(--soft); border: 1px solid var(--line); border-radius: var
 .headline-label { font-size: 12px; color: var(--muted); }
 .headline-value { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .headline-row { display: flex; flex-direction: column; }
+
+/* ===== Home: route chart ===== */
+.route-chart { position: relative; }
+.route-chart .rc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.route-chart .rc-head h2 { margin: 0; }
+.route-chart .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-control); overflow: hidden; }
+.route-chart .seg button { border: 0; border-radius: 0; background: var(--surface); color: var(--ink); padding: 3px 10px; font-size: 12px; }
+.route-chart .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.route-chart .chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 2px; }
+.route-chart .chip { border-radius: 99px; padding: 2px 10px; font-size: 12px; color: var(--ink); }
+.route-chart .chip[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.route-chart .chip .departing { color: var(--state-refused-text); font-weight: 700; margin-left: 4px; }
+.route-chart .chip[aria-pressed="true"] .departing { color: var(--on-ink); }
+.route-chart .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink); margin: 8px 0 4px; }
+.route-chart .legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+.route-chart .legend i.band { height: 8px; background: var(--ink); opacity: 0.15; }
+.route-chart svg { display: block; overflow: visible; width: 100%; }
+.route-chart svg text { fill: var(--ink); font-size: 12px; }
+.route-chart svg text.axis { fill: var(--muted); font-size: 11px; }
+.route-chart svg .grid { stroke: var(--line); }
+.route-chart svg .grid.floor { stroke: var(--muted); }
+.route-chart svg .band-fill { fill: var(--ink); opacity: 0.08; }
+.route-chart svg .crosshair { stroke: var(--muted); stroke-dasharray: 3 3; }
+.route-chart svg .end-dot { stroke: var(--surface); stroke-width: 2; }
+.route-chart .tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--surface); border-radius: var(--radius-control); padding: 6px 9px; font-size: 12px; line-height: 1.4; white-space: nowrap; z-index: 5; }
+.route-chart .tip .k { opacity: 0.7; }
+.route-chart .tip .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }

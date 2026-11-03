@@ -53,6 +53,17 @@ describe('what the components rely on', () => {
   });
 });
 
+describe('the operator colours', () => {
+  const expected: Record<string, string> = {
+    momo: '#2a78d6', om: '#eb6834', moov: '#1baf7a', wave: '#eda100', airtel: '#e87ba4', free: '#008300', mpesa: '#6250d6',
+  };
+  for (const [name, hex] of Object.entries(expected)) {
+    it(`defines --operator-${name} as ${hex}`, () => {
+      expect(value(`operator-${name}`).toLowerCase()).toBe(hex);
+    });
+  }
+});
+
 describe('the brand colour is black', () => {
   // Wherever a coloured theme would put its accent, ProxiaPay puts ink.
   it('sets the sidebar in ink, a clear edge against the white page, its active item turned white', () => {

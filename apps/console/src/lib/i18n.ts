@@ -57,6 +57,16 @@ const STRINGS: Record<string, { en: string; fr: string }> = {
   'home.headline.lowest_float': { en: 'Lowest float cover', fr: 'Couverture de trésorerie la plus basse' },
   'home.headline.cover_hours': { en: '{hours} h', fr: '{hours} h' },
   'home.headline.transfer': { en: 'transfer {amount}', fr: 'virement {amount}' },
+  'home.chart.title': { en: 'Success rate by route, last 24 h', fr: 'Taux de succès par route, 24 dernières heures' },
+  'home.chart.subtitle': { en: 'Axis from 50 to 100 %', fr: 'Axe de 50 à 100 %' },
+  'home.chart.collection': { en: 'Collection', fr: 'Collecte' }, 'home.chart.disbursement': { en: 'Disbursement', fr: 'Décaissement' },
+  'home.chart.all': { en: 'All routes · {n}', fr: 'Toutes les routes · {n}' },
+  'home.chart.now': { en: 'now', fr: 'maint.' },
+  'home.chart.others': { en: '{n} other routes', fr: '{n} autres routes' },
+  'home.chart.others_range': { en: '{n} other routes between {lo} and {hi} %', fr: '{n} autres routes entre {lo} et {hi} %' },
+  'home.chart.legend_band': { en: 'Other routes (worst to best rate)', fr: 'Autres routes (du pire au meilleur taux)' },
+  'home.chart.tx': { en: '{n} tx', fr: '{n} tx' }, 'home.chart.baseline': { en: 'baseline {pct} %', fr: 'normale {pct} %' },
+  'home.chart.empty': { en: 'No route to show.', fr: 'Aucune route à afficher.' },
 };
 
 export function t(lang: Lang, key: string, vars: Record<string, string | number> = {}): string {
