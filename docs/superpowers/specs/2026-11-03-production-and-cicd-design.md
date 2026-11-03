@@ -68,7 +68,9 @@ with a level of safety suited to real money.
    real money: XAF, MTN MoMo and Orange Money, collection and payout. Production
    therefore launches with those 4 routes live. The production seed inserts
    the full catalogue, but only Cameroon is active. Every other country is
-   inactive and gets no active route binding, so nothing can route into it.
+   inactive: the route resolver refuses a deactivated country
+   (`COUNTRY_DISABLED`), so nothing can route into it. Its routes and bindings
+   exist, ready for the day it is switched on.
    Each later country is switched on from the console (Configuration ▸
    Countries ▸ Activer, with its impact warning) once it has been exercised in
    the sandbox. No code change and no deploy are needed. The builder adds a
