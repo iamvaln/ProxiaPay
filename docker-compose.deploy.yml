@@ -18,16 +18,20 @@ name: ${STACK:-proxiapay}
 services:
   # ── PostgreSQL ─────────────────────────────────────────────────────────────
   db:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+    # Owner credentials (POSTGRES_PASSWORD, the owner DATABASE_URL, APP_DB_PASSWORD) live in
+    # OWNER_ENV_FILE, read by db and migrate only. Unset, it is the shared file: the sandbox
+    # keeps its single file. api and worker never see the owner file.
+    # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB come from that file directly, never
+    # through Compose interpolation (which only sees --env-file, i.e. the shared one).
+    env_file: ${OWNER_ENV_FILE:-${ENV_FILE:-.env.production}}
     volumes:
       - proxiapay-db:/var/lib/postgresql/data
+    # Over TCP, on purpose: the image's first-boot init server listens on the unix socket only,
+    # so a socket probe passes on it and migrate would start against a server about to restart.
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB']
       interval: 5s
       timeout: 5s
       retries: 12
@@ -42,7 +46,9 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-api:${IMAGE_TAG:-latest}
-    env_file: ${ENV_FILE:-.env.production}
+    env_file:
+      - ${ENV_FILE:-.env.production}
+      - ${OWNER_ENV_FILE:-${ENV_FILE:-.env.production}}
     command: ['node', 'dist/cli/migrate.js']
     restart: 'no'
     depends_on:
@@ -59,6 +65,10 @@ services:
     restart: unless-stopped
     env_file: ${ENV_FILE:-.env.production}
     environment:
+      # Production sets APP_DATABASE_URL (the least-privilege proxiapay_app role, which
+      # migrate creates and re-grants); the sandbox does not, and keeps its one URL. Only the
+      # --env-file reaches this interpolation, not env_file: above.
+      DATABASE_URL: ${APP_DATABASE_URL:-${DATABASE_URL}}
       # EXACTLY ONE proxy stands in front of this container: the shared Traefik.
       # The value is safe only because no port is published here — the container
       # is reachable through Traefik alone, and Traefik rewrites X-Forwarded-For.
@@ -79,7 +89,7 @@ services:
       # host. Explicit priorities rather than trusting Traefik's rule-length
       # ordering: the tie-break is documented behaviour, but a future edit to
       # either rule would silently reorder them.
-      - traefik.http.routers.${STACK:-proxiapay}-api.rule=Host(`${APP_DOMAIN}`) && (PathPrefix(`/v1`) || PathPrefix(`/console`) || PathPrefix(`/providers`) || PathPrefix(`/docs`))
+      - traefik.http.routers.${STACK:-proxiapay}-api.rule=Host(`${APP_DOMAIN}`) && (PathPrefix(`/v1`) || PathPrefix(`/console`) || PathPrefix(`/providers`) || PathPrefix(`/docs`) || Path(`/healthz`))
       - traefik.http.routers.${STACK:-proxiapay}-api.priority=100
       - traefik.http.routers.${STACK:-proxiapay}-api.entrypoints=websecure
       - traefik.http.routers.${STACK:-proxiapay}-api.tls.certresolver=${CERT_RESOLVER:-le}
@@ -95,6 +105,8 @@ services:
     restart: unless-stopped
     env_file: ${ENV_FILE:-.env.production}
     command: ['node', 'dist/main.worker.js']
+    environment:
+      DATABASE_URL: ${APP_DATABASE_URL:-${DATABASE_URL}}
     # NO HEALTHCHECK: the worker serves no port, and the image's probe would
     # curl a socket that isn't listening — a permanently unhealthy container.
     healthcheck:

@@ -5,11 +5,14 @@ import { loadEnv } from './cli/env';
 import { AppModule } from './app.module';
 import { loadConfig } from './config/config';
 import { rootLogger } from './logging/logger';
-import { DB_TOKEN, type Db } from './db/database';
+import { DB_TOKEN, createPool, type Db } from './db/database';
+import { assertLeastPrivilegeRole } from './db/production-guard';
 
 async function bootstrap() {
   loadEnv();
   const config = loadConfig();
+  const guardPool = createPool(config.DATABASE_URL, 1);
+  try { await assertLeastPrivilegeRole(guardPool, config.PROXIAPAY_ENV); } finally { await guardPool.end(); }
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true, logger: ['error', 'warn'], abortOnError: false, bodyParser: true });
   app.set('trust proxy', false); // addresses are derived explicitly; see http/client-address.ts
   app.disable('x-powered-by');

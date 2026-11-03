@@ -1,0 +1,52 @@
+# ProxiaPay — production only, layered on docker-compose.deploy.yml:
+#
+#   docker compose --env-file .env.production \
+#     -f docker-compose.deploy.yml -f docker-compose.production.yml up -d
+#
+# Never on the sandbox, whose stack this file would change.
+#
+# Continuous backups with WAL-G to Cloudflare R2 (s3://pay-db-backups/proxiapay),
+# encrypted with libsodium before upload, so R2 never holds the ledger in clear:
+#   - db archives every WAL segment, and closes one at least every 60 s, so a
+#     restore reaches to within about a minute of any moment;
+#   - backup takes a base backup daily at BACKUP_SCHEDULE_HOUR_UTC and keeps
+#     every backup of the last 36 days (so a full 35 days is always restorable)
+#     and at least the last 35.
+# Both read WALG_* and AWS_* from the OWNER file, like the rest of the db's
+# secrets: api and worker never see the bucket's keys or the encryption key.
+# Rehearsed end to end by ops/backup/rehearse.sh.
+services:
+  db:
+    build: ops/db
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-db:${IMAGE_TAG:?set IMAGE_TAG to the deployed release tag}
+    command: postgres -c archive_mode=on -c archive_timeout=60 -c archive_command='/usr/local/bin/archive.sh %p' -c wal_level=replica
+
+  backup:
+    build: ops/backup
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-backup:${IMAGE_TAG:?set IMAGE_TAG to the deployed release tag}
+    restart: unless-stopped
+    # run.sh sleeps most of the day; tini lets a stop reach it at once.
+    init: true
+    env_file: ${OWNER_ENV_FILE:-${ENV_FILE:-.env.production}}
+    # Read-only, at the path the server reports as data_directory, which WAL-G
+    # checks. WAL-G opens the backup on db over the network (pg_backup_start /
+    # pg_backup_stop) and reads the files from here; nothing writes into PGDATA
+    # but Postgres.
+    volumes:
+      - proxiapay-db:/var/lib/postgresql/data:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+
+  # The platform images follow the same tag as db and backup. Repeated here because
+  # docker-compose.deploy.yml defaults to :latest (the sandbox sets IMAGE_TAG=develop); in
+  # production an unset IMAGE_TAG must stop the command, never pull another release's images.
+  migrate:
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-api:${IMAGE_TAG:?set IMAGE_TAG to the deployed release tag}
+  api:
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-api:${IMAGE_TAG:?set IMAGE_TAG to the deployed release tag}
+  worker:
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-api:${IMAGE_TAG:?set IMAGE_TAG to the deployed release tag}
+  console:
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-console:${IMAGE_TAG:?set IMAGE_TAG to the deployed release tag}

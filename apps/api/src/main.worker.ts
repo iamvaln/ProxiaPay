@@ -6,12 +6,15 @@ import { loadConfig } from './config/config';
 import { rootLogger } from './logging/logger';
 import { Worker } from './jobs/worker';
 import { JobQueue } from './jobs/job-queue';
-import { DB_TOKEN, type Db } from './db/database';
+import { DB_TOKEN, createPool, type Db } from './db/database';
+import { assertLeastPrivilegeRole } from './db/production-guard';
 
 /** The background process (spec 15.1): sweep, deliveries, reconciliation, alerts, float cover, housekeeping. */
 async function bootstrap() {
   loadEnv();
   const config = loadConfig();
+  const guardPool = createPool(config.DATABASE_URL, 1);
+  try { await assertLeastPrivilegeRole(guardPool, config.PROXIAPAY_ENV); } finally { await guardPool.end(); }
   const app = await NestFactory.createApplicationContext(WorkerModule, { logger: false });
   const worker = app.get(Worker);
   const queue = app.get(JobQueue);
