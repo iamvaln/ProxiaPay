@@ -18,7 +18,7 @@ name: ${STACK:-proxiapay}
 services:
   # ── PostgreSQL ─────────────────────────────────────────────────────────────
   db:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     restart: unless-stopped
     # Owner credentials (POSTGRES_PASSWORD, the owner DATABASE_URL, APP_DB_PASSWORD) live in
     # OWNER_ENV_FILE, read by db and migrate only. Unset, it is the shared file: the sandbox
@@ -89,7 +89,7 @@ services:
       # host. Explicit priorities rather than trusting Traefik's rule-length
       # ordering: the tie-break is documented behaviour, but a future edit to
       # either rule would silently reorder them.
-      - traefik.http.routers.${STACK:-proxiapay}-api.rule=Host(`${APP_DOMAIN}`) && (PathPrefix(`/v1`) || PathPrefix(`/console`) || PathPrefix(`/providers`) || PathPrefix(`/docs`))
+      - traefik.http.routers.${STACK:-proxiapay}-api.rule=Host(`${APP_DOMAIN}`) && (PathPrefix(`/v1`) || PathPrefix(`/console`) || PathPrefix(`/providers`) || PathPrefix(`/docs`) || Path(`/healthz`))
       - traefik.http.routers.${STACK:-proxiapay}-api.priority=100
       - traefik.http.routers.${STACK:-proxiapay}-api.entrypoints=websecure
       - traefik.http.routers.${STACK:-proxiapay}-api.tls.certresolver=${CERT_RESOLVER:-le}

@@ -24,7 +24,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
       -ldflags "-s -w -linkmode external -extldflags -static -X github.com/wal-g/wal-g/cmd/pg.walgVersion=v${WALG_VERSION}" .
 RUN /wal-g --version
 
-FROM postgres:16-alpine
+FROM postgres:16.15-alpine
 COPY --from=walg /wal-g /usr/local/bin/wal-g
 COPY archive.sh /usr/local/bin/archive.sh
 # The key in WALG_LIBSODIUM_KEY is base64 (openssl rand -base64 32).

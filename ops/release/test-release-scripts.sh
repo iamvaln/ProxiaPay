@@ -49,6 +49,13 @@ case "$*" in
   *" run "*)  [ "${FAKE_RUN_FAIL:-0}" = 1 ] && exit 1 ;;
   *" pull "*) [ "${FAKE_PULL_FAIL:-0}" = 1 ] && { echo "pull denied" >&2; exit 1; } ;;
   *" up "*)   [ "${FAKE_UP_FAIL:-0}" = 1 ] && exit 1 ;;
+  *" ps "*)
+    # `ps --format {{.State}} <service>`: the state of that one service.
+    case "$*" in
+      *" worker") echo "${FAKE_WORKER_STATE:-running}" ;;
+      *" backup") echo "${FAKE_BACKUP_STATE:-running}" ;;
+      *) echo running ;;
+    esac ;;
   "images "*) printf '%s\n' ${FAKE_TAGS:-} ;;
 esac
 exit 0
@@ -56,7 +63,9 @@ F
 cat > "$BIN/curl" <<'F'
 #!/usr/bin/env bash
 echo "curl $*" >> "$FAKE_LOG"
-printf '%s' "${FAKE_HTTP:-200}"
+# A non-200 makes `curl -f` fail with no body; a 200 answers FAKE_BODY (what the proxy routes there).
+[ "${FAKE_HTTP:-200}" = 200 ] || exit 22
+printf '%s' "${FAKE_BODY-{\"status\":\"ok\"\}}"
 F
 cat > "$BIN/sleep" <<'F'
 #!/usr/bin/env bash
@@ -110,6 +119,14 @@ test_case "deploy confirms the project name" assert "grep -q 'Compose project co
 
 run_deploy healthz FAKE_HTTP=502
 test_case "deploy script exits non-zero when healthz never answers 200" assert "[ $RC -eq 1 ]" "rc=$RC"
+
+run_deploy spa FAKE_BODY='<!doctype html><title>console</title>'
+test_case "deploy fails when /healthz answers 200 with the console's HTML, not the api's status" assert "[ $RC -eq 1 ]" "rc=$RC"
+
+run_deploy workerdown FAKE_WORKER_STATE=restarting
+test_case "deploy fails when the worker is restarting" assert "[ $RC -eq 1 ] && [[ \$OUT == *worker* ]]" "rc=$RC out=${OUT: -200}"
+run_deploy backupdown FAKE_BACKUP_STATE=exited
+test_case "deploy fails when the backup service is not running" assert "[ $RC -eq 1 ] && [[ \$OUT == *backup* ]]" "rc=$RC out=${OUT: -200}"
 
 run_deploy project FAKE_PROJECT=proxiapay-sandbox
 test_case "deploy script stops when compose reports another project" assert "[ $RC -eq 1 ] && ! grep -qE ' (pull|up) ' <<<\"\$LOG\" && [[ \$OUT == *proxiapay-sandbox* ]]" "rc=$RC"

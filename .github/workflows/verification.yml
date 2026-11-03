@@ -13,8 +13,8 @@ jobs:
         ports: ['5433:5432']
         options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run typecheck
@@ -22,4 +22,7 @@ jobs:
       - run: npm test
         env: { TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5433/proxiapay_test }
       - run: npm run build -w apps/console
+      # The deploy script is what ships a release; its tests are part of "verified".
+      - run: shellcheck ops/release/*.sh ops/db/*.sh ops/backup/*.sh
+      - run: bash ops/release/test-release-scripts.sh
       - run: npm audit --omit=dev --audit-level=high

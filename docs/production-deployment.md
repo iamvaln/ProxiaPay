@@ -59,20 +59,33 @@ remember it. The run prints what it revoked (`granted … revoked …`).
 
 When `PROXIAPAY_ENV=production`, the api and the worker check at start which role
 they are connected as, and refuse to start (`refusing to start in production: …`)
-if it is a superuser or can `UPDATE ledger_entry` (`apps/api/src/db/production-guard.ts`).
-A missing or mistyped `APP_DATABASE_URL` therefore stops the stack with a message,
-instead of silently running the app as the owner with every revoke a no-op.
+if it is a superuser or can `UPDATE` any table guarded by a `refuse_mutation`
+trigger, not only `ledger_entry` (`apps/api/src/db/production-guard.ts`).
+A mistyped `APP_DATABASE_URL` therefore stops the stack with a message, and a
+missing one leaves `DATABASE_URL` empty, which is a configuration failure: neither
+runs the app as the owner. Never `export` `DATABASE_URL` or `APP_DATABASE_URL` in
+the deploy user's shell: an exported variable overrides `--env-file`.
 
 ## GitHub settings
 
-Changed by Valentine, once, before the first tag. The secrets `VPS_HOST`,
-`VPS_USER` and `VPS_SSH_KEY` already exist. `VPS_APP_DIR` (the checkout's
-directory, default `~/proxiapay`) and `VPS_PORT` are optional.
+Changed by Valentine, once, before the first tag. `VPS_HOST`, `VPS_USER`,
+`VPS_SSH_KEY` and (optional) `VPS_PORT` are **environment secrets**, not
+repository secrets. `VPS_APP_DIR` (the checkout's directory, default `~/proxiapay`)
+is optional and belongs to `production` only.
 
 1. **Environment `production`** (Settings, Environments). Required reviewer:
    Valentine. Deployment branches and tags: **selected**, limited to `main` and
    the tag pattern `v*`. The deploy job is the only one that uses it, so a release
    waits for an approval, and a ref the environment does not accept cannot get one.
+   Put `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_PORT` here as environment secrets.
+   **Environment `sandbox`**: no reviewer, deployment branches limited to
+   `develop`, the same four secrets (the sandbox deploy job declares
+   `environment: sandbox`). Then **delete the repository-level `VPS_*` secrets**:
+   while they exist, any workflow, on any branch, can read the SSH key.
+   What the approval protects: an accidental or unintended deploy of production.
+   What it does not protect: a compromised action (or a malicious change to a
+   workflow on an accepted ref) inside a job that already holds the key. That is why
+   every third-party action is pinned to a commit SHA, and bumped by hand.
 2. **A tag ruleset for `v*`** (Settings, Rules): restrict who can create, update
    and delete tags matching `v*`, and block force pushes. A release tag moved
    after its approval would deploy other code than the code approved.
@@ -151,7 +164,13 @@ compile WAL-G and the api on the VPS. Any hand-run `dc up` is preceded by
 
    ```sh
    cd ~/proxiapay
-   dc() { docker compose --env-file .env.production -f docker-compose.deploy.yml -f docker-compose.production.yml "$@"; }
+   # IMAGE_TAG is never stored: deploy.sh leaves HEAD detached on the deployed tag,
+   # and the alias reads it from there, so it can not go stale after a release.
+   dc() {
+     local tag; tag=$(git describe --tags --exact-match HEAD 2>/dev/null) \
+       || { echo "HEAD is not on a release tag; run the deploy first (or git checkout --detach vX.Y.Z)"; return 1; }
+     IMAGE_TAG=$tag docker compose --env-file .env.production -f docker-compose.deploy.yml -f docker-compose.production.yml "$@"
+   }
 
    # Reference data: the whole catalogue, roles, alert routing, and the Ejara
    # account on https://prodbox-valentines-payment.ejaraapis.xyz. Only Cameroon
@@ -168,8 +187,8 @@ compile WAL-G and the api on the VPS. Any hand-run `dc up` is preceded by
    # Your administrator. The first sign-in enrols a real authenticator.
    # The password goes through the environment, not the command line, so it is
    # neither in `ps` nor in the shell history (-e ADMIN_PASSWORD copies the
-   # variable from this shell; the leading space keeps the line out of history
-   # where HISTCONTROL=ignorespace is set).
+   # variable from this shell, and `read -rs` keeps it off the screen and out
+   # of the history).
    read -rs ADMIN_PASSWORD && export ADMIN_PASSWORD
    dc run --rm -e ADMIN_PASSWORD migrate node dist/cli/create-admin.js --name "Your Name" --email you@example.com
    unset ADMIN_PASSWORD

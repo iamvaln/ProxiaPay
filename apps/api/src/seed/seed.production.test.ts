@@ -33,7 +33,12 @@ describe('production seed', () => {
     const { id: projectId } = await t.project('shop');
     const resolver = t.app.get(RouteResolver);
     const input = { projectId, direction: 'collection' as const, paymentMethod: 'MOMO', amount: 1000 };
-    await expect(resolver.resolve(t.db, { ...input, country: 'CM', currency: 'XAF' })).resolves.toMatchObject({ country: { code: 'CM' } });
+    for (const direction of ['collection', 'disbursement'] as const) {
+      for (const paymentMethod of ['MOMO', 'OM']) {
+        await expect(resolver.resolve(t.db, { ...input, direction, paymentMethod, country: 'CM', currency: 'XAF' }), `${direction} ${paymentMethod}`)
+          .resolves.toMatchObject({ country: { code: 'CM' } });
+      }
+    }
     const err = await resolver.resolve(t.db, { ...input, country: 'BF', currency: 'XOF' }).catch((e) => e);
     expect(err).toBeInstanceOf(PlatformError);
     expect(err.code).toBe('COUNTRY_DISABLED');

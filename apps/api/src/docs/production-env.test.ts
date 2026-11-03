@@ -41,7 +41,8 @@ function opsVars(): string[] {
 const OWNER_ONLY = ['POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB', 'DATABASE_URL', 'APP_DB_ROLE', 'APP_DB_PASSWORD'];
 const isBackupSecret = (k: string) => /^(WALG|AWS|BACKUP)_/.test(k);
 // Defaults derived at runtime, not configuration.
-const DERIVED = new Set(['INSTANCE_NAME']);
+// IMAGE_TAG is set by the deploy (and by the runbook's `dc` alias), never stored in a file.
+const DERIVED = new Set(['INSTANCE_NAME', 'IMAGE_TAG']);
 
 describe('the production env templates', () => {
   it('names every variable production needs', () => {
@@ -58,7 +59,7 @@ describe('the production env templates', () => {
   });
 
   it('puts the shared variables in the shared file', () => {
-    const wanted = [...schemaKeys(), 'APP_DATABASE_URL', 'OWNER_ENV_FILE', 'ENV_FILE', 'STACK', 'APP_DOMAIN', 'CERT_RESOLVER', 'COMPOSE_FILE', 'REGISTRY', 'IMAGE_TAG']
+    const wanted = [...schemaKeys(), 'APP_DATABASE_URL', 'OWNER_ENV_FILE', 'ENV_FILE', 'STACK', 'APP_DOMAIN', 'CERT_RESOLVER', 'COMPOSE_FILE', 'REGISTRY']
       .filter((k) => !DERIVED.has(k) && k !== 'SANDBOX_ANY_SECOND_FACTOR' && k !== 'DATABASE_URL');
     expect(wanted.filter((k) => !shared.has(k))).toEqual([]);
     expect(shared.get('PROXIAPAY_ENV')).toBe('production');
@@ -68,6 +69,7 @@ describe('the production env templates', () => {
     expect(shared.get('TRUSTED_PROXY_HOPS')).toBe('1');
     expect(shared.get('COMPOSE_FILE')).toBe('docker-compose.deploy.yml:docker-compose.production.yml');
     expect(shared.get('OWNER_ENV_FILE')).toBe('.env.production.owner');
+    expect(shared.has('IMAGE_TAG')).toBe(false);
   });
 
   it('puts the owner credentials and every backup variable in the owner file', () => {

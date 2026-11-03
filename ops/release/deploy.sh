@@ -80,17 +80,27 @@ if [ -z "${APP_DOMAIN:-}" ]; then
   APP_DOMAIN=$(grep -m1 '^APP_DOMAIN=' .env.production | cut -d= -f2- | tr -d "\"'" || true)
   [ -n "$APP_DOMAIN" ] || { echo "STOP: no APP_DOMAIN in .env.production; cannot check /healthz."; exit 1; }
 fi
-timeout=${HEALTH_TIMEOUT:-120}; interval=${HEALTH_INTERVAL:-5}; waited=0; code=000
+# The body must say {"status":"ok"}: that is the api's answer. A bare 200 proves nothing, because
+# the console answers every unrouted path with index.html and 200, a crash-looping api included.
+timeout=${HEALTH_TIMEOUT:-120}; interval=${HEALTH_INTERVAL:-5}; waited=0
 while :; do
-  code=$(curl --max-time 10 -s -o /dev/null -w '%{http_code}' "https://${APP_DOMAIN}/healthz" || true)
-  [ "$code" = 200 ] && break
+  curl -fs --max-time 10 "https://${APP_DOMAIN}/healthz" 2>/dev/null | grep -q '"status":"ok"' && break
   if [ "$waited" -ge "$timeout" ]; then
-    echo "https://${APP_DOMAIN}/healthz still answers $code after ${timeout}s"
+    echo "https://${APP_DOMAIN}/healthz has not answered {\"status\":\"ok\"} after ${timeout}s"
     exit 1
   fi
   sleep "$interval"; waited=$((waited+interval))
 done
-echo "$IMAGE_TAG is live: https://${APP_DOMAIN}/healthz answers 200"
+echo "$IMAGE_TAG is live: https://${APP_DOMAIN}/healthz answers status ok"
+
+# worker and backup serve nothing /healthz could see; a crash loop shows only in their state.
+for svc in worker backup; do
+  state=$(dc ps --format '{{.State}}' "$svc" | head -1)
+  if [ "$state" != running ]; then
+    echo "STOP: $svc is '${state:-absent}', not running, though the api answers."
+    exit 1
+  fi
+done
 
 # ── Prune ────────────────────────────────────────────────────────────────────
 # `image prune` only removes dangling layers, never old tags. Keep the 2 newest version tags of

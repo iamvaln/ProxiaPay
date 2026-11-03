@@ -18,12 +18,12 @@
 services:
   db:
     build: ops/db
-    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-db:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-db:${IMAGE_TAG:?set IMAGE_TAG to the deployed release tag}
     command: postgres -c archive_mode=on -c archive_timeout=60 -c archive_command='/usr/local/bin/archive.sh %p' -c wal_level=replica
 
   backup:
     build: ops/backup
-    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-backup:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-backup:${IMAGE_TAG:?set IMAGE_TAG to the deployed release tag}
     restart: unless-stopped
     # run.sh sleeps most of the day; tini lets a stop reach it at once.
     init: true
@@ -38,3 +38,15 @@ services:
       db:
         condition: service_healthy
     networks: [internal]
+
+  # The platform images follow the same tag as db and backup. Repeated here because
+  # docker-compose.deploy.yml defaults to :latest (the sandbox sets IMAGE_TAG=develop); in
+  # production an unset IMAGE_TAG must stop the command, never pull another release's images.
+  migrate:
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-api:${IMAGE_TAG:?set IMAGE_TAG to the deployed release tag}
+  api:
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-api:${IMAGE_TAG:?set IMAGE_TAG to the deployed release tag}
+  worker:
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-api:${IMAGE_TAG:?set IMAGE_TAG to the deployed release tag}
+  console:
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-console:${IMAGE_TAG:?set IMAGE_TAG to the deployed release tag}
