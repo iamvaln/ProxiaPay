@@ -11,7 +11,7 @@ Both are stateless; run as many of each as load requires. Every lock, counter an
 
 ## Configuration
 
-See `.env.example`. `MASTER_KEY_BASE64` wraps the data keys under which provider credentials, signing secrets, authenticator seeds, browser-step addresses and payer identifiers are sealed. `INDEX_KEY_BASE64` keys the blind index that allows equality search over payer identifiers. Neither belongs in a file on the host: inject them from the key store at process start, and back up the key store with the database (spec 14.1).
+See `.env.example`. `MASTER_KEY_BASE64` wraps the data keys under which provider credentials, signing secrets, authenticator seeds, browser-step addresses and payer identifiers are sealed. `INDEX_KEY_BASE64` keys the blind index that allows equality search over payer identifiers. Neither belongs in a file on the host: inject them from the key store at process start, and back up the key store with the database (spec 14.1). The sandbox and production both keep them in a mode-600 env file because their VPS has no key store: that deviation, why, and the go-live gate that an offline copy exists, are in `docs/production-deployment.md`.
 
 `TRUSTED_PROXY_HOPS` names how many proxies sit in front of the API. With `0`, the socket address is the client address and forwarded headers are ignored; with `N`, the address `N` hops from the right of `X-Forwarded-For` is used. Set it to match the deployment exactly: too high and callers can name their own origin, which leaves the allowlist decorative.
 
@@ -21,24 +21,13 @@ The values of spec 14.7 are seeded into `platform_setting` and may be changed th
 
 Migrations are SQL files in `apps/api/migrations`, applied in order by `npm run migrate`, each in a transaction and recorded once. A change to the schema is a new file.
 
-Append-only tables (ledger entries and postings, transaction events, audit records, authentication events, discrepancy comments) refuse `UPDATE` and `DELETE` through triggers. In production, additionally run the application under a role without those privileges:
-
-```sql
-CREATE ROLE proxiapay_app LOGIN PASSWORD '…';
-GRANT CONNECT ON DATABASE proxiapay TO proxiapay_app;
-GRANT USAGE ON SCHEMA public TO proxiapay_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO proxiapay_app;
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO proxiapay_app;
-REVOKE UPDATE, DELETE ON ledger_entry, ledger_posting, ledger_checkpoint, transaction_event, audit_record, authentication_event, discrepancy_comment, route_binding, ledger_account FROM proxiapay_app;
-```
-
-Run migrations as the owner, the application as `proxiapay_app`.
+Append-only tables (ledger entries and postings, transaction events, audit records, authentication events, discrepancy comments, and others) refuse `UPDATE` and `DELETE` through triggers. In production, additionally run the application under a role without those privileges. `migrate` does this at the end of every run when `APP_DB_ROLE` and `APP_DB_PASSWORD` are set: it creates the role, grants it the run of the schema, and revokes `UPDATE` and `DELETE` on every table where a trigger executing `refuse_mutation()` fires for that event, plus all writes on `schema_migrations`. The list is derived from `pg_trigger` each time, not written down, so a later append-only table is protected without anyone listing it; the run prints what it revoked. Migrations and the one-shot CLIs run as the owner, the API and the worker as `proxiapay_app`, and in production they refuse to start as a superuser or as a role that can update `ledger_entry`. See `docs/production-deployment.md`.
 
 Monetary columns are `BIGINT` and are parsed to JavaScript numbers with a safe-integer check; a value beyond 2^53 is refused rather than rounded.
 
 ## Backups and recovery (spec 14.1)
 
-- Continuous archiving of the write-ahead log, plus a daily base backup, retained 35 days, held apart from the running system.
+- Continuous archiving of the write-ahead log, plus a daily base backup, retained 35 days (production prunes at a 36-day window, so a full 35 is always restorable), held apart from the running system. Production implements this with WAL-G to Cloudflare R2, encrypted before upload; the setup, the restore procedure and the rehearsal are in `docs/production-deployment.md`.
 - The key store's own backup and recovery procedure are part of the same plan: a database restored without its keys yields records that cannot be read.
 - Rehearse the restore quarterly into a scratch environment, recover the key store alongside the database, and verify that `LedgerService.verifyCheckpoints` reports nothing and that balances match the figures taken before the rehearsal.
 - After a real restore, run reconciliation against every provider account over the interval before the platform resumes serving. Recovery is complete when the reconciliation is.
