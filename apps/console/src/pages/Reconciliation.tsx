@@ -73,6 +73,10 @@ export function runList({ t, ref }: { t: Tr; ref: Reference }): Pick<DataTablePr
   return { columns, filters, actions, summary, rowKey: (r) => r.id, defaultSort: 'started', defaultOrder: 'desc', empty: { none: t('l.run_none'), why: t('l.run_why') } };
 }
 
+type Tab = 'discrepancies' | 'runs' | 'upload';
+/** The page instance survives navigation between /reconciliation and a run's route, so a tab picked earlier must not outlive the run it was picked for. */
+export const activeTab = (picked: { run?: string; tab: Tab }, fixedRun?: string): Tab => (fixedRun && picked.run !== fixedRun ? 'discrepancies' : picked.tab);
+
 /** Reconciliation (console spec 9.1–9.3): runs, statement upload with what was read, and the discrepancy queue with recurrence shown prominently. */
 export function ReconciliationPage() {
   const { id: routeRun } = useParams();
@@ -81,7 +85,9 @@ export function ReconciliationPage() {
   const { has, me } = useSession();
   // A run's page and `?run=` both narrow the queue to that run.
   const fixedRun = routeRun ?? params.get('run') ?? undefined;
-  const [tab, setTab] = useState<'discrepancies' | 'runs' | 'upload'>('discrepancies');
+  const [picked, setPicked] = useState<{ run?: string; tab: Tab }>({ tab: 'discrepancies' });
+  const tab = activeTab(picked, fixedRun);
+  const setTab = (next: Tab) => setPicked({ run: fixedRun, tab: next });
   const ref = useReference();
   const [rev, reload] = useReload();
   const run = useLoad(() => (fixedRun ? get<{ run: Row }>(`/reconciliation/runs/${fixedRun}`) : Promise.resolve(null)), [fixedRun]);

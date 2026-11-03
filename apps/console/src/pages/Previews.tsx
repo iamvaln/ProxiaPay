@@ -41,7 +41,7 @@ export function previewList({ t, ref }: { t: Tr; ref: Reference }): Pick<DataTab
 export function PreviewsPage() {
   const t = useT();
   const ref = useReference();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const msisdn = params.get('msisdn') ?? undefined;
   // The panel rides on every page the table fetches.
   type Panel = { repeat_unconfirmed: { msisdn_masked: string; n: number }[]; repeat_capped: boolean };
@@ -56,7 +56,7 @@ export function PreviewsPage() {
           {panel.repeat_capped && <span className="small muted">{t('l.first_20')}</span>}</div>
       )}
       {msisdn && <p className="small">{t('l.payer')} : <b>{msisdn}</b> · <Link to="/transactions/previews">{t('table.clear_filters')}</Link></p>}
-      {ref.ready ? <DataTable<Preview> key={msisdn ?? ''} {...previewList({ t, ref })} searchLabel={t('l.search_reference')} fetch={fetchWithPanel} /> : <p className="muted">{t('common.loading')}</p>}
+      {ref.ready ? <DataTable<Preview> key={msisdn ?? ''} {...previewList({ t, ref })} filtered={!!msisdn} onClearFilters={() => setParams((prev) => { const next = new URLSearchParams(prev); next.delete('msisdn'); return next; })} searchLabel={t('l.search_reference')} fetch={fetchWithPanel} /> : <p className="muted">{t('common.loading')}</p>}
     </>
   );
 }

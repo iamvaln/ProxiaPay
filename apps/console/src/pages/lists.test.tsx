@@ -6,12 +6,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DataTable } from '../components/table/DataTable';
 import { t as translate } from '../lib/i18n';
 import { listPath } from './list-support';
+import { readTableState, writeTableState } from '../components/table/table-state';
 import { transactionFetch, transactionList } from './Transactions';
 import { previewList } from './Previews';
 import { SearchResults } from './Search';
 import { entryList } from './FloatDetail';
-import { discrepancyList } from './Reconciliation';
-import { alertList } from './Oversight';
+import { activeTab, discrepancyList } from './Reconciliation';
+import { alertList, exportList } from './Oversight';
 import { deliveryList } from './ProjectDetail';
 
 const fr = (k: string, v?: Record<string, string | number>) => translate('fr', k, v);
@@ -171,5 +172,44 @@ describe('every list page', () => {
     for (const f of [...Object.keys(KEPT), 'list-support.tsx']) for (const m of read(f).matchAll(/\bt\('([a-z_]+\.[a-z_0-9]+)'/g)) used.add(m[1]!);
     for (const k of used) expect(i18n, k).toMatch(new RegExp(`'${k.replace('.', '\\.')}': \\{ en: .*fr: `));
     expect(readdirSync(dir).length).toBeGreaterThan(0);
+  });
+});
+
+describe('fix round 1', () => {
+  it('a run route always shows the discrepancies tab for that run, whatever tab was open before', () => {
+    expect(activeTab({ run: undefined, tab: 'runs' }, 'abc')).toBe('discrepancies');
+    expect(activeTab({ run: 'abc', tab: 'runs' }, 'abc')).toBe('runs');
+    expect(activeTab({ run: undefined, tab: 'runs' }, undefined)).toBe('runs');
+  });
+
+  it('export history can be filtered by who requested it', () => {
+    const keys = exportList({ t: fr, admins: [{ id: 'a1', name: 'Ada' }] }).filters!.map((f) => f.key);
+    expect(keys).toEqual(expect.arrayContaining(['subject', 'requested_by', 'period']));
+  });
+
+  it('a filter held outside the table still gives the filtered empty state, and clearing calls back', () => {
+    const cfg = transactionList({ t: fr, has: () => true, ref: noRef, reload: none });
+    const out = wrap(<DataTable rows={[]} {...cfg} filtered onClearFilters={none} />);
+    expect(out).toContain('No results for these filters');
+    expect(out).toContain('Clear filters');
+    expect(wrap(<DataTable rows={[]} {...cfg} />)).not.toContain('No results for these filters');
+  });
+
+  it('never writes a telephone number into a list URL', () => {
+    const base = { q: '', filters: {}, sort: 'created', order: 'desc' as const, page: 1, pageSize: 25 as const };
+    for (const q of ['+237 670 000 001', '670000001', '0670-000-001']) expect(writeTableState({ ...base, q }, '', new URLSearchParams()).has('q'), q).toBe(false);
+    expect(writeTableState({ ...base, q: 'txn_123' }, '', new URLSearchParams()).get('q')).toBe('txn_123');
+    expect(writeTableState({ ...base, q: 'ord-2026-11-0001' }, '', new URLSearchParams()).get('q')).toBe('ord-2026-11-0001');
+  });
+
+  it('alerts show open alerts by default, and a cleared chip stays cleared', () => {
+    const cfg = alertList({ t: fr, has: () => true, reload: none });
+    expect(cfg.filterDefaults).toEqual({ status: 'open' });
+    const d = { sort: 'raised', order: 'desc' as const, filterKeys: ['status'], filterDefaults: cfg.filterDefaults };
+    expect(readTableState(new URLSearchParams(), '', d).filters).toEqual({ status: 'open' });
+    expect(readTableState(new URLSearchParams('status='), '', d).filters).toEqual({});
+    expect(readTableState(new URLSearchParams('status=cleared'), '', d).filters).toEqual({ status: 'cleared' });
+    const cleared = writeTableState({ q: '', filters: { status: '' }, sort: 'raised', order: 'desc', page: 1, pageSize: 25 }, '', new URLSearchParams(), d.filterDefaults);
+    expect(cleared.get('status')).toBe('');
   });
 });

@@ -29,10 +29,10 @@ export function OversightPage() {
 
 type Row = Record<string, any>;
 type Tr = (k: string, v?: Record<string, string | number>) => string;
-type Lists = Pick<DataTableProps<Row>, 'columns' | 'filters' | 'actions' | 'summary' | 'rowKey' | 'defaultSort' | 'defaultOrder' | 'empty'>;
+type Lists = Pick<DataTableProps<Row>, 'columns' | 'filters' | 'actions' | 'summary' | 'rowKey' | 'defaultSort' | 'defaultOrder' | 'empty' | 'filterDefaults'>;
 const ALERT_CATEGORIES = ['treasury', 'service_health', 'reconciliation', 'security'];
 
-export function exportList({ t }: { t: Tr }): Lists {
+export function exportList({ t, admins }: { t: Tr; admins: { id: string; name: string }[] }): Lists {
   const columns: Column<Row>[] = [
     { key: 'id', label: t('col.export_reference'), mono: true, render: (x) => x.id },
     { key: 'subject', label: t('col.subject'), render: (x) => x.subject },
@@ -47,7 +47,7 @@ export function exportList({ t }: { t: Tr }): Lists {
       { label: t('l.signature'), value: <span className="mono small">{x.signature}</span> },
     ]} />
   );
-  return { columns, filters: [...chip<Row>('subject', t('col.subject'), ['transactions', 'report']), periodFilter<Row>(t)], summary, rowKey: (x) => x.id, defaultSort: 'created', defaultOrder: 'desc', empty: { none: t('l.export_none'), why: t('l.export_why') } };
+  return { columns, filters: [...chip<Row>('subject', t('col.subject'), ['transactions', 'report']), ...chip<Row>('requested_by', t('col.requested_by'), admins.map((a) => ({ value: a.id, label: a.name }))), periodFilter<Row>(t)], summary, rowKey: (x) => x.id, defaultSort: 'created', defaultOrder: 'desc', empty: { none: t('l.export_none'), why: t('l.export_why') } };
 }
 
 export function alertList({ t, has, reload }: { t: Tr; has: (p: string) => boolean; reload: () => void }): Lists {
@@ -74,6 +74,8 @@ export function alertList({ t, has, reload }: { t: Tr; has: (p: string) => boole
   );
   return {
     columns, actions, summary, rowKey: (a) => a.id, defaultSort: 'raised', defaultOrder: 'desc',
+    // The live ones by default; clearing the chip shows open and acknowledged together.
+    filterDefaults: { status: 'open' },
     filters: [...chip<Row>('status', t('col.status'), ['open', 'acknowledged', 'cleared']), ...chip<Row>('severity', t('col.severity'), ['informational', 'warning', 'critical']), ...chip<Row>('category', t('l.category'), ALERT_CATEGORIES), periodFilter<Row>(t)],
     empty: { none: t('l.alert_none'), why: t('l.alert_why') },
   };
@@ -148,6 +150,7 @@ function Exports() {
   const [content, setContent] = useState('');
   const [result, setResult] = useState<any>(null);
   const t = useT();
+  const admins = useAdministrators();
   return (<>
   <div className="grid2">
     <div className="card"><h2>Verify an export</h2>
@@ -159,7 +162,7 @@ function Exports() {
       {result && (result.known ? <div className="warnbox">Produced by <b>{result.record.requested_by}</b> on <When value={result.record.at} /> in <b>{result.record.environment}</b>, subject {result.record.subject}, {result.record.row_count} rows, filters <code>{JSON.stringify(result.record.filters)}</code>.{result.rows_unchanged === null ? ' Upload the file to check the rows.' : result.rows_unchanged ? <b className="ok"> Rows unchanged since.</b> : <b className="negative"> Rows differ from what was produced.</b>}</div> : <p className="error">No export matches.</p>)}
     </div>
   </div>
-  <div className="card"><h2>{t('l.export_history')}</h2><DataTable<Row> {...exportList({ t })} searchLabel={t('l.search_export')} fetch={fetchPage<Row>('/oversight/exports', { period: 'after' })} /></div>
+  <div className="card"><h2>{t('l.export_history')}</h2><DataTable<Row> key={admins.length} {...exportList({ t, admins })} searchLabel={t('l.search_export')} fetch={fetchPage<Row>('/oversight/exports', { period: 'after' })} /></div>
   </>);
 }
 

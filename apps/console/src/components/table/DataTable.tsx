@@ -17,7 +17,8 @@ type Fetched<T> = { data: T[]; total: number; scoped?: boolean };
 export type DataTableProps<T> = {
   rows?: T[]; fetch?: (state: TableState) => Promise<Fetched<T>>; prefix?: string;
   columns: Column<T>[]; filters?: Filter<T>[]; actions?: RowAction<T>[]; summary?: (row: T, openAction?: string) => ReactNode;
-  rowKey: (row: T) => string; defaultSort: string; defaultOrder?: 'asc' | 'desc'; searchLabel?: string; /** false for a list whose endpoint has nothing to match a search against: a box that finds nothing is worse than none. */ search?: boolean;
+  rowKey: (row: T) => string; defaultSort: string; defaultOrder?: 'asc' | 'desc'; searchLabel?: string; /** false for a list whose endpoint has nothing to match a search against: a box that finds nothing is worse than none. */ search?: boolean; filterDefaults?: Record<string, string>;
+  /** A filter the page holds outside the table: the empty state then reads as filtered, and clearing it is the page's `onClearFilters`. */ filtered?: boolean; onClearFilters?: () => void;
   empty: { none: string; why: string }; bare?: boolean;
 };
 
@@ -65,7 +66,7 @@ function FullTable<T>(props: DataTableProps<T>) {
   const [state, setState] = useTableState(props.prefix ?? '', {
     sort: props.defaultSort, order: props.defaultOrder ?? 'asc', filterKeys: filters.map((f) => f.key),
     sorts: [props.defaultSort, ...columns.flatMap((c) => sortKeyOf(c) ?? [])],
-    filterValues: Object.fromEntries(filters.map((f) => [f.key, f.options.map((o) => o.value)])),
+    filterValues: Object.fromEntries(filters.map((f) => [f.key, f.options.map((o) => o.value)])), filterDefaults: props.filterDefaults,
   });
   const number = new Intl.NumberFormat(lang === 'fr' ? 'fr-FR' : 'en-US');
 
@@ -99,8 +100,8 @@ function FullTable<T>(props: DataTableProps<T>) {
   const last = Math.max(1, Math.ceil(total / state.pageSize));
   const loading = server && !remote && !error;
 
-  const filtering = !!state.q || Object.values(state.filters).some(Boolean);
-  const clearFilters = () => setState({ q: '', filters: Object.fromEntries(Object.keys(state.filters).map((k) => [k, ''])) });
+  const filtering = !!props.filtered || !!state.q || Object.values(state.filters).some(Boolean);
+  const clearFilters = () => { props.onClearFilters?.(); setState({ q: '', filters: Object.fromEntries(Object.keys(state.filters).map((k) => [k, ''])) }); };
   return (
     <div className="dt">
       <form className="dt-bar" role="search" onSubmit={(e) => e.preventDefault()}>

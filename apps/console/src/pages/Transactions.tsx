@@ -67,7 +67,7 @@ export function transactionList({ t, has, ref, reload, currency, project }: { t:
 export const transactionFetch = (fixedProject?: string, range: Record<string, string> = {}) => fetchPage<Txn>('/transactions', { extra: { ...range, ...(fixedProject ? { project: fixedProject } : {}) } });
 
 /** The transaction list wherever it appears. `fixedProject` narrows it to one project and drops that chip; `prefix` keeps its URL params apart from a page's other lists. */
-export function TransactionTable({ fixedProject, prefix = '', range = {} }: { fixedProject?: string; prefix?: string; range?: Record<string, string> }) {
+export function TransactionTable({ fixedProject, prefix = '', range = {}, onClearFilters }: { fixedProject?: string; prefix?: string; range?: Record<string, string>; onClearFilters?: () => void }) {
   const t = useT();
   const { has } = useSession();
   const ref = useReference();
@@ -80,7 +80,7 @@ export function TransactionTable({ fixedProject, prefix = '', range = {} }: { fi
   return (
     <>
       {!currency && <p className="small muted">{t('l.amount_needs_currency')}</p>}
-      <DataTable<Txn> key={`${rev}:${JSON.stringify(extra)}`} {...cfg} prefix={prefix} searchLabel={t('l.search_reference')} fetch={transactionFetch(fixedProject, range)} />
+      <DataTable<Txn> key={`${rev}:${JSON.stringify(extra)}`} {...cfg} prefix={prefix} filtered={Object.keys(range).length > 0} onClearFilters={onClearFilters} searchLabel={t('l.search_reference')} fetch={transactionFetch(fixedProject, range)} />
     </>
   );
 }
@@ -121,7 +121,7 @@ export function TransactionsPage() {
         <label className="small">{t('l.amount_max')} <input type="number" name="amount_max" style={{ width: 110 }} defaultValue={range.amount_max ?? ''} /></label>
         <button>{t('l.apply')}</button>
       </form>
-      <TransactionTable range={sent} />
+      <TransactionTable range={sent} onClearFilters={() => setParams((prev) => { const next = new URLSearchParams(prev); for (const k of RANGE) next.delete(k); return next; })} />
     </>
   );
 }
