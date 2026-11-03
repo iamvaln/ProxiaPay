@@ -8,4 +8,8 @@
 set -eu
 : "${WALG_LIBSODIUM_KEY:?archive refused: WALG_LIBSODIUM_KEY is not set, the segment would leave unencrypted}"
 : "${WALG_S3_PREFIX:?archive refused: WALG_S3_PREFIX is not set}"
+# A segment already in the bucket is never replaced by different content: a
+# stray or restored server archiving into this prefix fails instead of
+# rewriting history. Identical content (a retried upload) is accepted.
+export WALG_PREVENT_WAL_OVERWRITE=true
 exec wal-g wal-push "$1"

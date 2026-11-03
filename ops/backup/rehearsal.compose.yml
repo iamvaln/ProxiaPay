@@ -1,6 +1,7 @@
 # The rehearsal's additions to the production stack, used by ops/backup/rehearse.sh
 # only: MinIO standing in for R2, and `restore`, the scratch database a backup is
-# restored into. Never layered on a real stack.
+# restored into, plus a server whose archiving is broken. Never layered on a
+# real stack.
 services:
   # MinIO as packaged by Bitnami: minio/minio is no longer published on Docker
   # Hub or quay.io. This archived tag is pinned and creates the bucket itself.
@@ -32,5 +33,33 @@ services:
       retries: 60
     networks: [internal]
 
+  # A server whose archiving always fails, for the base-backup timeout: its
+  # pg_backup_stop() would wait for the last segment forever.
+  stuck-db:
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-db:${IMAGE_TAG:-latest}
+    env_file: ${OWNER_ENV_FILE}
+    command: postgres -c archive_mode=on -c archive_command=false -c wal_level=replica
+    volumes:
+      - stuck-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Over TCP: the first-boot server the entrypoint runs listens on the socket only.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 2s
+      timeout: 5s
+      retries: 60
+    networks: [internal]
+
+  stuck-backup:
+    image: ${REGISTRY:-ghcr.io/iamvaln}/proxiapay-backup:${IMAGE_TAG:-latest}
+    env_file: ${OWNER_ENV_FILE}
+    environment:
+      PGHOST: stuck-db
+      WALG_S3_PREFIX: s3://pay-db-backups/stuck
+      BACKUP_PUSH_TIMEOUT: '20'
+    volumes:
+      - stuck-pgdata:/var/lib/postgresql/data:ro
+    networks: [internal]
+
 volumes:
   restore-scratch:
+  stuck-pgdata:
