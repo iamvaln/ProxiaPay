@@ -19,7 +19,6 @@ export function SignInPage() {
   const [enrol, setEnrol] = useState<{ secret: string; uri: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [locked, setLocked] = useState<string | null>(null);
-  const [resetSent, setResetSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [environment, setEnvironment] = useState<Me['environment'] | null>(null);
   // The environment is shown before anyone signs in (console spec 2); until it answers, nothing is claimed.
@@ -58,8 +57,8 @@ export function SignInPage() {
             {error && <p className="error">{error}</p>}
             {locked && <p className="error">{t('signin.locked', { until: new Date(locked).toLocaleTimeString() })}</p>}
             <button className="primary" disabled={busy}>{t('signin.submit')}</button>
-            <a href="#" className="small" onClick={(e) => { e.preventDefault(); setResetSent(true); }}>{t('signin.reset')}</a>
-            {resetSent && <p className="small muted">{t('signin.reset_sent')}</p>}
+            {/* No reset link until the platform can send one (console spec 4.1); until then, say who can help. */}
+            <p className="small muted">{t('signin.forgot')}</p>
           </form>
         )}
         {(stage === 'verify' || stage === 'enrol') && (
