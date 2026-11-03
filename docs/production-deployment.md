@@ -23,7 +23,7 @@ the first two from the override `docker-compose.production.yml`:
 | `console` | As the sandbox. |
 
 Images are `ghcr.io/iamvaln/proxiapay-{api,console,db,backup}:vX.Y.Z`, built by
-the release workflow. Once the first release exists, nothing is built on the VPS.
+the release workflow. **Nothing is ever built on the VPS**: the deploy runs `up --no-build`, and a missing image fails it instead of compiling WAL-G on the production host.
 
 ## Two env files
 
@@ -129,36 +129,56 @@ from their dashboards. The Ejara client key and secret go in
 `WALG_LIBSODIUM_KEY` somewhere offline.** See "Go-live gates": nothing real may
 happen until that is done.
 
-### First boot
+### First boot: release first
 
-A short alias for the commands of this document, which names both Compose files:
+The order matters, because the stack runs only from images the release workflow
+built and pushed. **Never run `dc` (below) before the first release has pushed
+the images**: Compose has `build:` stanzas, and with no local image it would
+compile WAL-G and the api on the VPS. Any hand-run `dc up` is preceded by
+`dc pull` and uses `--no-build` (the deploy does the same).
 
-```sh
-dc() { docker compose --env-file .env.production -f docker-compose.deploy.yml -f docker-compose.production.yml "$@"; }
-```
+1. Merge `develop` into `main`, apply the GitHub settings above, and fill the
+   three files on the VPS (the previous section).
+2. Push `v1.0.0` on `main` (see "Cutting a release") and approve the deployment.
+   `release.yml` builds the four images, then `deploy.sh` brings up `db`,
+   `migrate` (as the owner: runs the migrations and creates `proxiapay_app`),
+   `api`, `worker`, `console` and `backup` with `--no-build`, and runs
+   `set-credentials` on `provider-credentials.env` (a no-op until the seed). The `backup` service takes the
+   first base backup the moment it starts (archived WAL is useless without one),
+   then one a day at `BACKUP_SCHEDULE_HOUR_UTC`.
+3. Seed and create the administrator from the pulled images. A short alias for
+   these commands, which names both Compose files:
 
-No release exists yet, so the first `up` builds the images on the VPS (several
-minutes: WAL-G is compiled). The first release replaces them.
+   ```sh
+   cd ~/proxiapay
+   dc() { docker compose --env-file .env.production -f docker-compose.deploy.yml -f docker-compose.production.yml "$@"; }
 
-```sh
-dc up -d db migrate
+   # Reference data: the whole catalogue, roles, alert routing, and the Ejara
+   # account on https://prodbox-valentines-payment.ejaraapis.xyz. Only Cameroon
+   # (CM) is active; every other country is inactive until activated from the
+   # console. Idempotent, and a country an administrator activated stays active.
+   dc run --rm migrate node dist/cli/seed.js
 
-# Reference data: the whole catalogue, roles, alert routing, and the Ejara
-# account on https://prodbox-valentines-payment.ejaraapis.xyz. Only Cameroon
-# (CM) is active; every other country is inactive until activated from the
-# console. Idempotent, and a country an administrator activated stays active.
-dc run --rm migrate node dist/cli/seed.js
+   # The first deploy ran before the seed, so there was no provider account to
+   # seal the Ejara credentials into (it did nothing, without failing). Seal
+   # them now; every later deploy does it by itself.
+   dc run --rm -T -v "$PWD/provider-credentials.env:/run/provider-credentials.env:ro" \
+     migrate node dist/cli/set-credentials.js /run/provider-credentials.env
 
-# Your administrator. The first sign-in enrols a real authenticator.
-dc run --rm migrate node dist/cli/create-admin.js --name "Your Name" --email you@example.com --password 'a long passphrase'
-```
-
-The `backup` service takes the first base backup the moment it starts (archived
-WAL is useless without one), then one a day at `BACKUP_SCHEDULE_HOUR_UTC`.
+   # Your administrator. The first sign-in enrols a real authenticator.
+   # The password goes through the environment, not the command line, so it is
+   # neither in `ps` nor in the shell history (-e ADMIN_PASSWORD copies the
+   # variable from this shell; the leading space keeps the line out of history
+   # where HISTCONTROL=ignorespace is set).
+   read -rs ADMIN_PASSWORD && export ADMIN_PASSWORD
+   dc run --rm -e ADMIN_PASSWORD migrate node dist/cli/create-admin.js --name "Your Name" --email you@example.com
+   unset ADMIN_PASSWORD
+   ```
 
 **If R2 is unreachable on the first boot** (wrong key, no route), `db` can end
-up `unhealthy`: the first-boot init server archives on shutdown and fails. Fix
-the cause and re-run the deploy (or `dc up -d db`). It is not data loss.
+up `unhealthy`: the first-boot init server archives on shutdown and fails, and the
+deploy fails on it. Fix the cause and re-run the deploy job in GitHub (or, by
+hand, `dc pull db && dc up -d --no-build db`). It is not data loss.
 
 ## Cutting a release
 
@@ -228,9 +248,11 @@ way back is a restore (below), not a rollback.
 
 ```sh
 dc logs --since 24h backup | grep -E 'BACKUP FAILED|base backup pushed|pruned'
-dc exec backup wal-g backup-list          # base backups, newest last
-dc exec backup wal-g wal-verify integrity timeline
+dc exec backup run.sh wal-g backup-list   # base backups, newest last
+dc exec backup run.sh wal-g wal-verify integrity timeline
 ```
+
+`run.sh` runs the rest of its command line, after exporting the `PG*` variables WAL-G needs to reach `db` (a bare `wal-g wal-verify` would lack them).
 
 A failed backup is reported as `BACKUP FAILED: …` in the log and retried hourly.
 A base backup that cannot finish (archiving broken) times out after

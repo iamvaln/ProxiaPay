@@ -13,8 +13,10 @@ import { DB_TOKEN, type Db } from '../db/database';
 async function main() {
   loadEnv();
   const args = Object.fromEntries(process.argv.slice(2).map((a, i, all) => (a.startsWith('--') ? [a.slice(2), all[i + 1] ?? ''] : [])).filter((p) => p.length));
-  const { name, email, password } = args as Record<string, string>;
-  if (!name || !email || !password) throw new Error('usage: --name NAME --email EMAIL --password PASSWORD [--role Owner]');
+  const { name, email } = args as Record<string, string>;
+  // The environment keeps the password out of the process list and the shell history: ADMIN_PASSWORD=… or `-e ADMIN_PASSWORD`.
+  const password = args.password || process.env.ADMIN_PASSWORD;
+  if (!name || !email || !password) throw new Error('usage: --name NAME --email EMAIL --password PASSWORD (or ADMIN_PASSWORD in the environment) [--role Owner]');
   const app = await NestFactory.createApplicationContext(CoreModule, { logger: ['error'] });
   const db = app.get<Db>(DB_TOKEN);
   const auth = app.get(AdminAuthService);

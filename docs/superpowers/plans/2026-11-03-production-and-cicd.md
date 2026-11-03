@@ -248,16 +248,14 @@ it('never sets the sandbox second-factor switch')
    - create the environment `production` with Valentine as required reviewer;
    - allow the deployment tag `v*`.
 2. **VPS:**
-   - `git clone` into `~/proxiapay`;
-   - fill `.env.production`, which Valentine completes with the R2 key and Resend;
+   - `git clone` into `~/proxiapay` (https origin);
+   - fill `.env.production`, `.env.production.owner` and `provider-credentials.env`, which Valentine completes with the R2 key, Resend and the Ejara values;
    - generate the keys there;
-   - fill `provider-credentials.env` with the Ejara values;
-   - `chmod 600` both.
-3. **First boot:**
-   - `up -d db migrate`;
-   - `run --rm migrate node dist/cli/seed.js`;
-   - `create-admin`.
-4. **Tag `v1.0.0` on `main`**, then approve the deploy in GitHub.
+   - `chmod 600` all three.
+3. **Tag `v1.0.0` on `main`**, then approve the deploy in GitHub: the release builds the four images, and `deploy.sh` brings the stack up with `--no-build` (nothing is built on the VPS).
+4. **First data, from the pulled images:**
+   - `run --rm migrate node dist/cli/seed.js`, then `set-credentials` by hand (the first deploy ran before the seed);
+   - `create-admin` (password via `ADMIN_PASSWORD`).
 5. **Go-live gates:**
    - the offline key copy;
    - the restore rehearsal on production backups;
