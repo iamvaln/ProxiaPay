@@ -5,13 +5,13 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DataTable } from '../components/table/DataTable';
 import { t as translate } from '../lib/i18n';
-import { listPath } from './list-support';
+import { listPath, readTab, writeTab } from './list-support';
 import { readTableState, writeTableState } from '../components/table/table-state';
 import { transactionFetch, transactionList } from './Transactions';
 import { previewList } from './Previews';
 import { SearchResults } from './Search';
 import { entryList } from './FloatDetail';
-import { activeTab, discrepancyList } from './Reconciliation';
+import { discrepancyList } from './Reconciliation';
 import { alertList, exportList } from './Oversight';
 import { deliveryList } from './ProjectDetail';
 
@@ -179,10 +179,13 @@ describe('every list page', () => {
 });
 
 describe('fix round 1', () => {
-  it('a run route always shows the discrepancies tab for that run, whatever tab was open before', () => {
-    expect(activeTab({ run: undefined, tab: 'runs' }, 'abc')).toBe('discrepancies');
-    expect(activeTab({ run: 'abc', tab: 'runs' }, 'abc')).toBe('runs');
-    expect(activeTab({ run: undefined, tab: 'runs' }, undefined)).toBe('runs');
+  it('a page\'s tab lives in the URL: the fallback is the bare URL, an unknown value falls back, a run route starts clean', () => {
+    const tabs = ['discrepancies', 'runs', 'upload'] as const;
+    expect(readTab(new URLSearchParams('tab=runs'), tabs, 'discrepancies')).toBe('runs');
+    expect(readTab(new URLSearchParams('tab=nope'), tabs, 'discrepancies')).toBe('discrepancies');
+    expect(readTab(new URLSearchParams(''), tabs, 'discrepancies')).toBe('discrepancies');
+    expect(writeTab(new URLSearchParams('tr_page=2'), 'runs', 'discrepancies').toString()).toBe('tr_page=2&tab=runs');
+    expect(writeTab(new URLSearchParams('tab=runs&r_page=2'), 'discrepancies', 'discrepancies').toString()).toBe('r_page=2');
   });
 
   it('export history can be filtered by who requested it', () => {

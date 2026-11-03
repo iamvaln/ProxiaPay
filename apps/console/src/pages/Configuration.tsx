@@ -4,7 +4,7 @@ import { get, patch, post } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
 import { DataTable, SummaryGrid, type Column, type DataTableProps } from '../components/table/DataTable';
-import { chipBy, distinct, yesNo } from './list-support';
+import { chipBy, distinct, useTab, yesNo } from './list-support';
 
 type Row = Record<string, any>;
 type Tr = (k: string, v?: Record<string, string | number>) => string;
@@ -108,7 +108,7 @@ const currencyColumns = (t: Tr): Column<Row>[] => [{ key: 'code', label: t('col.
 export function ConfigurationPage() {
   const { id: providerId } = useParams();
   const { has } = useSession();
-  const [tab, setTab] = useState<'routes' | 'countries' | 'providers'>(providerId ? 'providers' : 'routes');
+  const [tab, setTab] = useTab(['routes', 'countries', 'providers'] as const, providerId ? 'providers' : 'routes');
   const routes = useLoad(() => get<{ routes: any[] }>('/configuration/routes'));
   const countries = useLoad(() => get<any>('/configuration/countries'));
   const methods = useLoad(() => get<any>('/configuration/payment-methods'));

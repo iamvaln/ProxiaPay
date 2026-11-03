@@ -4,7 +4,7 @@ import { get, post } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import { Amount, ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type Filter, type RowAction } from '../components/table/DataTable';
-import { chip, fetchPage, periodFilter, useReference, useReload, type Reference } from './list-support';
+import { chip, fetchPage, periodFilter, useReference, useReload, useTab, type Reference } from './list-support';
 
 const TYPES = ['float_drift', 'fee_variance', 'orphan_transaction', 'missing_transaction', 'state_divergence', 'stale_undetermined', 'unconfirmed_transfer', 'checkpoint_mismatch'];
 type Row = Record<string, any>;
@@ -73,9 +73,7 @@ export function runList({ t, ref }: { t: Tr; ref: Reference }): Pick<DataTablePr
   return { columns, filters, actions, summary, rowKey: (r) => r.id, defaultSort: 'started', defaultOrder: 'desc', empty: { none: t('l.run_none'), why: t('l.run_why') } };
 }
 
-type Tab = 'discrepancies' | 'runs' | 'upload';
-/** The page instance survives navigation between /reconciliation and a run's route, so a tab picked earlier must not outlive the run it was picked for. */
-export const activeTab = (picked: { run?: string; tab: Tab }, fixedRun?: string): Tab => (fixedRun && picked.run !== fixedRun ? 'discrepancies' : picked.tab);
+const TABS = ['discrepancies', 'runs', 'upload'] as const;
 
 /** Reconciliation (console spec 9.1–9.3): runs, statement upload with what was read, and the discrepancy queue with recurrence shown prominently. */
 export function ReconciliationPage() {
@@ -85,9 +83,7 @@ export function ReconciliationPage() {
   const { has, me } = useSession();
   // A run's page and `?run=` both narrow the queue to that run.
   const fixedRun = routeRun ?? params.get('run') ?? undefined;
-  const [picked, setPicked] = useState<{ run?: string; tab: Tab }>({ tab: 'discrepancies' });
-  const tab = activeTab(picked, fixedRun);
-  const setTab = (next: Tab) => setPicked({ run: fixedRun, tab: next });
+  const [tab, setTab] = useTab(TABS, 'discrepancies');
   const ref = useReference();
   const [rev, reload] = useReload();
   const run = useLoad(() => (fixedRun ? get<{ run: Row }>(`/reconciliation/runs/${fixedRun}`) : Promise.resolve(null)), [fixedRun]);
@@ -99,7 +95,7 @@ export function ReconciliationPage() {
   return (
     <>
       <h1>{t('nav.reconciliation')}</h1>
-      <div className="tabs">{(['discrepancies', 'runs', 'upload'] as const).map((k) => <a key={k} href="#" className={tab === k ? 'active' : ''} onClick={(e) => { e.preventDefault(); setTab(k); }}>{t(`l.tab_${k}`)}</a>)}</div>
+      <div className="tabs">{TABS.map((k) => <a key={k} href="#" className={tab === k ? 'active' : ''} onClick={(e) => { e.preventDefault(); setTab(k); }}>{t(`l.tab_${k}`)}</a>)}</div>
       <ErrorLine error={run.error} />
       {r && <div className="warnbox">{t('l.run')} {short(r.id)} · {ref.providers.find((p) => p.id === r.provider_account_id)?.name ?? short(r.provider_account_id)} · {r.mode} · {r.records_compared} {t('l.compared').toLowerCase()}, {r.discrepancies_raised} {t('l.raised')} · <Pill value={r.status} /> <Link to="/reconciliation/discrepancies">{t('l.all_runs')}</Link>{r.error && <p className="error">{r.error}</p>}</div>}
       {tab === 'discrepancies' && (ref.ready

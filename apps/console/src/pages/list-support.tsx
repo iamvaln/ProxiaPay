@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { get } from '../lib/api';
 import type { Filter, TableState } from '../components/table/DataTable';
 
@@ -92,4 +93,23 @@ export const distinct = <T,>(rows: T[], of: (r: T) => string | null | undefined)
 /** Yes/no chip over a boolean column. */
 export function yesNo<T>(key: string, label: string, t: (k: string) => string, of: (r: T) => boolean): Filter<T>[] {
   return chipBy<T>(key, label, [{ value: 'yes', label: t('l.yes') }, { value: 'no', label: t('l.no') }], (r) => (of(r) ? 'yes' : 'no'));
+}
+
+/** The tab a page shows: `?tab=` when it names one of the page's tabs, else the fallback. Unknown values never throw. */
+export const readTab = <T extends string>(params: URLSearchParams, tabs: readonly T[], fallback: T): T => {
+  const raw = params.get('tab');
+  return (tabs as readonly string[]).includes(raw ?? '') ? (raw as T) : fallback;
+};
+
+/** The fallback tab is the bare URL; any other tab is written to it. */
+export const writeTab = (params: URLSearchParams, tab: string, fallback: string): URLSearchParams => {
+  const next = new URLSearchParams(params);
+  if (tab === fallback) next.delete('tab'); else next.set('tab', tab);
+  return next;
+};
+
+/** A page's tabs live in the URL, beside its tables' state, so back and refresh keep the tab as well as the page. */
+export function useTab<T extends string>(tabs: readonly T[], fallback: T): [T, (next: T) => void] {
+  const [params, setParams] = useSearchParams();
+  return [readTab(params, tabs, fallback), (next) => setParams((p) => writeTab(p, next, fallback))];
 }

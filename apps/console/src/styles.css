@@ -150,6 +150,13 @@ button.toggle { border: 0; background: none; padding: 0 4px; color: var(--muted)
 th.act, td.act { text-align: right; white-space: nowrap; }
 td.act > * + * { margin-left: 4px; }
 td.act button, a.btn { padding: 4px 9px; font-size: 12px; }
+/* A list is narrow by design; what is left is tightened. A table too wide for its column scrolls inside its own frame, with Actions kept in view. */
+.dt-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-card); }
+.dt-scroll > table { border: 0; border-radius: 0; overflow: visible; }
+.dt th, .dt td { padding-left: 8px; padding-right: 8px; }
+.dt th.act, .dt td.act { position: sticky; right: 0; }
+.dt td.act { background: var(--surface); box-shadow: -6px 0 6px -6px rgb(11 13 17 / 0.2); }
+.dt tr.open td.act { background: var(--soft); }
 a.btn { display: inline-block; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-weight: 600; text-decoration: none; }
 a.btn:hover { border-color: var(--muted); }
 a.btn.primary { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }

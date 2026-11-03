@@ -1,8 +1,9 @@
 import { renderToStaticMarkup as html } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { clientRows } from './client-rows';
-import { DataTable, formatRange, pageToRequest, runRowAction, type Column, type Filter, type RowAction } from './DataTable';
+import { DataTable, formatRange, pageToRequest, runRowAction, staysOpen, type Column, type Filter, type RowAction } from './DataTable';
 import { pageItems } from './pager';
 import { clampPage, patchTableState, readTableState, writeTableState, type TableState } from './table-state';
 
@@ -148,5 +149,21 @@ describe('DataTable', () => {
     expect(out).toContain('aria-expanded="false"');
     expect(out).toContain('Plain');
     expect(out).toContain('Confirm');
+  });
+});
+
+describe('tuning after a pass over every list', () => {
+  it('a blur that names no related target keeps a chip menu open, one that leaves the chip closes it', () => {
+    const inside = {} as Node;
+    const box = { contains: (n: unknown) => n === inside } as unknown as Node;
+    expect(staysOpen(box, null)).toBe(true);
+    expect(staysOpen(box, inside as unknown as EventTarget)).toBe(true);
+    expect(staysOpen(box, {} as EventTarget)).toBe(false);
+  });
+
+  it('the scope note sits above the toolbar, where it is seen before the rows', () => {
+    const src = readFileSync(new URL('./DataTable.tsx', import.meta.url), 'utf8');
+    expect(src.indexOf('<ScopeNote')).toBeGreaterThan(-1);
+    expect(src.indexOf('<ScopeNote')).toBeLessThan(src.indexOf('className="dt-bar"'));
   });
 });

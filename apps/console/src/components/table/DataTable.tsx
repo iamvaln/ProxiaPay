@@ -104,6 +104,7 @@ function FullTable<T>(props: DataTableProps<T>) {
   const clearFilters = () => { props.onClearFilters?.(); setState({ q: '', filters: Object.fromEntries(Object.keys(state.filters).map((k) => [k, ''])) }); };
   return (
     <div className="dt">
+      <ScopeNote scoped={server ? remote?.scoped : undefined} />
       <form className="dt-bar" role="search" onSubmit={(e) => e.preventDefault()}>
         {props.search !== false && <SearchBox value={state.q} label={props.searchLabel ?? t('table.search')} onCommit={(q) => setState({ q })} />}
         {filters.map((f) => <FilterChip key={f.key} filter={f} value={state.filters[f.key] ?? ''} onChange={(v) => setState({ filters: { ...state.filters, [f.key]: v } })} />)}
@@ -136,7 +137,6 @@ function FullTable<T>(props: DataTableProps<T>) {
           </label>
         </div>
       )}
-      <ScopeNote scoped={server ? remote?.scoped : undefined} />
     </div>
   );
 }
@@ -212,7 +212,7 @@ function TableGrid<T>({ rows, columns, actions, summary, rowKey, sort }: {
 
   return <>
     <ErrorLine error={failure} />
-    <table>{head}{body}</table>
+    <div className="dt-scroll"><table>{head}{body}</table></div>
   </>;
 }
 
@@ -230,12 +230,26 @@ function SearchBox({ value, label, onCommit }: { value: string; label: string; o
   );
 }
 
+/**
+ * Whether a blur leaves the chip's menu open. Safari and Firefox on macOS do not focus a button on click, so
+ * the blur that a press on a menu option causes names no related target: that press must not close the menu
+ * before its click lands. A press elsewhere is closed by the pointer listener instead.
+ */
+export const staysOpen = (box: Node, related: EventTarget | null) => related === null || box.contains(related as Node);
+
 function FilterChip<T>({ filter, value, onChange }: { filter: Filter<T>; value: string; onChange: (v: string) => void }) {
   const t = useT();
   const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('pointerdown', away);
+    return () => document.removeEventListener('pointerdown', away);
+  }, [open]);
   const active = filter.options.find((o) => o.value === value);
   return (
-    <span className="chip-wrap" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false); }} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}>
+    <span ref={box} className="chip-wrap" onBlur={(e) => { if (!staysOpen(e.currentTarget, e.relatedTarget)) setOpen(false); }} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}>
       <button type="button" className={active ? 'chip active' : 'chip'} aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(!open)}>
         {active ? `${filter.label} : ${active.label}` : `+ ${filter.label}`}
       </button>

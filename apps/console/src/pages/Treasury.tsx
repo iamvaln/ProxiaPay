@@ -4,7 +4,7 @@ import { get } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import { Amount, ConfirmedAction, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type Filter } from '../components/table/DataTable';
-import { chip, chipBy, distinct, fetchPage, periodFilter, useReload } from './list-support';
+import { chip, chipBy, distinct, fetchPage, periodFilter, useReload, useTab } from './list-support';
 
 type Row = Record<string, any>;
 type Tr = (k: string, v?: Record<string, string | number>) => string;
@@ -119,7 +119,7 @@ export const balanceRows = (projects: Row[]): Row[] => projects.flatMap((p) => (
 /** Treasury (console spec 8): balances, float ordered by cover, transfers, cashouts, funding and adjustments. */
 export function TreasuryPage() {
   const { has } = useSession();
-  const [tab, setTab] = useState<'float' | 'balances' | 'transfers' | 'cashouts' | 'funding'>('float');
+  const [tab, setTab] = useTab(['float', 'balances', 'transfers', 'cashouts', 'funding'] as const, 'float');
   const float = useLoad(() => get<any>('/treasury/float'), [tab]);
   const balances = useLoad(() => (has('treasury.read_balances') ? get<any>('/treasury/balances') : Promise.resolve(null)), [tab]);
   const t = useT();
