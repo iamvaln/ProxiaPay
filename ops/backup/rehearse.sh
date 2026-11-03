@@ -19,7 +19,7 @@
 # Plus: the bucket never holds a row in clear, a wrong key reads nothing back,
 # both scripts refuse to run without a key, an archived segment cannot be
 # overwritten with other content, a slot's retry and a restart never push a
-# second base backup, pruning keeps every backup of the last 35 days whatever
+# second base backup, pruning keeps every backup of the retention window (36 days) whatever
 # the count, and a base backup that cannot finish (archiving broken) times out
 # with BACKUP FAILED instead of hanging.
 set -euo pipefail
@@ -266,15 +266,15 @@ ballast=$(sql restore "select count(*) from ballast")
 present=${restored_rows%% *}
 say "7. the restored rows before T match the source's, id for id"
 
-# ── retention: 35 days whatever the count ─────────────────────────────────────
+# ── retention: the 36-day window whatever the count ─────────────────────────────────────
 # BACKUP_RETAIN_FULL=1 here: two more manual backups, and all three survive the
-# prune, being younger than 35 days.
+# prune, being younger than the window.
 for _ in 1 2; do
   out=$(dc exec -T backup run.sh once 2>&1) || { printf '%s\n' "$out" >&2; fail "a manual backup failed"; }
 done
 backups=$(dc exec -T backup wal-g backup-list --json 2>/dev/null | grep -o '"backup_name"' | wc -l | tr -d ' ')
-[[ $backups == 3 ]] || fail "after pruning to 1 full backup, $backups of 3 backups younger than 35 days are left"
-say "   pruning to 1 full backup still keeps all $backups backups of the last 35 days"
+[[ $backups == 3 ]] || fail "after pruning to 1 full backup, $backups of 3 backups inside the window are left"
+say "   pruning to 1 full backup still keeps all $backups backups of the retention window"
 
 # ── a base backup that cannot finish times out ────────────────────────────────
 # stuck-db's archiving always fails, so pg_backup_stop() never returns;

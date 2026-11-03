@@ -2,6 +2,15 @@
 
 A project completes each item against the sandbox before its production credentials are issued (spec 7.5).
 
+## Platform (before the first real transaction)
+
+These concern the platform itself and are checked by its operator, once. The procedures are in `docs/production-deployment.md`.
+
+- [ ] An offline copy of `MASTER_KEY_BASE64`, `INDEX_KEY_BASE64` and `WALG_LIBSODIUM_KEY` exists, kept apart from the VPS and from R2. Without them the sealed data and every backup are unreadable.
+- [ ] A restore rehearsal passed on production's own backups: restored to a chosen instant, `LedgerService.verifyCheckpoints` reports nothing, and balances match.
+- [ ] The GitHub environment `production` requires approval (a named reviewer), with deployments limited to `main` and `v*` tags.
+- [ ] The Ejara balances in the console match the Ejara dashboard.
+
 ## Infrastructure
 
 - [ ] Every address or range the product calls from is known and has been declared on the project. Production refuses calls from elsewhere before credentials are considered.

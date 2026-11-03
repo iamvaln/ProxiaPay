@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # check=skip=SecretsUsedInArgOrEnv
 # The production backup service (ops/backup/run.sh): a daily WAL-G base backup
-# of the db volume, mounted read-only, then pruning to the last 35 days.
+# of the db volume, mounted read-only, then pruning to the last 36 days (so 35 are always restorable).
 #
 # ── WAL-G, built from its pinned source ─────────────────────────────────────
 # Built here rather than downloaded: the release binaries are glibc builds and

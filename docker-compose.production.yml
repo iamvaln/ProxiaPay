@@ -10,7 +10,8 @@
 #   - db archives every WAL segment, and closes one at least every 60 s, so a
 #     restore reaches to within about a minute of any moment;
 #   - backup takes a base backup daily at BACKUP_SCHEDULE_HOUR_UTC and keeps
-#     every backup of the last 35 days (and at least the last 35).
+#     every backup of the last 36 days (so a full 35 days is always restorable)
+#     and at least the last 35.
 # Both read WALG_* and AWS_* from the OWNER file, like the rest of the db's
 # secrets: api and worker never see the bucket's keys or the encryption key.
 # Rehearsed end to end by ops/backup/rehearse.sh.

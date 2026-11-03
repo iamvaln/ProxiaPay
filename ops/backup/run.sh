@@ -10,7 +10,10 @@
 #   run.sh CMD...     anything else, e.g. `wal-g backup-list`
 #
 # BACKUP_PUSH_TIMEOUT (seconds, default 6 h) bounds a base backup;
-# BACKUP_RETAIN_FULL (default 35) is the count kept on top of the last 35 days.
+# BACKUP_RETAIN_FULL (default 35) is the count kept on top of the last
+# BACKUP_RETAIN_DAYS days (default 36). The window is 36, not 35, so that a full 35
+# days back is always restorable: the cutoff keeps backups finished after now-N days,
+# so the oldest restorable point lies between N-1 and N days back.
 #
 # The base backup reads the db volume, mounted read-only at the path the server
 # reports as its data_directory, between the pg_backup_start and pg_backup_stop
@@ -20,7 +23,7 @@ set -uo pipefail
 PGDATA_DIR=/var/lib/postgresql/data
 HOUR=${BACKUP_SCHEDULE_HOUR_UTC:-2}
 RETAIN_FULL=${BACKUP_RETAIN_FULL:-35}
-RETAIN_DAYS=35
+RETAIN_DAYS=${BACKUP_RETAIN_DAYS:-36}
 RETRY_SECONDS=3600
 PUSH_TIMEOUT=${BACKUP_PUSH_TIMEOUT:-21600}
 
@@ -85,9 +88,9 @@ push() {
   log "base backup pushed"
 }
 
-# Keeps the last RETAIN_FULL full backups AND every backup of the last 35 days
-# (WAL-G keeps the union), so neither extra backups (a manual `once`, retries)
-# nor a lowered count can shorten the 35-day window.
+# Keeps the last RETAIN_FULL full backups AND every backup of the last RETAIN_DAYS
+# days (WAL-G keeps the union), so neither extra backups (a manual `once`, retries)
+# nor a lowered count can shorten the window.
 prune() {
   local after
   after=$(iso $(($(date -u +%s) - RETAIN_DAYS * 86400)))
