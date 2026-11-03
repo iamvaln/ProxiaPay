@@ -41,7 +41,7 @@ export function TransactionsPage() {
           <thead><tr><th>{t('txn.reference')}</th><th>{t('txn.project')}</th><th>Direction</th><th>{t('txn.route')}</th><th className="num">{t('txn.amount')}</th><th>{t('txn.state')}</th><th>{t('txn.recon')}</th><th>{t('txn.created')}</th><th>{t('txn.terminal')}</th></tr></thead>
           <tbody>{data.data.map((r) => (
             <tr key={r.id}>
-              <td><Link to={`/transactions/${r.reference}`}>{r.reference}</Link><br /><span className="small muted">{r.project_reference}</span></td>
+              <td><Link to={`/transactions/${r.reference}`} className="mono">{r.reference}</Link><br /><span className="small muted">{r.project_reference}</span></td>
               <td>{r.project_name}</td><td>{r.direction}</td><td>{r.country_code} · {r.payment_method_code}</td>
               <td className="num"><Amount minor={r.requested_amount} currency={r.currency_code} /></td>
               <td><Pill value={r.state} />{r.failure_reason && <><br /><span className="small muted">{r.failure_reason}</span></>}</td>

@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { post } from '../lib/api';
 import { useSession, useT } from '../lib/session';
+import { EnvChip, EnvRibbon } from './Environment';
+import { Lockup } from './Logo';
 
-/** The persistent environment band (console spec 2) sits above everything; areas appear where the administrator holds a permission within them (3.1). */
+/** The environment marker (console spec 2) sits above everything and beside the name; areas appear where the administrator holds a permission within them (3.1). */
 export function Shell({ children }: { children: React.ReactNode }) {
   const { me, has, refresh } = useSession();
   const t = useT();
@@ -21,10 +23,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
   ];
   return (
     <>
-      <div className={`band ${me.environment}`}>{t(`env.${me.environment}`)}</div>
+      <EnvRibbon environment={me.environment} />
       <div className="shell">
         <nav className="side">
-          <div className="brand">ProxiaPay</div>
+          <div className="brand"><Lockup size={22} /><EnvChip environment={me.environment} /></div>
           {areas.filter((a) => a.show).map((a) => <NavLink key={a.to} to={a.to} end={a.to === '/'}>{a.label}</NavLink>)}
           <div className="foot">
             {me.administrator.name}<br />

@@ -32,6 +32,12 @@ export class ConsoleAuthController {
     return this.config.NODE_ENV === 'production';
   }
 
+  /** Which environment this is, before any session: the sign-in page shows it too (console spec 2). */
+  @Get('environment')
+  environment() {
+    return { environment: this.config.PROXIAPAY_ENV };
+  }
+
   @Post('sign-in')
   @HttpCode(200)
   async signIn(@Body() body: unknown, @Req() req: Request, @Res({ passthrough: true }) res: Response) {

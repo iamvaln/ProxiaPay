@@ -4,10 +4,16 @@ const EXPONENTS: Record<string, number> = { XAF: 0, XOF: 0, GNF: 0, CDF: 2, USD:
 
 /** Amounts carry their currency and the decimal places that currency uses; the decimal mark and grouping follow the language. */
 export function money(minor: number | null | undefined, currency: string, lang: Lang = 'en'): string {
-  if (minor == null) return '—';
+  const p = moneyParts(minor, currency, lang);
+  return p.currency ? `${p.figure} ${p.currency}` : p.figure;
+}
+
+/** The same amount as money(), with the figure and the currency apart, so the currency can be set smaller beside it. */
+export function moneyParts(minor: number | null | undefined, currency: string, lang: Lang = 'en'): { figure: string; currency: string } {
+  if (minor == null) return { figure: '—', currency: '' };
   const exp = EXPONENTS[currency] ?? 2;
   const major = minor / 10 ** exp;
-  return `${new Intl.NumberFormat(lang === 'fr' ? 'fr-FR' : 'en-GB', { minimumFractionDigits: exp, maximumFractionDigits: exp }).format(major)} ${currency}`;
+  return { figure: new Intl.NumberFormat(lang === 'fr' ? 'fr-FR' : 'en-GB', { minimumFractionDigits: exp, maximumFractionDigits: exp }).format(major), currency };
 }
 
 export function when(value: string | Date | null | undefined, lang: Lang = 'en', timezone?: string): string {

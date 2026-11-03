@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { get, post } from '../lib/api';
 import { useSession } from '../lib/session';
-import { Amount, ConfirmedAction, ErrorLine, NeedsPermission, Pill, When, useLoad } from '../components/common';
+import { Amount, ConfirmedAction, ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
 
 /** Discrepancy detail (console spec 9.4): ours, theirs, the difference, comments, and a decision whose consequence is shown before committing. */
 export function DiscrepancyPage() {
@@ -21,11 +21,11 @@ export function DiscrepancyPage() {
   const values = { decision, comment, follow };
   return (
     <>
-      <h1>{d.type.replace(/_/g, ' ')} <Pill value={d.status} /> {d.recurrences_after_resolution > 0 && <span className="pill critical">recurred ×{d.recurrences_after_resolution} after resolution</span>}</h1>
+      <h1>{d.type.replace(/_/g, ' ')} <Pill value={d.status} /> {d.recurrences_after_resolution > 0 && <Tag family="refused">recurred ×{d.recurrences_after_resolution} after resolution</Tag>}</h1>
       <div className="grid2">
         <div className="card">
           <dl className="kv">
-            <dt>Subject</dt><dd>{d.transaction ? <Link to={`/transactions/${d.transaction.reference}`}>{d.transaction.reference}</Link> : d.subject_reference} <span className="small muted">({d.subject_type})</span></dd>
+            <dt>Subject</dt><dd>{d.transaction ? <Link to={`/transactions/${d.transaction.reference}`} className="mono">{d.transaction.reference}</Link> : d.subject_reference} <span className="small muted">({d.subject_type})</span></dd>
             <dt>What the platform holds</dt><dd><pre>{JSON.stringify(d.expected, null, 2)}</pre></dd>
             <dt>What the provider reported</dt><dd><pre>{JSON.stringify(d.observed, null, 2)}</pre></dd>
             <dt>Difference</dt><dd>{d.difference != null ? <Amount minor={d.difference} currency={cur} /> : '—'}</dd>
