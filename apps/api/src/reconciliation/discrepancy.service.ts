@@ -152,15 +152,14 @@ export class DiscrepancyService {
     if (d.transaction_id && !adjustmentPosted) await tx.updateTable('transaction').set({ reconciliation_status: 'examined' }).where('id', '=', d.transaction_id).where('reconciliation_status', '=', 'disputed').execute();
   }
 
-  async list(filters: { run?: string; type?: string; status?: string; assignee?: string; providerAccountId?: string; recurred?: boolean }, providerScope: string[] | null, limit = 100) {
+  /** The discrepancy queue as an unexecuted query, for the console to page; `list` is the same query run with a cap. */
+  query(filters: { run?: string; type?: string; status?: string; assignee?: string; providerAccountId?: string; recurred?: boolean }, providerScope: string[] | null) {
     let q = this.db
       .selectFrom('discrepancy as d')
       .leftJoin('administrator as a', 'a.id', 'd.assignee_id')
       .leftJoin('transaction as t', 't.id', 'd.transaction_id')
       .selectAll('d')
-      .select(['a.name as assignee_name', 't.reference as transaction_reference'])
-      .orderBy('d.first_detected_at', 'desc')
-      .limit(limit);
+      .select(['a.name as assignee_name', 't.reference as transaction_reference', 'd.recurrences_after_resolution as recurrences']);
     if (providerScope) q = q.where('d.provider_account_id', 'in', providerScope.length ? providerScope : ['00000000-0000-0000-0000-000000000000']);
     if (filters.run) q = q.where('d.run_id', '=', filters.run);
     if (filters.type) q = q.where('d.type', '=', filters.type);
@@ -168,7 +167,11 @@ export class DiscrepancyService {
     if (filters.assignee) q = q.where('d.assignee_id', '=', filters.assignee);
     if (filters.providerAccountId) q = q.where('d.provider_account_id', '=', filters.providerAccountId);
     if (filters.recurred) q = q.where('d.recurrences_after_resolution', '>', 0);
-    return q.execute();
+    return q;
+  }
+
+  list(filters: Parameters<DiscrepancyService['query']>[0], providerScope: string[] | null, limit = 100) {
+    return this.query(filters, providerScope).orderBy('d.first_detected_at', 'desc').limit(limit).execute();
   }
 
   async detail(id: string) {

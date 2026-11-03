@@ -23,6 +23,11 @@ const searchSchema = pageQuerySchema.extend({
   amount_min: z.coerce.number().int().optional(), amount_max: z.coerce.number().int().optional(),
 });
 
+const previewsSchema = pageQuerySchema.extend({
+  status: z.string().optional(), project: z.string().uuid().optional(), msisdn: z.string().max(32).optional(),
+  created_after: z.string().datetime().optional(), created_before: z.string().datetime().optional(),
+});
+
 /** Transaction search, detail, previews and global search (console spec 3.2, 5). Scope is applied in the query, never after. */
 @Controller('console')
 @UseGuards(SessionGuard)
@@ -92,17 +97,20 @@ export class ConsoleTransactionsController {
     return this.exports.produce(req.principal.administratorId, 'transactions', query, columns, rows as Record<string, unknown>[]);
   }
 
-  /** Global search (console spec 3.2): any reference the platform knows, or a telephone number under its own permission. */
+  /**
+   * Global search (console spec 3.2): any reference the platform knows, or a telephone number under its own permission.
+   * Not paged: it stops at its caps (50 transactions, 20 previews by reference, 50 of each by number) and says so with `capped`.
+   */
   @Get('search')
   @RequirePermission('transactions.read')
   async globalSearch(@Query('q') raw: string | undefined, @Req() req: ConsoleRequest) {
     const q = (raw ?? '').trim();
-    if (!q) return { results: [] };
+    if (!q) return { transactions: [], previews: [], capped: false };
     const scope = this.scopeIds(req);
-    const results: { kind: string; reference: string; id: string; project_id: string; state?: string }[] = [];
     const txnBase = this.db.selectFrom('transaction as t').leftJoin('transaction_attempt as a', 'a.id', 't.current_attempt_id').select(['t.id', 't.reference', 't.project_id', 't.state']);
-    const withScope = <Q extends { where: (...a: never[]) => Q }>(qb: Q) => qb;
-    void withScope;
+    const previewBase = this.db.selectFrom('preview').select(['id', 'reference', 'project_id', 'status as state']);
+    // One row past the cap is fetched, so that hitting the cap exactly is told apart from stopping at it.
+    const cut = <R>(rows: R[], cap: number) => ({ rows: rows.slice(0, cap), capped: rows.length > cap });
     const looksLikeNumber = /^\+?\d{6,15}$/.test(q.replace(/[\s().-]/g, ''));
     if (looksLikeNumber) {
       req.auth.require('transactions.read_identifiers');
@@ -112,22 +120,22 @@ export class ConsoleTransactionsController {
         if (!digits.startsWith('+')) candidates.push(`${c.dialling_prefix}${digits.replace(/^0/, '')}`);
       }
       const indexes = candidates.map((m) => this.crypto.blindIndex(m));
-      let qb = txnBase.where('t.msisdn_index', 'in', indexes).orderBy('t.created_at', 'desc').limit(50);
+      let qb = txnBase.where('t.msisdn_index', 'in', indexes).orderBy('t.created_at', 'desc').limit(51);
       if (scope) qb = qb.where('t.project_id', 'in', scope);
-      for (const r of await qb.execute()) results.push({ kind: 'transaction', ...r });
-      let pb = this.db.selectFrom('preview').select(['id', 'reference', 'project_id', 'status as state']).where('msisdn_index', 'in', indexes).orderBy('created_at', 'desc').limit(50);
+      let pb = previewBase.where('msisdn_index', 'in', indexes).orderBy('created_at', 'desc').limit(51);
       if (scope) pb = pb.where('project_id', 'in', scope);
-      for (const r of await pb.execute()) results.push({ kind: 'preview', ...r });
-      await this.audit.record(this.db, { actorId: req.principal.administratorId, action: 'search.by_identifier', subjectType: 'payer', subjectId: `…${digits.slice(-4)}`, next: { matches: results.length } });
-      return { results };
+      const transactions = cut(await qb.execute(), 50);
+      const previews = cut(await pb.execute(), 50);
+      await this.audit.record(this.db, { actorId: req.principal.administratorId, action: 'search.by_identifier', subjectType: 'payer', subjectId: `…${digits.slice(-4)}`, next: { matches: transactions.rows.length + previews.rows.length } });
+      return { transactions: transactions.rows, previews: previews.rows, capped: transactions.capped || previews.capped };
     }
-    let qb = txnBase.where((eb) => eb.or([eb('t.reference', '=', q), eb('t.project_reference', '=', q), eb('a.provider_reference', '=', q), eb('a.operator_reference', '=', q)])).limit(50);
+    let qb = txnBase.where((eb) => eb.or([eb('t.reference', '=', q), eb('t.project_reference', '=', q), eb('a.provider_reference', '=', q), eb('a.operator_reference', '=', q)])).limit(51);
     if (scope) qb = qb.where('t.project_id', 'in', scope);
-    for (const r of await qb.execute()) results.push({ kind: 'transaction', ...r });
-    let pb = this.db.selectFrom('preview').select(['id', 'reference', 'project_id', 'status as state']).where((eb) => eb.or([eb('reference', '=', q), eb('project_reference', '=', q)])).limit(20);
+    let pb = previewBase.where((eb) => eb.or([eb('reference', '=', q), eb('project_reference', '=', q)])).limit(21);
     if (scope) pb = pb.where('project_id', 'in', scope);
-    for (const r of await pb.execute()) results.push({ kind: 'preview', ...r });
-    return { results };
+    const transactions = cut(await qb.execute(), 50);
+    const previews = cut(await pb.execute(), 20);
+    return { transactions: transactions.rows, previews: previews.rows, capped: transactions.capped || previews.capped };
   }
 
   @Get('transactions/:reference')
@@ -206,15 +214,18 @@ export class ConsoleTransactionsController {
   @Get('previews')
   @RequirePermission('transactions.read')
   async previews(@Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
+    const q = parseBody(previewsSchema, query);
     const scope = this.scopeIds(req);
     let qb = this.db.selectFrom('preview as p').innerJoin('project as pr', 'pr.id', 'p.project_id').innerJoin('route as r', 'r.id', 'p.route_id').leftJoin('transaction as t', 't.id', 'p.transaction_id')
-      .select(['p.id', 'p.reference', 'p.direction', 'p.status', 'p.requested_amount', 'p.charged_amount', 'p.currency_code', 'p.msisdn_masked', 'p.project_reference', 'p.payer_action', 'p.created_at', 'p.expires_at', 'pr.name as project_name', 'r.country_code', 'r.payment_method_code', 't.reference as transaction_reference'])
-      .orderBy('p.created_at', 'desc').limit(100);
+      .select(['p.id', 'p.reference', 'p.direction', 'p.status', 'p.requested_amount', 'p.charged_amount', 'p.currency_code', 'p.msisdn_masked', 'p.project_reference', 'p.payer_action', 'p.created_at', 'p.expires_at', 'pr.name as project_name', 'r.country_code', 'r.payment_method_code', 't.reference as transaction_reference']);
     if (scope) qb = qb.where('p.project_id', 'in', scope);
-    if (query.status) qb = qb.where('p.status', '=', query.status);
-    if (query.project) qb = qb.where('p.project_id', '=', query.project);
-    if (query.msisdn) qb = qb.where('p.msisdn_masked', '=', query.msisdn);
+    if (q.status) qb = qb.where('p.status', '=', q.status);
+    if (q.project) qb = qb.where('p.project_id', '=', q.project);
+    if (q.msisdn) qb = qb.where('p.msisdn_masked', '=', q.msisdn);
+    if (q.q) qb = qb.where('p.reference', 'like', prefixPattern(q.q));
+    if (q.created_after) qb = qb.where('p.created_at', '>', new Date(q.created_after));
+    if (q.created_before) qb = qb.where('p.created_at', '<', new Date(q.created_before));
     const { rows: repeat } = await sql<{ msisdn_masked: string; n: number }>`select msisdn_masked, count(*)::int as n from preview where status = 'expired' and created_at > now() - interval '24 hours' group by 1 having count(*) >= 3 order by 2 desc limit 20`.execute(this.db);
-    return { data: await qb.execute(), repeat_unconfirmed: repeat, scoped: scope !== null };
+    return { ...(await paginate(qb, q, { sorts: { created: 'p.created_at' }, defaultSort: 'created', id: 'p.id' })), repeat_unconfirmed: repeat, scoped: scope !== null };
   }
 }
