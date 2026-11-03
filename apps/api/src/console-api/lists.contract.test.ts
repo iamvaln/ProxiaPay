@@ -19,6 +19,7 @@ import { OversightController } from './oversight.controller';
 import { ConsoleProjectsController } from './projects.controller';
 import { EntitlementService } from './entitlement.service';
 import { CredentialService } from '../project-auth/credential.service';
+import { ExportService } from './export.service';
 
 let t: TestContext;
 // CoreModule carries the services, not the console controllers, so each controller is assembled from them;
@@ -373,5 +374,42 @@ describe('GET /console/search', () => {
     expect(res.capped).toBe(false);
     expect(res.previews.map((p) => p.reference)).toEqual([o.previewReference]);
     expect(await controllers.transactions().globalSearch('', req())).toEqual({ transactions: [], previews: [], capped: false });
+  });
+});
+
+describe('final review hardening', () => {
+  const ids = (rows: { id: unknown }[]) => rows.map((r) => Number(r.id));
+
+  it('sorts audit and authentication history by id, which is their time order and is indexed', async () => {
+    for (const i of range(3)) await t.db.insertInto('audit_record').values({ action: 'test.action', subject_type: 'thing', subject_id: `s${i}`, occurred_at: new Date(Date.UTC(2026, 1, 3 - i)) }).execute();
+    for (const i of range(3)) await t.db.insertInto('authentication_event').values({ email_presented: `a${i}@proxia.test`, outcome: 'failure', origin_address: '10.0.0.1', occurred_at: new Date(Date.UTC(2026, 1, 3 - i)) }).execute();
+    const audit = ids((await controllers.oversight().auditLog({ sort: 'when', order: 'asc' })).data);
+    expect(audit).toEqual([...audit].sort((a, b) => a - b));
+    const auth = ids((await controllers.oversight().authHistory({ sort: 'when', order: 'asc' })).data);
+    expect(auth).toEqual([...auth].sort((a, b) => a - b));
+  });
+
+  it('lists float entries in recording order, a backdated entry where it was recorded', async () => {
+    const s = await LONG_LISTS.find((l) => l.name === 'treasury/float/:id entries')!.seed();
+    const admin = await t.admin();
+    const other = await t.db.selectFrom('ledger_posting').select('account_id').where('account_id', '<>', s.id!).executeTakeFirstOrThrow();
+    await t.db.transaction().execute(async (tx) => {
+      const e = await tx.insertInto('ledger_entry').values({ entry_type: 'float_funding', author_id: admin.id, justification: 'backdated', occurred_at: new Date(Date.UTC(2020, 1, 1)) }).returning('id').executeTakeFirstOrThrow();
+      await tx.insertInto('ledger_posting').values([{ entry_id: e.id, account_id: s.id!, side: 'debit', amount: 5 }, { entry_id: e.id, account_id: other.account_id, side: 'credit', amount: 5 }]).execute();
+    });
+    const res = await controllers.treasury().floatEntries(s.id!, { sort: 'when', order: 'asc', page_size: '100' }, req());
+    const got = ids(res.data);
+    expect(got).toEqual([...got].sort((x, y) => x - y));
+    expect(res.data[res.data.length - 1]).toMatchObject({ justification: 'backdated' });
+  });
+
+  it('records an export without its paging and sorting', async () => {
+    const ctl = new ConsoleTransactionsController(t.db, get(TransactionReader), get(TransactionService), get(LedgerService), get(NotificationService), get(CryptoService), get(AuditService), new ExportService(t.db, { MASTER_KEY_BASE64: Buffer.alloc(32, 1), PROXIAPAY_ENV: 'sandbox' }));
+    const admin = await t.admin();
+    const r = req();
+    r.principal.administratorId = admin.id;
+    await ctl.export({ currency: 'XAF', page: '3', page_size: '50', sort: 'created', order: 'asc' }, r);
+    const rec = await t.db.selectFrom('export_record').select('filters').where('administrator_id', '=', admin.id).executeTakeFirstOrThrow();
+    expect(rec.filters).toEqual({ currency: 'XAF' });
   });
 });

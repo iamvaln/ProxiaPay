@@ -9,8 +9,11 @@ import { createDb, createPool, type Db } from '../db/database';
  *   node -r @swc-node/register src/cli/seed-lists.ts
  * Safe to run twice: each family tops up to its target, counting what an earlier run left.
  */
-export function assertNotProduction(env: string | undefined): void {
-  if (env === 'production') throw new Error('seed-lists writes bulk fake rows and refuses to run with PROXIAPAY_ENV=production');
+export function assertSafeTarget(env: string | undefined, databaseUrl: string | undefined, allowRemote?: string): void {
+  if (env !== 'sandbox') throw new Error('seed-lists writes bulk fake rows and runs only with PROXIAPAY_ENV=sandbox set explicitly');
+  if (!databaseUrl) throw new Error('seed-lists needs DATABASE_URL');
+  const host = new URL(databaseUrl).hostname;
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(host) && allowRemote !== '1') throw new Error(`seed-lists refuses a database on ${host}; set SEED_LISTS_ALLOW_REMOTE=1 to force it`);
 }
 
 const TARGET = { transactions: 300, previews: 60, audit: 300, alerts: 80, discrepancies: 60, runs: 80, transfers: 80, cashouts: 80, entries: 80, deliveries: 80, refusals: 80, auth: 120, exports: 80 };
@@ -223,7 +226,7 @@ export async function seedLists(db: Db): Promise<Record<string, number>> {
 
 async function main() {
   loadEnv();
-  assertNotProduction(process.env.PROXIAPAY_ENV);
+  assertSafeTarget(process.env.PROXIAPAY_ENV, process.env.DATABASE_URL, process.env.SEED_LISTS_ALLOW_REMOTE);
   const pool = createPool(process.env.DATABASE_URL!, 2);
   const db = createDb(pool);
   try {

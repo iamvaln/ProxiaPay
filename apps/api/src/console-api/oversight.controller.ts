@@ -218,7 +218,8 @@ export class OversightController {
     if (q.subject_id) qb = qb.where('r.subject_id', '=', q.subject_id);
     if (q.after) qb = qb.where('r.occurred_at', '>', new Date(q.after));
     if (q.before) qb = qb.where('r.occurred_at', '<', new Date(q.before));
-    return paginate(qb, q, { sorts: { when: 'r.occurred_at' }, defaultSort: 'when', id: 'r.id' });
+    // `when` sorts by id: occurred_at defaults to now(), so the order is the same, and the id is indexed.
+    return paginate(qb, q, { sorts: { when: 'r.id' }, defaultSort: 'when', id: 'r.id' });
   }
 
   @Get('authentication-history')
@@ -230,7 +231,7 @@ export class OversightController {
     if (q.outcome) qb = qb.where('outcome', '=', q.outcome);
     if (q.after) qb = qb.where('occurred_at', '>', new Date(q.after));
     if (q.before) qb = qb.where('occurred_at', '<', new Date(q.before));
-    return paginate(qb, q, { sorts: { when: 'occurred_at' }, defaultSort: 'when', id: 'id' });
+    return paginate(qb, q, { sorts: { when: 'id' }, defaultSort: 'when', id: 'id' });
   }
 
   @Get('administrators')

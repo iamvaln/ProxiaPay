@@ -4,7 +4,7 @@ import { useSession, useT } from '../lib/session';
 import { Amount, Pill, Tag, When } from '../components/common';
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type Filter, type RowAction } from '../components/table/DataTable';
 import { readTableState } from '../components/table/table-state';
-import { chip, fetchPage, listPath, useReference, useReload, type Reference } from './list-support';
+import { chip, cleanCurrency, fetchPage, listPath, useReference, useReload, type Reference } from './list-support';
 
 const STATES = ['created', 'action_required', 'submitted', 'processing', 'succeeded', 'failed', 'expired', 'undetermined'];
 const RECON = ['unreviewed', 'matched', 'disputed', 'examined', 'corrected'];
@@ -63,6 +63,12 @@ export function transactionList({ t, has, ref, reload, currency, project }: { t:
   return { columns, filters, actions, summary, rowKey: (r) => r.id, defaultSort: 'created', defaultOrder: 'desc', empty: { none: t('l.txn_none'), why: t('l.txn_why') } };
 }
 
+/** The page's range params from the URL; a value the browser or server could not read is dropped, never thrown on. */
+export function readRange(params: URLSearchParams): Record<string, string> {
+  const ok = (k: string, v: string) => (k.startsWith('amount') ? /^\d{1,15}$/.test(v) : !Number.isNaN(Date.parse(v)));
+  return Object.fromEntries(RANGE.map((k) => [k, params.get(k) ?? '']).filter(([k, v]) => v && ok(k!, v)));
+}
+
 /** The request behind the list: the table's state plus the page's own parameters, among them the project a list is fixed to. */
 export const transactionFetch = (fixedProject?: string, range: Record<string, string> = {}) => fetchPage<Txn>('/transactions', { extra: { ...range, ...(fixedProject ? { project: fixedProject } : {}) } });
 
@@ -73,7 +79,7 @@ export function TransactionTable({ fixedProject, prefix = '', range = {}, onClea
   const ref = useReference();
   const [rev, reload] = useReload();
   const [params] = useSearchParams();
-  const currency = params.get(`${prefix}currency`) ?? undefined;
+  const currency = cleanCurrency(params.get(`${prefix}currency`), ref.currencies);
   if (!ref.ready) return <p className="muted">{t('common.loading')}</p>;
   const cfg = transactionList({ t, has, ref, reload, currency, project: !!fixedProject });
   const extra = { ...range, ...(fixedProject ? { project: fixedProject } : {}) };
@@ -90,7 +96,7 @@ export function TransactionsPage() {
   const t = useT();
   const { has } = useSession();
   const [params, setParams] = useSearchParams();
-  const range = Object.fromEntries(RANGE.map((k) => [k, params.get(k) ?? '']).filter(([, v]) => v)) as Record<string, string>;
+  const range = readRange(params);
   const apply = (form: HTMLFormElement) => {
     const data = new FormData(form);
     setParams((prev) => {

@@ -170,10 +170,6 @@ export class DiscrepancyService {
     return q;
   }
 
-  list(filters: Parameters<DiscrepancyService['query']>[0], providerScope: string[] | null, limit = 100) {
-    return this.query(filters, providerScope).orderBy('d.first_detected_at', 'desc').limit(limit).execute();
-  }
-
   async detail(id: string) {
     const d = await this.db.selectFrom('discrepancy').selectAll().where('id', '=', id).executeTakeFirst();
     if (!d) throw new PlatformError('NOT_FOUND', 'No such discrepancy.');

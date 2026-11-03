@@ -32,6 +32,9 @@ export function listPath(base: string, s: TableState, opts: { period?: string; e
 
 export const fetchPage = <T,>(base: string, opts?: Parameters<typeof listPath>[2]) => (s: TableState) => get<Paged<T>>(listPath(base, s, opts));
 
+/** The currency a list may sort amounts within: one the list offers, not whatever the URL says. */
+export const cleanCurrency = (value: string | null | undefined, offered: string[]): string | undefined => (value && offered.includes(value) ? value : undefined);
+
 /** Bumping the revision remounts the table, which fetches its page again: how a list refreshes after a row action. */
 export function useReload(): [number, () => void] {
   const [rev, setRev] = useState(0);

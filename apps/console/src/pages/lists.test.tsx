@@ -5,15 +5,15 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DataTable } from '../components/table/DataTable';
 import { t as translate } from '../lib/i18n';
-import { listPath, readTab, writeTab } from './list-support';
+import { cleanCurrency, listPath, readTab, writeTab } from './list-support';
 import { readTableState, writeTableState } from '../components/table/table-state';
-import { transactionFetch, transactionList } from './Transactions';
+import { readRange, transactionFetch, transactionList } from './Transactions';
 import { previewList } from './Previews';
 import { SearchResults } from './Search';
 import { entryList } from './FloatDetail';
 import { discrepancyList } from './Reconciliation';
 import { alertList, exportList } from './Oversight';
-import { deliveryList } from './ProjectDetail';
+import { deliveryList, ProjectActivity } from './ProjectDetail';
 
 const fr = (k: string, v?: Record<string, string | number>) => translate('fr', k, v);
 const noRef = { projects: [], providers: [], countries: [], methods: [], currencies: [] };
@@ -217,5 +217,20 @@ describe('fix round 1', () => {
     expect(readTableState(new URLSearchParams('status=cleared'), '', d).filters).toEqual({ status: 'cleared' });
     const cleared = writeTableState({ q: '', filters: { status: '' }, sort: 'raised', order: 'desc', page: 1, pageSize: 25 }, '', new URLSearchParams(), d.filterDefaults);
     expect(cleared.get('status')).toBe('');
+  });
+});
+
+describe('final review hardening', () => {
+  it('drops a range value the browser or server cannot read', () => {
+    expect(readRange(new URLSearchParams('created_after=x&created_before=2026-11-03T10:00&amount_min=1.5&amount_max=2000'))).toEqual({ created_before: '2026-11-03T10:00', amount_max: '2000' });
+    expect(readRange(new URLSearchParams('amount_min=abc&amount_max=-3'))).toEqual({});
+  });
+  it('sorts by amount only for a currency the list offers', () => {
+    expect(cleanCurrency('XAF', ['XAF', 'GHS'])).toBe('XAF');
+    expect(cleanCurrency('nope', ['XAF'])).toBeUndefined();
+    expect(cleanCurrency(null, ['XAF'])).toBeUndefined();
+  });
+  it('tells a hidden project activity list apart from an empty one', () => {
+    expect(wrap(<ProjectActivity id="p1" />)).toContain('transactions.read');
   });
 });

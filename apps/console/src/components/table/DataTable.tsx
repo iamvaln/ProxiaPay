@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useSession, useT } from '../../lib/session';
 import { Empty, ErrorLine, ScopeNote } from '../common';
 import { clientRows } from './client-rows';
 import { pageItems } from './pager';
-import { clampPage, PAGE_SIZES, useTableState, type TableState } from './table-state';
+import { clampPage, MAX_SEARCH, PAGE_SIZES, useTableState, type TableState } from './table-state';
 import { t as translate, type Lang } from '../../lib/i18n';
 
 export type { TableState } from './table-state';
@@ -86,7 +86,7 @@ function FullTable<T>(props: DataTableProps<T>) {
     fetchRef.current!(state).then((res) => {
       if (!live) return;
       const page = pageToRequest(state.page, res.total, state.pageSize);
-      if (page !== null) { setState({ page }); return; } // past the end: ask again for the last page
+      if (page !== null) { setState({ page }, { replace: true }); return; } // past the end: ask again for the last page
       setRemote(res);
     }).catch((e: Error) => { if (live) setError(e.message); });
     return () => { live = false; };
@@ -100,7 +100,7 @@ function FullTable<T>(props: DataTableProps<T>) {
   const last = Math.max(1, Math.ceil(total / state.pageSize));
   const loading = server && !remote && !error;
 
-  const filtering = !!props.filtered || !!state.q || Object.values(state.filters).some(Boolean);
+  const filtering = !!props.filtered || !!state.q || Object.entries(state.filters).some(([k, v]) => v && v !== props.filterDefaults?.[k]);
   const clearFilters = () => { props.onClearFilters?.(); setState({ q: '', filters: Object.fromEntries(Object.keys(state.filters).map((k) => [k, ''])) }); };
   return (
     <div className="dt">
@@ -188,8 +188,9 @@ function TableGrid<T>({ rows, columns, actions, summary, rowKey, sort }: {
       {rows.map((row) => {
         const k = rowKey(row);
         const open = k in expanded;
-        return [
-          <tr key={k} className={open ? 'open' : undefined}>
+        return (
+          <Fragment key={k}>
+          <tr className={open ? 'open' : undefined}>
             {summary && (
               <td className="chev">
                 <button type="button" className="toggle" aria-expanded={open} aria-controls={`sum-${k}`} aria-label={t('table.details')} onClick={() => toggle(k)}>{open ? '▾' : '▸'}</button>
@@ -203,9 +204,10 @@ function TableGrid<T>({ rows, columns, actions, summary, rowKey, sort }: {
                   : <button key={a.label} type="button" className={a.primary ? 'primary' : undefined} onClick={() => void act(a, row)}>{a.label}</button>)}
               </td>
             )}
-          </tr>,
-          open && summary && <tr key={`${k}-sum`} className="sum" id={`sum-${k}`}><td colSpan={span}>{summary(row, expanded[k] || undefined)}</td></tr>,
-        ];
+          </tr>
+          {open && summary && <tr className="sum" id={`sum-${k}`}><td colSpan={span}>{summary(row, expanded[k] || undefined)}</td></tr>}
+          </Fragment>
+        );
       })}
     </tbody>
   );
@@ -224,7 +226,7 @@ function SearchBox({ value, label, onCommit }: { value: string; label: string; o
   useEffect(() => () => clearTimeout(timer.current), []);
   const commit = (q: string) => { clearTimeout(timer.current); if (q !== value) onCommit(q); };
   return (
-    <input type="search" className="dt-search" aria-label={label} placeholder={label} value={text}
+    <input type="search" className="dt-search" maxLength={MAX_SEARCH} aria-label={label} placeholder={label} value={text}
       onChange={(e) => { setText(e.target.value); clearTimeout(timer.current); const q = e.target.value; timer.current = setTimeout(() => commit(q), 300); }}
       onKeyDown={(e) => { if (e.key === 'Enter') commit(text); }} />
   );

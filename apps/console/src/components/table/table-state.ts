@@ -8,6 +8,10 @@ export type TableDefaults = { sort: string; order: 'asc' | 'desc'; filterKeys: s
 /** A payer's telephone number must never reach a URL: eight or more digits once the usual separators are stripped. */
 export const looksLikePhone = (q: string) => /^[+\d\s().-]+$/.test(q) && q.replace(/\D/g, '').length >= 8;
 
+/** A page number and a search no list needs more than: a hand-edited URL cannot ask for more. */
+export const MAX_PAGE = 1_000_000;
+export const MAX_SEARCH = 128;
+
 export const PAGE_SIZES = [25, 50, 100] as const;
 
 /** The page a list may show: past the end falls back to the last page, never below 1. */
@@ -32,11 +36,11 @@ export function readTableState(params: URLSearchParams, prefix: string, defaults
   const filters: Record<string, string> = {};
   for (const key of defaults.filterKeys) { const v = get(key) ?? defaults.filterDefaults?.[key]; if (v && (!defaults.filterValues?.[key] || defaults.filterValues[key]!.includes(v))) filters[key] = v; }
   return {
-    q: get('q') ?? '',
+    q: (get('q') ?? '').slice(0, MAX_SEARCH),
     filters,
     sort: sort && (!defaults.sorts || defaults.sorts.includes(sort)) ? sort : defaults.sort,
     order: order === 'asc' || order === 'desc' ? order : defaults.order,
-    page: Number.isInteger(page) && page >= 1 ? page : 1,
+    page: Number.isInteger(page) && page >= 1 ? Math.min(page, MAX_PAGE) : 1,
     pageSize: (PAGE_SIZES as readonly number[]).includes(size) ? (size as 25 | 50 | 100) : 25,
   };
 }
@@ -54,7 +58,7 @@ export function writeTableState(state: TableState, prefix: string, current: URLS
   return next;
 }
 
-export function useTableState(prefix: string, defaults: TableDefaults): [TableState, (patch: Partial<TableState>) => void] {
+export function useTableState(prefix: string, defaults: TableDefaults): [TableState, (patch: Partial<TableState>, opts?: { replace?: boolean }) => void] {
   const [params, setParams] = useSearchParams();
   // A search that looks like a telephone number is used for the request but kept out of the URL.
   const [typed, setTyped] = useState('');
@@ -63,9 +67,9 @@ export function useTableState(prefix: string, defaults: TableDefaults): [TableSt
   const d = useMemo(() => defaults, [key]);
   const fromUrl = useMemo(() => readTableState(params, prefix, d), [params, prefix, d]);
   const state = useMemo(() => (fromUrl.q || !typed ? fromUrl : { ...fromUrl, q: typed }), [fromUrl, typed]);
-  const set = useCallback((patch: Partial<TableState>) => {
+  const set = useCallback((patch: Partial<TableState>, opts?: { replace?: boolean }) => {
     if ('q' in patch) setTyped(patch.q && looksLikePhone(patch.q) ? patch.q : '');
-    setParams((prev) => writeTableState(patchTableState(readTableState(prev, prefix, d), patch.q && looksLikePhone(patch.q) ? { ...patch, q: '' } : patch), prefix, prev, d.filterDefaults));
+    setParams((prev) => writeTableState(patchTableState(readTableState(prev, prefix, d), patch.q && looksLikePhone(patch.q) ? { ...patch, q: '' } : patch), prefix, prev, d.filterDefaults), opts);
   }, [setParams, prefix, d]);
   return [state, set];
 }

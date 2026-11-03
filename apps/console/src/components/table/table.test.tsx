@@ -167,3 +167,22 @@ describe('tuning after a pass over every list', () => {
     expect(src.indexOf('<ScopeNote')).toBeLessThan(src.indexOf('className="dt-bar"'));
   });
 });
+
+describe('final review hardening', () => {
+  it('reads a page no larger than a million and a search no longer than 128 characters', () => {
+    expect(readTableState(new URLSearchParams('page=99999999999'), '', D).page).toBe(1_000_000);
+    expect(readTableState(new URLSearchParams(`q=${'a'.repeat(300)}`), '', D).q).toHaveLength(128);
+  });
+  it('caps the search box at 128 characters', () => {
+    expect(render({ rows: make(3) })).toContain('maxLength="128"');
+  });
+  it('does not count a filter left at its default as filtering', () => {
+    const out = render({ rows: [], filters, filterDefaults: { state: 'a' } });
+    expect(out).toContain('No rows yet.');
+    expect(out).not.toContain('No results for these filters');
+    expect(render({ rows: [], filters, filterDefaults: { state: 'a' } }, '/?state=b')).toContain('No results for these filters');
+  });
+  it('keeps each row and its open summary under one keyed fragment', () => {
+    expect(readFileSync(new URL('./DataTable.tsx', import.meta.url), 'utf8')).toContain('<Fragment key={k}>');
+  });
+});

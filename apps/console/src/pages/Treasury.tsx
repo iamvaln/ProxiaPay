@@ -4,7 +4,7 @@ import { get } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import { Amount, ConfirmedAction, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type Filter } from '../components/table/DataTable';
-import { chip, chipBy, distinct, fetchPage, periodFilter, useReload, useTab } from './list-support';
+import { chip, chipBy, cleanCurrency, distinct, fetchPage, periodFilter, useReload, useTab } from './list-support';
 
 type Row = Record<string, any>;
 type Tr = (k: string, v?: Record<string, string | number>) => string;
@@ -154,7 +154,7 @@ export function TreasuryPage() {
       </>)}
       {tab === 'transfers' && (<>
         {has('treasury.read_float') ? (float.data
-          ? <>{!params.get('tr_currency') && <p className="small muted">{t('l.amount_needs_currency')}</p>}<DataTable<Row> key={transfersRev} prefix="tr_" search={false} {...transferList({ t, accounts: floatLabels, currencies, currency: params.get('tr_currency') ?? undefined })} fetch={fetchPage<Row>('/treasury/transfers', { period: 'after' })} /></>
+          ? <>{!cleanCurrency(params.get('tr_currency'), currencies) && <p className="small muted">{t('l.amount_needs_currency')}</p>}<DataTable<Row> key={transfersRev} prefix="tr_" search={false} {...transferList({ t, accounts: floatLabels, currencies, currency: cleanCurrency(params.get('tr_currency'), currencies) })} fetch={fetchPage<Row>('/treasury/transfers', { period: 'after' })} /></>
           : null) : <NeedsPermission permission="treasury.read_float" />}
         <div className="card" style={{ marginTop: 12 }}>
           <h2>Register a transfer performed at the provider</h2>
@@ -173,7 +173,7 @@ export function TreasuryPage() {
       </>)}
       {tab === 'cashouts' && (<>
         {has('treasury.read_float') ? (float.data
-          ? <>{!params.get('co_currency') && <p className="small muted">{t('l.amount_needs_currency')}</p>}<DataTable<Row> key={cashoutsRev} prefix="co_" search={false} {...cashoutList({ t, accounts: floatLabels, currencies, currency: params.get('co_currency') ?? undefined })} fetch={fetchPage<Row>('/treasury/cashouts', { period: 'after' })} /></>
+          ? <>{!cleanCurrency(params.get('co_currency'), currencies) && <p className="small muted">{t('l.amount_needs_currency')}</p>}<DataTable<Row> key={cashoutsRev} prefix="co_" search={false} {...cashoutList({ t, accounts: floatLabels, currencies, currency: cleanCurrency(params.get('co_currency'), currencies) })} fetch={fetchPage<Row>('/treasury/cashouts', { period: 'after' })} /></>
           : null) : <NeedsPermission permission="treasury.read_float" />}
         <div className="card" style={{ marginTop: 12 }}>
           <h2>Initiate a cashout</h2>

@@ -68,7 +68,8 @@ export class TreasuryController {
     if (q.side) qb = qb.where('p.side', '=', q.side);
     if (q.after) qb = qb.where('e.occurred_at', '>', new Date(q.after));
     if (q.before) qb = qb.where('e.occurred_at', '<', new Date(q.before));
-    return paginate(qb, q, { sorts: { when: 'e.occurred_at' }, defaultSort: 'when', id: 'p.id' });
+    // Recording order, the ledger's own convention: a backdated entry lists where it was recorded.
+    return paginate(qb, q, { sorts: { when: 'p.id' }, defaultSort: 'when', id: 'p.id' });
   }
 
   @Get('project/:projectId/accounts')

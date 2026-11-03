@@ -92,9 +92,10 @@ export class ConsoleTransactionsController {
   async export(@Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
     req.auth.require('transactions.read');
     const q = parseBody(searchSchema, query);
+    const { page: _p, page_size: _s, sort: _o, order: _d, ...filters } = query;
     const rows = await this.baseQuery(req, q).orderBy('t.created_at', 'desc').orderBy('t.id', 'desc').limit(10_000).execute();
     const columns = ['reference', 'project_reference', 'project_name', 'direction', 'country_code', 'payment_method_code', 'currency_code', 'requested_amount', 'charged_amount', 'settled_amount', 'state', 'reconciliation_status', 'failure_reason', 'provider_reference', 'operator_reference', 'created_at', 'terminal_at'];
-    return this.exports.produce(req.principal.administratorId, 'transactions', query, columns, rows as Record<string, unknown>[]);
+    return this.exports.produce(req.principal.administratorId, 'transactions', filters, columns, rows as Record<string, unknown>[]);
   }
 
   /**

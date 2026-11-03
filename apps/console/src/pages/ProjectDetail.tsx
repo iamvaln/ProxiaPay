@@ -12,6 +12,12 @@ type Tr = (k: string, v?: Record<string, string | number>) => string;
 type Lists = Pick<DataTableProps<Row>, 'columns' | 'filters' | 'actions' | 'summary' | 'rowKey' | 'defaultSort' | 'defaultOrder' | 'empty'>;
 const DELIVERY_EVENTS = ['transaction.succeeded', 'transaction.failed', 'transaction.expired', 'transaction.action_required', 'transaction.undetermined', 'transaction.corrected'];
 
+/** A project's transactions, for an administrator who may read them. */
+export function ProjectActivity({ id }: { id: string }) {
+  const { has } = useSession();
+  return has('transactions.read') ? <TransactionTable fixedProject={id} prefix="act_" /> : <NeedsPermission permission="transactions.read" />;
+}
+
 /** Requests refused for coming from an address the project has not declared. */
 export function refusalList({ t }: { t: Tr }): Lists {
   const columns: Column<Row>[] = [
@@ -195,7 +201,7 @@ export function ProjectDetailPage() {
       </div>
       <div className="card" id="activity">
         <h2>{t('l.activity')}</h2>
-        <TransactionTable fixedProject={id} prefix="act_" />
+        <ProjectActivity id={id!} />
       </div>
     </>
   );
