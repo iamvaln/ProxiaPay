@@ -6,7 +6,7 @@ import { clientRows } from '../components/table/client-rows';
 import type { TableState } from '../components/table/table-state';
 import { t as translate } from '../lib/i18n';
 import { projectList } from './Projects';
-import { countryList, routeList } from './Configuration';
+import { countryList, routeList, decidesCountry } from './Configuration';
 import { balanceRows, floatAccountList, projectBalanceList } from './Treasury';
 import { entitlementList, originList } from './ProjectDetail';
 import { approvalList } from './Approvals';
@@ -55,7 +55,11 @@ describe('routes', () => {
     expect(cfg.actions![0]!.to!(ROUTES[0]!)).toBe('/configuration/routes/r1');
     const out = wrap(<>{cfg.summary!(ROUTES[1]!)}</>);
     expect(out).toContain('indicatif');
-    expect(out).toContain('100 – 500000 XOF');
+    expect(out).toContain('100');
+    expect(out).toMatch(/500,000<\/span> <span class="amount-currency">XOF/);
+    const usd = wrap(<>{cfg.summary!(route({ currency_code: 'USD', minimum_amount: 150, maximum_amount: 12345 }))}</>);
+    expect(usd).toContain('1.50');
+    expect(usd).toContain('123.45');
   });
 });
 
@@ -121,6 +125,16 @@ describe('countries', () => {
     const without = countryList({ t: fr, has: () => false, done: none });
     expect(without.actions!.every((a) => !a.when!(cm) && !a.when!(bf))).toBe(true);
   });
+  it('offer a decision only when the opened action matches the country’s current state', () => {
+    expect(decidesCountry(cm, 'Désactiver', fr)).toBe(true);
+    expect(decidesCountry({ ...cm, active: false }, 'Désactiver', fr)).toBe(false); // it landed: no stale reactivation
+    expect(decidesCountry(bf, 'Activer', fr)).toBe(true);
+    expect(decidesCountry(bf, undefined, fr)).toBe(false);
+    const cfg = countryList({ t: fr, has: () => true, done: none });
+    const panel = (c: typeof cm, open?: string) => (cfg.summary!(c, open) as any).props.items[1].value.props.decision;
+    expect(panel({ ...cm, active: false }, 'Désactiver')).toBe(false);
+    expect(panel(cm, 'Désactiver')).toBe(true);
+  });
   it('hold the impact warning in the summary', () => {
     const cfg = countryList({ t: fr, has: () => true, done: none });
     expect(wrap(<>{cfg.summary!(cm, 'Désactiver')}</>)).toContain('Impact');
@@ -158,7 +172,10 @@ describe('a project’s lists', () => {
   });
   it('entitlements unfold limits, velocity, overrides beside the route’s rates, and history', () => {
     const out = wrap(<>{entitlementList({ t: fr, has: () => true, reload: none, id: 'p' }).summary!(ent)}</>);
-    for (const s of ['100–900', '5/24h', '1.2%', 'Historique des versions', 'seed']) expect(out).toContain(s);
+    const usd = wrap(<>{entitlementList({ t: fr, has: () => true, reload: none, id: 'p' }).summary!({ ...ent, currency_code: 'USD', minimum_amount: 150, route_maximum: 12345 })}</>);
+    expect(usd).toContain('1.50');
+    expect(usd).toContain('123.45');
+    for (const s of ['5/24h', '1.2%', 'Historique des versions', 'seed']) expect(out).toContain(s);
   });
   it('origins are removed through the permission, the latest first', () => {
     const cfg = originList({ t: fr, has: (p) => p === 'projects.origins', reload: none, id: 'p' });

@@ -63,7 +63,7 @@ export function entitlementList({ t, has, reload, id }: { t: Tr; has: (p: string
   const override = (own: number | null | undefined, route: number) => (own != null ? <><b>{pct(own)}</b> <span className="muted">({t('l.route_own')} {pct(route)})</span></> : pct(route));
   const summary = (e: Row) => (
     <SummaryGrid items={[
-      { label: t('l.limits'), value: `${e.minimum_amount ?? e.route_minimum}–${e.maximum_amount ?? e.route_maximum}` },
+      { label: t('l.limits'), value: <><Amount minor={e.minimum_amount ?? e.route_minimum} currency={e.currency_code} />–<Amount minor={e.maximum_amount ?? e.route_maximum} currency={e.currency_code} /></> },
       { label: t('l.velocity'), value: `${e.count_24h}/24h · ${e.count_30d}/30d` },
       { label: t('l.processing_fee'), value: override(e.processing_fee_bps, e.route_processing_fee_bps) },
       { label: t('l.platform_fee'), value: override(e.platform_fee_bps, e.route_platform_fee_bps) },

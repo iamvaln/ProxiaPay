@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { get, patch, post } from '../lib/api';
 import { useSession, useT } from '../lib/session';
-import { ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
+import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
 import { DataTable, SummaryGrid, type Column, type DataTableProps } from '../components/table/DataTable';
 import { chipBy, distinct, yesNo } from './list-support';
 
@@ -25,7 +25,7 @@ export function routeList({ t, rows }: { t: Tr; rows: Row[] }): Lists {
     <SummaryGrid items={[
       { label: t('l.processing_fee'), value: <>{r.processing_fee_bps / 100}% <span className="small muted">({r.processing_fee_bearer})</span></> },
       { label: t('l.platform_fee'), value: <>{r.platform_fee_bps / 100}% <span className="small muted">({r.platform_fee_bearer})</span></> },
-      { label: t('l.limits'), value: `${r.minimum_amount ?? '—'} – ${r.maximum_amount ?? '—'} ${r.currency_code}` },
+      { label: t('l.limits'), value: <><Amount minor={r.minimum_amount} currency={r.currency_code} /> – <Amount minor={r.maximum_amount} currency={r.currency_code} /></> },
       { label: t('l.terms'), value: r.indicative ? <Tag family="checking" title={t('l.indicative_hint')}>{t('l.indicative')}</Tag> : t('l.contracted') },
       { label: t('col.volume_30d'), value: r.volume_30d },
     ]} />
@@ -72,6 +72,9 @@ export function CountryPanel({ c, can, decision, done }: { c: Row; can: boolean;
   );
 }
 
+/** The decision is offered only for the action that was opened and only while it still applies: once a change lands, the row's opposite change is not on offer. */
+export const decidesCountry = (c: Row, open: string | undefined, t: Tr) => open === t(c.active ? 'l.deactivate' : 'l.activate');
+
 /** Countries: Activer or Désactiver unfolds the impact warning with its Confirm. */
 export function countryList({ t, has, done }: { t: Tr; has: (p: string) => boolean; done: () => void }): Lists {
   const columns: Column<Row>[] = [
@@ -91,7 +94,7 @@ export function countryList({ t, has, done }: { t: Tr; has: (p: string) => boole
     summary: (c, open) => (
       <SummaryGrid items={[
         { label: t('l.dialling_prefix'), value: c.dialling_prefix },
-        { label: t('l.impact'), value: <CountryPanel c={c} can={has('reference.manage')} decision={!!open} done={done} /> },
+        { label: t('l.impact'), value: <CountryPanel c={c} can={has('reference.manage')} decision={decidesCountry(c, open, t)} done={done} /> },
       ]} />
     ),
     empty: { none: t('l.country_none'), why: t('l.country_why') },
