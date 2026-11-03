@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ApiError, post, requestConfirmation } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import { moneyParts, utc, when } from '../lib/format';
@@ -18,6 +18,24 @@ export function useLoad<T>(loader: () => Promise<T>, deps: unknown[] = []) {
 export function Tag({ family, children, title }: { family: StateFamily; children: React.ReactNode; title?: string }) {
   if (family === 'tag') return <span className="tag" title={title}>{children}</span>;
   return <span className={`tag ${family}`} title={title}><span className="tag-symbol" aria-hidden="true">{STATE_SYMBOL[family]}</span>{children}</span>;
+}
+
+/** Runs fn every ms while the tab is visible, and once more when it becomes visible again. */
+export function useEvery(fn: () => void, ms: number): void {
+  const latest = useRef(fn);
+  latest.current = fn;
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const stop = () => { if (timer !== undefined) { clearInterval(timer); timer = undefined; } };
+    const sync = () => {
+      stop();
+      if (document.visibilityState === 'visible') { latest.current(); timer = setInterval(() => latest.current(), ms); }
+    };
+    // The caller loaded once on mount; only a return to the tab triggers an extra run.
+    if (document.visibilityState === 'visible') timer = setInterval(() => latest.current(), ms);
+    document.addEventListener('visibilitychange', sync);
+    return () => { stop(); document.removeEventListener('visibilitychange', sync); };
+  }, [ms]);
 }
 
 export function Pill({ value }: { value: string | null | undefined }) {
