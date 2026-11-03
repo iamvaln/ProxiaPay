@@ -18,7 +18,7 @@ let counter = 0;
 
 beforeAll(async () => {
   t = await createTestContext();
-  auth = t.app.get(ProjectAuthService); previews = t.app.get(PreviewService); transactions = t.app.get(TransactionService); submission = t.app.get(SubmissionService); status = t.app.get(StatusService); home = new HomeService(t.db, t.app.get(TreasuryService));
+  auth = t.app.get(ProjectAuthService); previews = t.app.get(PreviewService); transactions = t.app.get(TransactionService); submission = t.app.get(SubmissionService); status = t.app.get(StatusService); home = new HomeService(t.db);
   SimulatorAdapter.settleAfterMs = 0;
 });
 afterAll(() => t.close());
@@ -75,7 +75,7 @@ describe('routeSeries', () => {
     await txn('MOMO', hoursAgo(3), 'failed');
     await txn('MOMO', hoursAgo(0.1), 'succeeded');
     await txn('OM', hoursAgo(0.1), 'succeeded');
-    const series = await home.routeSeries(null);
+    const series = await home.routeSeries(null, true);
     expect(series).toHaveLength(2);
     const momo = series.find((s) => s.payment_method_code === 'MOMO')!;
     const om = series.find((s) => s.payment_method_code === 'OM')!;
@@ -95,9 +95,11 @@ describe('routeSeries', () => {
     await txn('OM', hoursAgo(0.1), 'succeeded');
     const id = await routeId('MOMO');
     await t.db.insertInto('alert').values({ category: 'service_health', severity: 'warning', subject_type: 'route', subject_reference: id, fingerprint: `health:success_rate:route:${id}`, title: 'fell', action_reference: '/x' }).execute();
-    const series = await home.routeSeries(null);
+    const series = await home.routeSeries(null, true);
     expect(series.find((s) => s.route_id === id)).toMatchObject({ alerted: true, departing: true });
     expect(series.find((s) => s.route_id !== id)).toMatchObject({ alerted: false, departing: false });
+    // Without the permission to read alerts the same route is judged on its rate alone, which is healthy.
+    expect((await home.routeSeries(null, false)).find((s) => s.route_id === id)).toMatchObject({ alerted: false, departing: false });
   });
 });
 
@@ -139,12 +141,12 @@ describe('scope', () => {
 
     const mine = [project.id];
     expect(await home.overallSuccess(mine)).toEqual({ current: 1, baseline: null, sample: 2 });
-    expect((await home.routeSeries(mine)).map((s) => s.payment_method_code)).toEqual(['MOMO']);
+    expect((await home.routeSeries(mine, true)).map((s) => s.payment_method_code)).toEqual(['MOMO']);
     expect(await home.collectedToday(mine)).toEqual([{ currency: 'XAF', today: 2000, last_week: null }]);
     expect(await home.undetermined(mine)).toBe(1);
 
     expect(await home.overallSuccess([])).toEqual({ current: null, baseline: null, sample: 0 });
-    expect(await home.routeSeries([])).toEqual([]);
+    expect(await home.routeSeries([], true)).toEqual([]);
     expect(await home.collectedToday([])).toEqual([]);
     expect(await home.undetermined([])).toBe(0);
   });

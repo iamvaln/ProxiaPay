@@ -1,7 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { sql, type RawBuilder } from 'kysely';
 import { DB_TOKEN, type Db } from '../db/database';
-import { TreasuryService } from '../treasury/treasury.service';
 import { groupProblems, isDeparting, DEPARTING, type AlertRow, type Problem } from './home.logic';
 
 export interface RateVsBaseline { current: number | null; baseline: number | null; sample: number }
@@ -19,7 +18,7 @@ const HOUR_MS = 3_600_000;
 /** The console home's queries, each over the projects the administrator may see (`null` = every project). */
 @Injectable()
 export class HomeService {
-  constructor(@Inject(DB_TOKEN) private readonly db: Db, private readonly treasury: TreasuryService) {}
+  constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
   // An empty scope matches nothing: the nil uuid is no project.
   private scopeFilter(scope: string[] | null, column = 't.project_id'): RawBuilder<unknown> {
@@ -57,8 +56,8 @@ export class HomeService {
     return rows[0]!.n;
   }
 
-  /** One series per route with terminal transactions in the last 8 days: 24 hourly buckets, oldest first, the last being the current hour. */
-  async routeSeries(scope: string[] | null): Promise<RouteSeries[]> {
+  /** `withAlerts` is whether the caller may read alerts. One series per route with terminal transactions in the last 8 days: 24 hourly buckets, oldest first, the last being the current hour. */
+  async routeSeries(scope: string[] | null, withAlerts: boolean): Promise<RouteSeries[]> {
     const { rows: rates } = await sql<{ route_id: string; payment_method_code: string; payment_method_name: string; country_code: string; currency: string; direction: string; recent_total: number; recent_ok: number; base_total: number; base_ok: number }>`
       select r.id as route_id, r.payment_method_code, pm.name as payment_method_name, r.country_code, r.currency_code as currency, r.direction,
              count(*) filter (where t.terminal_at > now() - interval '1 hour')::int as recent_total,
@@ -85,9 +84,13 @@ export class HomeService {
       byRoute.set(h.route_id, buckets);
     }
 
-    const { rows: alerts } = await sql<{ subject_reference: string }>`
-      select subject_reference from alert where status in ('open', 'acknowledged') and fingerprint like 'health:success_rate:route:%'`.execute(this.db);
-    const alerted = new Set(alerts.map((a) => a.subject_reference));
+    // Alerts are platform-wide: only an administrator who may read them has them count towards a route departing.
+    const alerted = new Set<string>();
+    if (withAlerts) {
+      const { rows: alerts } = await sql<{ subject_reference: string }>`
+        select subject_reference from alert where status in ('open', 'acknowledged') and fingerprint like 'health:success_rate:route:%'`.execute(this.db);
+      for (const a of alerts) alerted.add(a.subject_reference);
+    }
 
     const currentHour = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
     return rates.map((r) => {
@@ -147,11 +150,10 @@ export class HomeService {
     if (projectIds.length) {
       for (const r of await this.db.selectFrom('project').select(['id', 'name']).where('id', 'in', projectIds).execute()) names.set(`project:${r.id}`, r.name);
     }
-    const floatIds = new Set(ids('float_account'));
-    if (floatIds.size) {
-      for (const f of await this.treasury.floatAccounts(this.db)) {
-        if (floatIds.has(f.id)) names.set(`float_account:${f.id}`, `${f.providerAccountName} ${f.countryCode} ${f.currency} ${f.direction}`);
-      }
+    const floatIds = ids('float_account');
+    if (floatIds.length) {
+      const rows = await this.db.selectFrom('ledger_account as a').innerJoin('provider_account as pa', 'pa.id', 'a.provider_account_id').select(['a.id', 'pa.name', 'a.country_code', 'a.currency_code', 'a.direction']).where('a.type', '=', 'float').where('a.id', 'in', floatIds).execute();
+      for (const f of rows) names.set(`float_account:${f.id}`, `${f.name} ${f.country_code} ${f.currency_code} ${f.direction}`);
     }
     return names;
   }
