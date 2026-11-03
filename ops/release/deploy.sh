@@ -13,22 +13,40 @@ export REGISTRY
 
 dc() { docker compose --env-file .env.production -f docker-compose.deploy.yml -f docker-compose.production.yml "$@"; }
 
+# Docker credentials in a private directory: the sandbox deploy shares this VPS user, and its
+# ~/.docker/config.json must neither receive this run's token nor lose its own on logout.
+DOCKER_CONFIG=$(mktemp -d)
+export DOCKER_CONFIG
+trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+# Keep the user's compose plugin visible if it lives under ~/.docker.
+[ -d "$HOME/.docker/cli-plugins" ] && ln -s "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
 echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
 
 # Authenticated fetch: GitHub rate-limits anonymous git by IP, and this VPS is shared with other
-# projects. A header rather than a token in the URL, which would show in `ps`. GHCR_TOKEN is the
-# run's own GITHUB_TOKEN: it expires with the run.
-git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GHCR_TOKEN" | base64 | tr -d '\n')" \
-  fetch --tags origin
-git checkout "$IMAGE_TAG" # compose files and scripts follow the released tag
+# projects. The header travels in git's environment, not its argv, so it is not in `ps`.
+# Be clear about what remains: ssh-action prepends `export GHCR_TOKEN=...` to the remote shell's
+# command line, so the token is visible to that VPS's users for the length of the run. The
+# mitigation is least privilege: the deploy job's GITHUB_TOKEN is contents:read, packages:read,
+# and it expires with the run.
+AUTH=$(printf 'x-access-token:%s' "$GHCR_TOKEN" | base64 | tr -d '\n')
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+  GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH" git fetch --tags origin
+unset AUTH
+
+# A hand-edited tracked file would be silently carried into the release or block the checkout
+# half way. Untracked files (.env.production, provider-credentials.env) are expected.
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "STOP: tracked files are modified in $PWD; refusing to deploy over local edits."
+  exit 1
+fi
+git checkout --detach "refs/tags/$IMAGE_TAG" # compose files and scripts follow the released tag
 
 # ── The guard ────────────────────────────────────────────────────────────────
 # Ask Compose which project it believes it is BEFORE touching anything. Only the name is
 # extracted: `config` expands env_file values (R2 keys, the libsodium key, DB passwords), so its
 # output must never reach a log. If STACK were set wrongly, this deploy would recreate another
 # stack's containers (what took lehno's production down on 14 September).
-PROJECT=$(dc config --format json | sed -n '/^  "name":/{s/^  "name": *"\([^"]*\)".*/\1/p;q;}')
+PROJECT=$(dc config --format json | sed -n 's/^  "name": *"\([^"]*\)".*/\1/p')
 if [ "$PROJECT" != "proxiapay" ]; then
   echo "STOP: Compose reports the project '$PROJECT', not 'proxiapay'."
   echo "Going on would deploy onto another stack. Check STACK in .env.production."
@@ -59,11 +77,12 @@ fi
 
 # ── Wait for the platform to answer ──────────────────────────────────────────
 if [ -z "${APP_DOMAIN:-}" ]; then
-  APP_DOMAIN=$(grep -m1 '^APP_DOMAIN=' .env.production | cut -d= -f2- | tr -d "\"'")
+  APP_DOMAIN=$(grep -m1 '^APP_DOMAIN=' .env.production | cut -d= -f2- | tr -d "\"'" || true)
+  [ -n "$APP_DOMAIN" ] || { echo "STOP: no APP_DOMAIN in .env.production; cannot check /healthz."; exit 1; }
 fi
 timeout=${HEALTH_TIMEOUT:-120}; interval=${HEALTH_INTERVAL:-5}; waited=0; code=000
 while :; do
-  code=$(curl -s -o /dev/null -w '%{http_code}' "https://${APP_DOMAIN}/healthz" || true)
+  code=$(curl --max-time 10 -s -o /dev/null -w '%{http_code}' "https://${APP_DOMAIN}/healthz" || true)
   [ "$code" = 200 ] && break
   if [ "$waited" -ge "$timeout" ]; then
     echo "https://${APP_DOMAIN}/healthz still answers $code after ${timeout}s"

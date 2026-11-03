@@ -34,6 +34,7 @@ git_quiet clone "$ORIGIN" "$WORK"
   git_quiet fetch origin
 )
 
+mkdir -p "$ROOT/home"
 # ── fake binaries ───────────────────────────────────────────────────────────
 BIN="$ROOT/bin"; mkdir -p "$BIN"
 cat > "$BIN/docker" <<'F'
@@ -45,6 +46,7 @@ case "$*" in
     # Like the real thing, the output holds secrets. The deploy must never print it.
     printf '{\n  "name": "%s",\n  "services": {"api": {"environment": {"KEY": "%s"}}}\n}\n' "${FAKE_PROJECT:-proxiapay}" "$FAKE_CANARY"
     ;;
+  *" run "*)  [ "${FAKE_RUN_FAIL:-0}" = 1 ] && exit 1 ;;
   *" pull "*) [ "${FAKE_PULL_FAIL:-0}" = 1 ] && { echo "pull denied" >&2; exit 1; } ;;
   *" up "*)   [ "${FAKE_UP_FAIL:-0}" = 1 ] && exit 1 ;;
   "images "*) printf '%s\n' ${FAKE_TAGS:-} ;;
@@ -79,13 +81,15 @@ test_case "refuses a missing argument" assert "[ $rc -ne 0 ]"
 setup_app() {
   APP="$ROOT/app-$1"; rm -rf "$APP"
   git_quiet clone "$ORIGIN" "$APP"
-  : > "$APP/provider-credentials.env"
+  : > "$APP/provider-credentials.env"; : > "$APP/.env.production"
+  [ -n "${DIRTY:-}" ] && echo local >> "$APP/f"
   FAKE_LOG="$ROOT/log-$1"; : > "$FAKE_LOG"
 }
-run_deploy() { # name, then VAR=value overrides
+run_deploy() { # name, then VAR=value overrides (DIRTY=1 edits a tracked file first)
   local name=$1; shift
+  DIRTY=""; case "${1:-}" in DIRTY=1) DIRTY=1; shift ;; esac
   setup_app "$name"
-  OUT=$(cd "$ROOT" && env PATH="$BIN:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_CANARY="$CANARY" \
+  OUT=$(cd "$ROOT" && env PATH="$BIN:$PATH" FAKE_LOG="$FAKE_LOG" FAKE_CANARY="$CANARY" HOME="$ROOT/home" \
     IMAGE_TAG=v1.0.0 GHCR_USER=u GHCR_TOKEN=tok APP_DIR="$APP" APP_DOMAIN=pay.example.test \
     HEALTH_TIMEOUT=2 HEALTH_INTERVAL=1 PULL_RETRY_DELAY=0 "$@" bash "$HERE/deploy.sh" 2>&1)
   RC=$?
@@ -119,6 +123,23 @@ test_case "deploy fails on a tag that does not exist" assert "[ $RC -ne 0 ] && !
 
 run_deploy prune FAKE_TAGS="v1.0.0 v1.1.0 v1.2.0 v1.3.0 v1.10.0 latest" IMAGE_TAG=v1.0.0
 test_case "prune keeps the 2 newest version tags, the deployed one and latest" assert "grep -q 'rmi ghcr.io/iamvaln/proxiapay-api:v1.1.0' <<<\"\$LOG\" && grep -q 'rmi ghcr.io/iamvaln/proxiapay-db:v1.2.0' <<<\"\$LOG\" && ! grep -qE 'rmi .*:(v1.0.0|v1.3.0|v1.10.0|latest)' <<<\"\$LOG\""
+
+run_deploy upfail FAKE_UP_FAIL=1
+test_case "deploy fails when up fails: no set-credentials, no healthz" assert "[ $RC -ne 0 ] && ! grep -q set-credentials <<<\"\$LOG\" && ! grep -q healthz <<<\"\$LOG\""
+
+run_deploy credfail FAKE_RUN_FAIL=1
+test_case "deploy fails when set-credentials fails: no healthz" assert "[ $RC -ne 0 ] && grep -q set-credentials <<<\"\$LOG\" && ! grep -q healthz <<<\"\$LOG\""
+
+run_deploy dirty DIRTY=1
+test_case "deploy refuses modified tracked files before pulling" assert "[ $RC -ne 0 ] && ! grep -qE ' (pull|up) ' <<<\"\$LOG\" && [[ \$OUT == *modified* ]]" "rc=$RC"
+run_deploy untracked
+test_case "untracked .env and credentials files do not block (happy path)" assert "[ $RC -eq 0 ]"
+
+run_deploy nodomain APP_DOMAIN=
+test_case "deploy fails with a clear message when APP_DOMAIN is missing" assert "[ $RC -eq 1 ] && [[ \$OUT == *'no APP_DOMAIN'* ]]" "rc=$RC"
+
+run_deploy detach
+test_case "deploy leaves HEAD detached on the tag, with a private docker config" assert "[ -z \"\$(git -C $APP symbolic-ref -q HEAD)\" ] && grep -q 'docker login' <<<\"\$LOG\""
 
 echo; echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

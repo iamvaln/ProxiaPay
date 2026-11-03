@@ -19,11 +19,6 @@ on:
         description: Release tag to deploy or roll back to (e.g. v1.0.0)
         required: true
 
-# Never two deploys onto the same stack, and never cancel one half way through.
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 env:
   REGISTRY: ghcr.io/iamvaln
   # The tag being released: pushed, or chosen for a rollback. Passed to scripts
@@ -170,11 +165,23 @@ jobs:
 
   deploy:
     needs: [gate, verify, build-api, build-console, build-db, build-backup]
-    # On a tag push every build must have succeeded; on a rollback the builds
+    # On a tag push verify and every build must have succeeded; on a rollback they
     # are skipped by design, and the gate alone clears the way.
-    if: ${{ !cancelled() && needs.gate.result == 'success' && !contains(needs.*.result, 'failure') }}
+    if: >-
+      ${{ !cancelled() && needs.gate.result == 'success' && (github.event_name == 'workflow_dispatch' ||
+      (needs.verify.result == 'success' && needs.build-api.result == 'success' &&
+      needs.build-console.result == 'success' && needs.build-db.result == 'success' &&
+      needs.build-backup.result == 'success')) }}
     runs-on: ubuntu-latest
     environment: production
+    # This token travels to the shared VPS (ssh-action exports it in the remote command line), so
+    # it can read the repo and pull images and nothing else.
+    permissions: { contents: read, packages: read }
+    # Never two deploys onto the same stack, and never cancel one half way through. On the deploy
+    # alone, so a new tag's verify and builds do not queue behind a run awaiting approval.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ env.RELEASE_TAG }}" }
@@ -186,6 +193,8 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
           envs: IMAGE_TAG,GHCR_USER,GHCR_TOKEN,APP_DIR
+          # First cold pull of four images, migrate and the health wait.
+          command_timeout: 30m
           script_path: ops/release/deploy.sh
         env:
           IMAGE_TAG: ${{ env.RELEASE_TAG }}
