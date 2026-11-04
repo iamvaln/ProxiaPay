@@ -41,18 +41,18 @@ export function useReload(): [number, () => void] {
   return [rev, () => setRev((n) => n + 1)];
 }
 
-export type Reference = { projects: { id: string; name: string }[]; providers: { id: string; name: string }[]; countries: { code: string; name: string }[]; methods: string[]; currencies: string[] };
+export type Reference = { projects: { id: string; name: string }[]; providers: { id: string; name: string }[]; countries: { code: string; name: string }[]; methods: string[]; currencies: string[]; routes: { id: string; country: string; method: string; direction: string }[] };
 
 /**
  * The names the filter chips offer. What an administrator is not allowed to read is simply not offered, so a
  * failed request leaves its list empty rather than failing the page. `ready` is false until every one answered.
  */
 export function useReference(): Reference & { ready: boolean } {
-  const [ref, setRef] = useState<Reference & { ready: boolean }>({ projects: [], providers: [], countries: [], methods: [], currencies: [], ready: false });
+  const [ref, setRef] = useState<Reference & { ready: boolean }>({ projects: [], providers: [], countries: [], methods: [], currencies: [], routes: [], ready: false });
   useEffect(() => {
     let live = true;
     const quiet = <T,>(p: Promise<T>) => p.catch(() => null);
-    void Promise.all([quiet(get<any>('/projects')), quiet(get<any>('/configuration/providers')), quiet(get<any>('/configuration/countries')), quiet(get<any>('/configuration/payment-methods'))]).then(([projects, providers, countries, methods]) => {
+    void Promise.all([quiet(get<any>('/projects')), quiet(get<any>('/configuration/providers')), quiet(get<any>('/configuration/countries')), quiet(get<any>('/configuration/payment-methods')), quiet(get<any>('/configuration/routes'))]).then(([projects, providers, countries, methods, routes]) => {
       if (!live) return;
       setRef({
         projects: (projects?.projects ?? []).map((p: any) => ({ id: p.id, name: p.name })),
@@ -60,6 +60,8 @@ export function useReference(): Reference & { ready: boolean } {
         countries: (countries?.countries ?? []).map((c: any) => ({ code: c.code, name: c.name })),
         methods: (methods?.payment_methods ?? []).map((m: any) => m.code),
         currencies: (countries?.currencies ?? []).map((c: any) => c.code),
+        // One entry per route id: a route is the unit, so an operator in two countries stays two.
+        routes: (routes?.routes ?? []).map((r: any) => ({ id: r.id, country: r.country_name ?? r.country_code, method: r.payment_method_name ?? r.payment_method_code, direction: r.direction })),
         ready: true,
       });
     });

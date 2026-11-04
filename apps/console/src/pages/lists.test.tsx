@@ -16,7 +16,7 @@ import { alertList, exportList } from './Oversight';
 import { deliveryList, ProjectActivity } from './ProjectDetail';
 
 const fr = (k: string, v?: Record<string, string | number>) => translate('fr', k, v);
-const noRef = { projects: [], providers: [], countries: [], methods: [], currencies: [] };
+const noRef = { projects: [], providers: [], countries: [], methods: [], currencies: [], routes: [] };
 const wrap = (el: React.ReactNode) => html(<MemoryRouter>{el}</MemoryRouter>);
 /** The visible header labels: the summary toggle's column and the sort arrows are not labels. */
 const headers = (out: string) => [...out.matchAll(/<th(?=[\s>])(?![^>]*class="chev")[^>]*>(.*?)<\/th>/g)].map((m) => m[1]!.replace(/<span[^>]*aria-hidden="true"[^>]*>.*?<\/span>/g, '').replace(/<[^>]+>/g, ''));
@@ -47,6 +47,17 @@ describe('the transaction list', () => {
     const keys = (c: ReturnType<typeof transactionList>) => c.filters!.map((f) => f.key);
     expect(keys(transactionList({ t: fr, has: () => true, ref, reload: none }))).toEqual(expect.arrayContaining(['project', 'provider_account']));
     expect(keys(transactionList({ t: fr, has: () => true, ref, reload: none, project: true }))).not.toContain('project');
+  });
+
+  it('offers a route chip with one option per route, labelled country · method · direction', () => {
+    const ref = { ...noRef, routes: [
+      { id: 'r1', country: 'Cameroun', method: 'MTN MoMo', direction: 'collection' },
+      { id: 'r2', country: "Côte d'Ivoire", method: 'MTN MoMo', direction: 'collection' },
+      { id: 'r3', country: 'Cameroun', method: 'MTN MoMo', direction: 'disbursement' },
+    ] };
+    const route = transactionList({ t: fr, has: () => true, ref, reload: none }).filters!.find((f) => f.key === 'route')!;
+    expect(route.options.map((o) => [o.value, o.label])).toEqual([['r1', 'Cameroun · MTN MoMo · encaissement'], ['r2', "Côte d'Ivoire · MTN MoMo · encaissement"], ['r3', 'Cameroun · MTN MoMo · décaissement']]);
+    expect(transactionList({ t: fr, has: () => true, ref: noRef, reload: none }).filters!.map((f) => f.key)).not.toContain('route');
   });
 
   it('sorts by amount only once a currency is chosen', () => {

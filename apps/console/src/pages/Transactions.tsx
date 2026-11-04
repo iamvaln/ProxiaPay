@@ -13,7 +13,7 @@ const FAILURES = ['PAYER_DECLINED', 'PAYER_UNRESPONSIVE', 'WALLET_NOT_FOUND', 'W
 const RECHECKABLE = ['submitted', 'processing', 'undetermined'];
 /** The page's own range parameters, beside the table's: they are not chips because they take free values. */
 const RANGE = ['created_after', 'created_before', 'amount_min', 'amount_max'] as const;
-const FILTER_KEYS = ['state', 'reconciliation_status', 'direction', 'project', 'country', 'payment_method', 'provider_account', 'currency', 'failure_reason'];
+const FILTER_KEYS = ['state', 'reconciliation_status', 'direction', 'project', 'route', 'country', 'payment_method', 'provider_account', 'currency', 'failure_reason'];
 
 type Txn = Record<string, any>;
 type Tr = (k: string, v?: Record<string, string | number>) => string;
@@ -36,6 +36,7 @@ export function transactionList({ t, has, ref, reload, currency, project }: { t:
     ...chip<Txn>('reconciliation_status', t('col.reconciliation'), RECON),
     ...chip<Txn>('direction', t('col.type'), [{ value: 'collection', label: t('l.collection') }, { value: 'disbursement', label: t('l.disbursement') }]),
     ...(project ? [] : chip<Txn>('project', t('col.project'), ref.projects.map((p) => ({ value: p.id, label: p.name })))),
+    ...chip<Txn>('route', t('col.route'), ref.routes.map((r) => ({ value: r.id, label: `${r.country} · ${r.method} · ${t(`l.${r.direction}`)}` }))),
     ...chip<Txn>('country', t('l.country'), ref.countries.map((c) => ({ value: c.code, label: c.name }))),
     ...chip<Txn>('payment_method', t('l.method'), ref.methods),
     ...chip<Txn>('provider_account', t('l.provider_account'), ref.providers.map((p) => ({ value: p.id, label: p.name }))),
