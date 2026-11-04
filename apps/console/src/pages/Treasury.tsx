@@ -4,6 +4,7 @@ import { get } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import { Amount, ConfirmedAction, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type Filter } from '../components/table/DataTable';
+import { emptyFunding, fundingRequest, walletChoices, type FundingTargets } from './funding';
 import { chip, chipBy, cleanCurrency, distinct, fetchPage, periodFilter, useReload, useTab } from './list-support';
 
 type Row = Record<string, any>;
@@ -129,7 +130,9 @@ export function TreasuryPage() {
   const [transfer, setTransfer] = useState({ source_account_id: '', destination_account_id: '', amount: 0, provider_fee: 0, provider_reference: '', note: '' });
   const [cashout, setCashout] = useState({ float_account_id: '', destination: '', amount: 0, supporting_document: '', justification: '' });
   const [withdrawable, setWithdrawable] = useState<any>(null);
-  const [funding, setFunding] = useState({ target: 'float', float_account_id: '', project_id: '', currency: 'XAF', amount: 0, justification: '', reference: '' });
+  const [funding, setFunding] = useState(emptyFunding);
+  const fundingTargets = useLoad(() => (tab === 'funding' && has('treasury.funding') ? get<FundingTargets>('/treasury/funding/targets') : Promise.resolve(null)), [tab]);
+  const choices = walletChoices(fundingTargets.data, funding.provider_account_id, funding);
   const [adjustment, setAdjustment] = useState({ postings: [{ account_id: '', side: 'debit', amount: 0 }, { account_id: '', side: 'credit', amount: 0 }], justification: '', reference: '' });
   const accounts = float.data?.accounts ?? [];
   const others = float.data?.other_accounts ?? [];
@@ -196,12 +199,17 @@ export function TreasuryPage() {
           <h2>Funding</h2>
           <p className="small muted">Placing capital at a provider and granting a project a balance are separate acts; granting a balance without float behind it moves the coverage ratio.</p>
           {has('treasury.funding') ? (
-            <ConfirmedAction operationType="funding.post" values={funding} path="/treasury/funding" label="Post funding" onDone={() => float.reload()} disabled={funding.amount <= 0 || !funding.justification || (funding.target === 'float' ? !funding.float_account_id : !funding.project_id)}
+            <ConfirmedAction operationType="funding.post" values={fundingRequest(funding)} path="/treasury/funding" label="Post funding" onDone={() => float.reload()} disabled={funding.amount <= 0 || !funding.justification || (funding.target === 'float' ? !choices.complete : !funding.project_id)}
               summary={<div className="stack" style={{ display: 'grid', gap: 8 }}>
+                {funding.target === 'float' && <p className="small muted">{t('fund.opens_float')}</p>}
                 <div className="row"><select value={funding.target} onChange={(e) => setFunding({ ...funding, target: e.target.value })}><option value="float">float account</option><option value="project">project balance</option></select>
-                  {funding.target === 'float' ? <select value={funding.float_account_id} onChange={(e) => { const a = accounts.find((x: any) => x.id === e.target.value); setFunding({ ...funding, float_account_id: e.target.value, currency: a?.currency ?? funding.currency }); }}><option value="">account</option>{accounts.map((a: any) => <option key={a.id} value={a.id}>{a.providerAccountName} {a.countryCode} {a.currency} {a.direction}</option>)}</select>
+                  {funding.target === 'float' ? <>
+                    <select aria-label={t('fund.provider_account')} value={funding.provider_account_id} onChange={(e) => setFunding({ ...funding, provider_account_id: e.target.value, country: '', direction: '' })}><option value="">{t('fund.provider_account')}</option>{(fundingTargets.data?.provider_accounts ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+                    <select aria-label={t('fund.country')} value={funding.country} onChange={(e) => setFunding({ ...funding, country: e.target.value, direction: '' })}><option value="">{t('fund.country')}</option>{choices.countries.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                    <select aria-label={t('fund.currency')} value={choices.currencies.includes(funding.currency) ? funding.currency : ''} onChange={(e) => setFunding({ ...funding, currency: e.target.value, direction: '' })}><option value="">{t('fund.currency')}</option>{choices.currencies.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                    <select aria-label={t('fund.direction')} value={funding.direction} onChange={(e) => setFunding({ ...funding, direction: e.target.value })}><option value="">{t('fund.direction')}</option>{choices.directions.map((d) => <option key={d} value={d}>{t(`fund.${d}`)}</option>)}</select></>
                     : <select value={funding.project_id} onChange={(e) => setFunding({ ...funding, project_id: e.target.value })}><option value="">project</option>{(balances.data?.projects ?? []).map((p: any) => <option key={p.project.id} value={p.project.id}>{p.project.name}</option>)}</select>}
-                  <input style={{ width: 70 }} value={funding.currency} onChange={(e) => setFunding({ ...funding, currency: e.target.value.toUpperCase() })} />
+                  {funding.target === 'project' && <input style={{ width: 70 }} value={funding.currency} onChange={(e) => setFunding({ ...funding, currency: e.target.value.toUpperCase() })} />}
                   <input type="number" placeholder="amount" value={funding.amount || ''} onChange={(e) => setFunding({ ...funding, amount: Number(e.target.value) })} /></div>
                 <div className="row"><input placeholder="justification" value={funding.justification} onChange={(e) => setFunding({ ...funding, justification: e.target.value })} style={{ width: 300 }} /><input placeholder="reference" value={funding.reference} onChange={(e) => setFunding({ ...funding, reference: e.target.value })} /></div>
               </div>} />
