@@ -18,15 +18,15 @@ afterAll(() => t.close());
 beforeEach(() => t.reset());
 
 /** A request by a real administrator, since postings and the audit record reference the author. */
-async function asAdmin() {
+async function asAdmin(opts: Parameters<typeof consoleRequest>[1] = {}) {
   const admin = await t.admin();
-  const base = consoleRequest(t);
+  const base = consoleRequest(t, opts);
   return { ...base, principal: { ...base.principal, administratorId: admin.id } } as typeof base;
 }
 
 /** Funds with a confirmation code bound to exactly the submitted values, as the console does. */
-async function fund(req: Awaited<ReturnType<typeof asAdmin>>, values: Record<string, unknown>) {
-  const fingerprint = ConfirmationService.fingerprint('funding.post', values);
+async function fund(req: Awaited<ReturnType<typeof asAdmin>>, values: Record<string, unknown>, boundTo: Record<string, unknown> = values) {
+  const fingerprint = ConfirmationService.fingerprint('funding.post', boundTo);
   const row = await t.db.insertInto('operation_confirmation').values({
     administrator_id: req.principal.administratorId, operation_type: 'funding.post', subject_reference: '', fingerprint,
     code_hash: CryptoService.tokenHash(`${fingerprint}:123456`), expires_at: new Date(Date.now() + 600_000),
@@ -111,9 +111,61 @@ describe('funding opens the float it funds', () => {
     });
   });
 
+  it('records the float it resolved in the audit record', async () => {
+    const req = await asAdmin();
+    const res = await fund(req, { ...base, ...(await wallet()) });
+    const rec = await t.db.selectFrom('audit_record').select('new_state').where('action', '=', 'funding.float').executeTakeFirstOrThrow();
+    expect(rec.new_state).toMatchObject({ float_account_id: res.float_account_id, amount: 5000 });
+  });
+
+  it('refuses a code requested for another wallet or amount', async () => {
+    const req = await asAdmin();
+    const w = await wallet('disbursement');
+    const other = await wallet('collection');
+    const asked = { ...base, ...w };
+    await expect(fund(req, { ...base, ...other }, asked)).rejects.toMatchObject({ code: 'CONFIRMATION_INVALID' });
+    await expect(fund(req, { ...asked, amount: 9000 }, asked)).rejects.toMatchObject({ code: 'CONFIRMATION_INVALID' });
+    expect(await t.db.selectFrom('ledger_account').select('id').where('type', '=', 'float').execute()).toHaveLength(0);
+  });
+
+  it('refuses a suspended provider account', async () => {
+    const req = await asAdmin();
+    const w = await wallet();
+    await t.db.updateTable('provider_account').set({ status: 'suspended' }).where('id', '=', w.provider_account_id).execute();
+    await expect(fund(req, { ...base, ...w })).rejects.toMatchObject({ code: 'FIELD_INVALID' });
+    expect(await t.db.selectFrom('ledger_account').select('id').where('type', '=', 'float').execute()).toHaveLength(0);
+  });
+
+  describe('for an administrator scoped to one provider account', () => {
+    async function twoProviders() {
+      const w = await wallet();
+      const other = await t.db.insertInto('provider_account').values({ provider_code: 'simulator', name: 'Other', base_url: 'simulator://other' }).returning('id').executeTakeFirstOrThrow();
+      await t.db.insertInto('provider_account_capability').values({ provider_account_id: other.id, country_code: w.country, currency_code: w.currency, direction: 'disbursement', payment_method_code: 'MOMO' }).execute();
+      return { mine: w, otherId: other.id };
+    }
+
+    it('lists only that provider account', async () => {
+      const { mine, otherId } = await twoProviders();
+      const req = await asAdmin({ providerScope: [mine.provider_account_id] });
+      const ids = (await controller().fundingTargets(req)).provider_accounts.map((p: { id: string }) => p.id);
+      expect(ids).toEqual([mine.provider_account_id]);
+      expect(ids).not.toContain(otherId);
+    });
+
+    it('funds within the scope and refuses outside it, by wallet and by float id', async () => {
+      const { mine, otherId } = await twoProviders();
+      const req = await asAdmin({ providerScope: [mine.provider_account_id] });
+      await expect(fund(req, { ...base, ...mine })).resolves.toHaveProperty('float_account_id');
+      await expect(fund(req, { ...base, ...mine, provider_account_id: otherId })).rejects.toMatchObject({ code: 'FIELD_INVALID', message: 'No such provider account.' });
+      const foreign = await get(LedgerService).getOrCreateAccount(t.db, { type: 'float', providerAccountId: otherId, countryCode: mine.country, currency: mine.currency, direction: 'disbursement' });
+      await expect(fund(req, { ...base, currency: mine.currency, float_account_id: foreign })).rejects.toMatchObject({ code: 'FIELD_INVALID' });
+      expect(await get(LedgerService).balance(t.db, foreign)).toBe(0);
+    });
+  });
+
   it('lists the wallets that can be funded, from the provider accounts and their capabilities', async () => {
     const req = await asAdmin();
-    const res = await controller().fundingTargets();
+    const res = await controller().fundingTargets(req);
     const w = await wallet('disbursement');
     expect(res.provider_accounts.length).toBeGreaterThan(0);
     const pa = res.provider_accounts.find((p: { id: string }) => p.id === w.provider_account_id)!;

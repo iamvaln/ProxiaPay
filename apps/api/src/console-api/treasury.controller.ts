@@ -176,8 +176,11 @@ export class TreasuryController {
   /** What Funding can open: each provider account with the wallets (country, currency, direction) it holds. */
   @Get('funding/targets')
   @RequirePermission('treasury.funding')
-  async fundingTargets() {
-    const accounts = await this.db.selectFrom('provider_account').select(['id', 'name']).orderBy('name').execute();
+  async fundingTargets(@Req() req: ConsoleRequest) {
+    const scope = req.auth.providerScope('treasury.funding');
+    let q = this.db.selectFrom('provider_account').select(['id', 'name']).orderBy('name');
+    if (scope) q = q.where('id', 'in', scope.length ? scope : ['00000000-0000-0000-0000-000000000000']);
+    const accounts = await q.execute();
     const caps = await this.db.selectFrom('provider_account_capability').select(['provider_account_id', 'country_code', 'currency_code', 'direction']).distinct().orderBy('country_code').orderBy('currency_code').orderBy('direction').execute();
     return { provider_accounts: accounts.map((a) => ({ ...a, wallets: caps.filter((c) => c.provider_account_id === a.id).map((c) => ({ country: c.country_code, currency: c.currency_code, direction: c.direction })) })) };
   }
@@ -186,22 +189,29 @@ export class TreasuryController {
    * The float a funding goes to: the one named, or the one for a wallet the provider account really
    * has, opened on first use. The first collection is not needed to open it.
    */
-  private async resolveFloat(tx: Tx, input: z.infer<typeof fundingSchema>): Promise<string> {
+  private async resolveFloat(tx: Tx, input: z.infer<typeof fundingSchema>, auth: ConsoleRequest['auth']): Promise<string> {
     const wallet = [input.provider_account_id, input.country, input.direction];
     if (input.float_account_id) {
       if (wallet.some((v) => v !== undefined)) throw fieldInvalid('float_account_id', 'Name the float account, or the provider account, country and direction, not both.');
-      const acct = await tx.selectFrom('ledger_account').select(['type', 'currency_code']).where('id', '=', input.float_account_id).executeTakeFirst();
-      if (!acct || acct.type !== 'float') throw fieldInvalid('float_account_id', 'That is not a float account.');
+      const acct = await tx.selectFrom('ledger_account').select(['type', 'currency_code', 'provider_account_id']).where('id', '=', input.float_account_id).executeTakeFirst();
+      if (!acct || acct.type !== 'float' || !acct.provider_account_id) throw fieldInvalid('float_account_id', 'That is not a float account.');
+      await this.assertFundable(tx, acct.provider_account_id, auth, 'float_account_id');
       if (acct.currency_code !== input.currency) throw fieldInvalid('currency', `That float account holds ${acct.currency_code}, not ${input.currency}.`);
       return input.float_account_id;
     }
     if (!input.provider_account_id || !input.country || !input.direction) throw fieldInvalid('float_account_id', 'Name the float account, or the provider account, country and direction.');
-    const provider = await tx.selectFrom('provider_account').select('id').where('id', '=', input.provider_account_id).executeTakeFirst();
-    if (!provider) throw fieldInvalid('provider_account_id', 'No such provider account.');
+    await this.assertFundable(tx, input.provider_account_id, auth, 'provider_account_id');
     const capability = await tx.selectFrom('provider_account_capability').select('provider_account_id')
       .where('provider_account_id', '=', input.provider_account_id).where('country_code', '=', input.country).where('currency_code', '=', input.currency).where('direction', '=', input.direction).executeTakeFirst();
     if (!capability) throw fieldInvalid('provider_account_id', `That provider account has no ${input.direction} wallet in ${input.country} for ${input.currency}.`);
     return this.ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId: input.provider_account_id, countryCode: input.country, currency: input.currency, direction: input.direction });
+  }
+
+  /** A provider account out of the administrator's scope is refused as if it did not exist; a suspended one cannot be funded. */
+  private async assertFundable(tx: Tx, providerAccountId: string, auth: ConsoleRequest['auth'], field: string): Promise<void> {
+    const provider = await tx.selectFrom('provider_account').select('status').where('id', '=', providerAccountId).executeTakeFirst();
+    if (!provider || !auth.canReachProvider('treasury.funding', providerAccountId)) throw fieldInvalid(field, 'No such provider account.');
+    if (provider.status !== 'active') throw fieldInvalid(field, 'That provider account is suspended; restore it before funding its float.');
   }
 
   @Post('funding')
@@ -213,13 +223,13 @@ export class TreasuryController {
       let id: string;
       let floatAccountId: string | undefined;
       if (input.target === 'float') {
-        floatAccountId = await this.resolveFloat(tx, input);
+        floatAccountId = await this.resolveFloat(tx, input, req.auth);
         id = await this.ledger.postFloatFunding(tx, { floatAccountId, currency: input.currency, amount: input.amount, authorId: req.principal.administratorId, justification: input.justification, reference: input.reference });
       } else {
         if (!input.project_id) throw new PlatformError('FIELD_INVALID', 'Name the project.', { field: 'project_id' });
         id = await this.ledger.postProjectFunding(tx, { projectId: input.project_id, currency: input.currency, amount: input.amount, authorId: req.principal.administratorId, justification: input.justification, reference: input.reference });
       }
-      await this.audit.record(tx, { actorId: req.principal.administratorId, action: `funding.${input.target}`, subjectType: 'ledger_entry', subjectId: id, next: input, confirmationId: c });
+      await this.audit.record(tx, { actorId: req.principal.administratorId, action: `funding.${input.target}`, subjectType: 'ledger_entry', subjectId: id, next: floatAccountId ? { ...input, float_account_id: floatAccountId } : input, confirmationId: c });
       return { id, floatAccountId };
     });
     const coverage = await this.treasury.coverageByCurrency();
