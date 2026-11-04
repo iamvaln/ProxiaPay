@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createTestContext, type TestContext } from '../test/context';
 import { consoleRequest } from '../test/console-request';
@@ -374,6 +375,52 @@ describe('GET /console/search', () => {
     expect(res.capped).toBe(false);
     expect(res.previews.map((p) => p.reference)).toEqual([o.previewReference]);
     expect(await controllers.transactions().globalSearch('', req())).toEqual({ transactions: [], previews: [], capped: false });
+  });
+});
+
+describe('GET /console/search by fragment', () => {
+  it('finds a transaction by a fragment from the middle of its reference and of its project reference', async () => {
+    const o = await oneTransaction('shop');
+    const row = await t.db.selectFrom('transaction').select(['reference', 'project_reference']).where('id', '=', o.transactionId).executeTakeFirstOrThrow();
+    const mid = row.reference.slice(6, 12).toUpperCase();
+    expect(mid.length).toBe(6);
+    const byRef = await controllers.transactions().globalSearch(mid, req());
+    expect(byRef.transactions.map((x) => x.reference)).toEqual([row.reference]);
+    const byProject = await controllers.transactions().globalSearch(row.project_reference.slice(1), req());
+    expect(byProject.transactions.map((x) => x.reference)).toEqual([row.reference]);
+    const preview = await controllers.transactions().globalSearch(o.previewReference.slice(5, 11), req());
+    expect(preview.previews.map((x) => x.reference)).toContain(o.previewReference);
+  });
+
+  it('keeps an exact match under 4 characters', async () => {
+    const o = await oneTransaction('shop');
+    const row = await t.db.selectFrom('transaction').select(['reference']).where('id', '=', o.transactionId).executeTakeFirstOrThrow();
+    expect((await controllers.transactions().globalSearch(row.reference.slice(6, 9), req())).transactions).toEqual([]);
+    await t.db.updateTable('transaction').set({ project_reference: 'abc' }).where('id', '=', o.transactionId).execute();
+    expect((await controllers.transactions().globalSearch('abc', req())).transactions.map((x) => x.reference)).toEqual([row.reference]);
+  });
+
+  it('reads % and _ literally', async () => {
+    await oneTransaction('shop');
+    expect((await controllers.transactions().globalSearch('____', req())).transactions).toEqual([]);
+    expect((await controllers.transactions().globalSearch('%%%%', req())).transactions).toEqual([]);
+    expect((await controllers.transactions().globalSearch('txn\\_', req())).transactions).toEqual([]);
+  });
+
+  it('never returns another project to a scoped administrator', async () => {
+    const a = await oneTransaction('alpha');
+    const b = await oneTransaction('beta');
+    const row = await t.db.selectFrom('transaction').select(['reference']).where('id', '=', b.transactionId).executeTakeFirstOrThrow();
+    const scoped = consoleRequest(t, { scope: [a.project.id] });
+    expect((await controllers.transactions().globalSearch(row.reference.slice(6, 12), scoped)).transactions).toEqual([]);
+    expect((await controllers.transactions().globalSearch(row.reference.slice(6, 12), req())).transactions.length).toBe(1);
+  });
+});
+
+describe('migration 0003', () => {
+  it('creates the trigram indexes on the six reference columns', async () => {
+    const { rows } = await sql<{ indexname: string }>`select indexname from pg_indexes where indexname like '%trgm_idx'`.execute(t.db);
+    expect(rows.length).toBe(6);
   });
 });
 

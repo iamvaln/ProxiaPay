@@ -17,6 +17,12 @@ export type Page<T> = { data: T[]; total: number; page: number; page_size: numbe
 /** Escapes LIKE's own metacharacters so a search for `txn_` means those four characters, then anchors it as a prefix. */
 export const prefixPattern = (q: string): string => q.replace(/[\\%_]/g, '\\$&') + '%';
 
+/** The shortest search that matches a fragment; anything shorter keeps to the start of a reference (lists) or all of it (global search). */
+export const FRAGMENT_MIN = 4;
+
+/** Escapes LIKE's metacharacters, then wraps the text so it matches anywhere in a value. Compared as `lower(col) like lower(pattern)`. */
+export const containsPattern = (q: string): string => '%' + q.replace(/[\\%_]/g, '\\$&') + '%';
+
 /**
  * Pages a filtered select: the total counts the same query with selection and ordering cleared, and the page
  * orders by the requested key and then the id, both in the requested direction, so rows sharing a sort value

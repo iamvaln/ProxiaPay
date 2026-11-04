@@ -67,6 +67,23 @@ describe('GET /console/transactions on the page contract', () => {
     expect((await controller.search({ q: '%' }, consoleRequest(t))).total).toBe(0);
   });
 
+  it('finds a transaction by a fragment from the middle of its reference, in any case', async () => {
+    const { refs } = await seed('shop', 3);
+    const res = await controller.search({ q: refs[1]!.slice(6, 12).toUpperCase() }, consoleRequest(t));
+    expect(res.data.map((r) => r.reference)).toEqual([refs[1]]);
+    expect((await controller.search({ q: '____' }, consoleRequest(t))).total).toBe(0);
+    expect((await controller.search({ q: refs[1]!.slice(6, 9) }, consoleRequest(t))).total).toBe(0);
+  });
+
+  it('filters by route', async () => {
+    const { refs } = await seed('shop', 2);
+    const route = await t.db.selectFrom('transaction').select('route_id').where('reference', '=', refs[0]!).executeTakeFirstOrThrow();
+    const hit = await controller.search({ route: route.route_id }, consoleRequest(t));
+    expect(hit.total).toBe(2);
+    const other = await controller.search({ route: '00000000-0000-0000-0000-000000000000' }, consoleRequest(t));
+    expect(other.total).toBe(0);
+  });
+
   it('scoped total counts only the scoped projects', async () => {
     const a = await seed('alpha', 3);
     await seed('beta', 4);
