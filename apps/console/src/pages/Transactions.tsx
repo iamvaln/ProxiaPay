@@ -1,16 +1,21 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { get } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import { Amount, Empty, ErrorLine, Pill, ScopeNote, When, useLoad } from '../components/common';
 
 const STATES = ['created', 'action_required', 'submitted', 'processing', 'succeeded', 'failed', 'expired', 'undetermined'];
 
+/** Filters a link may carry in the address: the page's own fields, plus the route a health alert points at. */
+const SEEDED = ['state', 'reconciliation_status', 'direction', 'country', 'payment_method', 'currency', 'failure_reason', 'amount_min', 'amount_max', 'route'];
+
 /** Transaction search (console spec 5.1). */
 export function TransactionsPage() {
   const t = useT();
   const { has } = useSession();
-  const [f, setF] = useState<Record<string, string>>({});
+  // Links from the home and from health alerts arrive with their filters in the address.
+  const [params] = useSearchParams();
+  const [f, setF] = useState<Record<string, string>>(() => Object.fromEntries([...params].filter(([k]) => SEEDED.includes(k))));
   const [cursor, setCursor] = useState<string | undefined>();
   const qs = new URLSearchParams(Object.entries({ ...f, ...(cursor ? { cursor } : {}) }).filter(([, v]) => v)).toString();
   const { data, error } = useLoad(() => get<{ data: any[]; next_cursor: string | null; scoped: boolean }>(`/transactions?${qs}`), [qs]);

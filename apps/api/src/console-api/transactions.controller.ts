@@ -18,7 +18,7 @@ import { encodeCursor, decodeCursor } from '../project-api/transaction-list';
 const searchSchema = z.object({
   q: z.string().max(128).optional(),
   state: z.string().optional(), reconciliation_status: z.string().optional(), direction: z.enum(['collection', 'disbursement']).optional(),
-  project: z.string().uuid().optional(), country: z.string().max(2).optional(), payment_method: z.string().max(16).optional(),
+  project: z.string().uuid().optional(), route: z.string().uuid().optional(), country: z.string().max(2).optional(), payment_method: z.string().max(16).optional(),
   provider_account: z.string().uuid().optional(), currency: z.string().max(3).optional(), failure_reason: z.string().max(64).optional(),
   created_after: z.string().datetime().optional(), created_before: z.string().datetime().optional(),
   amount_min: z.coerce.number().int().optional(), amount_max: z.coerce.number().int().optional(),
@@ -60,6 +60,7 @@ export class ConsoleTransactionsController {
     if (q.reconciliation_status) query = query.where('t.reconciliation_status', '=', q.reconciliation_status);
     if (q.direction) query = query.where('t.direction', '=', q.direction);
     if (q.project) query = query.where('t.project_id', '=', q.project);
+    if (q.route) query = query.where('t.route_id', '=', q.route);
     if (q.country) query = query.where('r.country_code', '=', q.country);
     if (q.payment_method) query = query.where('r.payment_method_code', '=', q.payment_method);
     if (q.provider_account) query = query.where('a.provider_account_id', '=', q.provider_account);
