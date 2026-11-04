@@ -12,7 +12,7 @@ export interface HomeCards {
   success_rate?: RateVsBaseline;
   collected_today?: CollectedToday[];
   undetermined?: number;
-  lowest_float?: { id: string; provider: string; country: string; currency: string; direction: string; cover_hours: number | null; band: string; proposed_transfer: number | null } | null;
+  lowest_float?: { scoped: boolean; id: string; provider: string; country: string; currency: string; direction: string; cover_hours: number | null; band: string; proposed_transfer: number | null } | null;
   routes?: { scoped: boolean; series: RouteSeries[] };
   awaiting_your_approval: { id: string; type: string; summary: string; amount: number | null; currency: string | null; initiator: string; created_at: string }[];
   assigned_discrepancies?: { id: string; type: string; subject_reference: string; difference: number | null; currency_code: string | null }[];

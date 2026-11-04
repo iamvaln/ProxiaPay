@@ -30,6 +30,20 @@ describe('the home', () => {
     expect(out).toContain('TX-1');
   });
 
+  it('says beside each figure, the chart and the business line when the scope limits them', () => {
+    const none = view(full);
+    expect(none).not.toContain('Limited to your scope');
+    const out = view({ ...full, routes: { scoped: true, series: [] }, lowest_float: { scoped: true, id: 'f1', provider: 'MTN', country: 'CM', currency: 'XAF', direction: 'disbursement', cover_hours: 4, band: 'critical', proposed_transfer: null }, earnings: { ...full.earnings!, scoped: true } });
+    // three project-scoped figures, the lowest float, the chart card, the business line
+    expect(out.match(/Limited to your scope/g)).toHaveLength(6);
+    expect(out).toContain('Disbursement');
+  });
+
+  it('shows a dash when nothing was collected today', () => {
+    const out = view({ ...full, collected_today: [] });
+    expect(out).toContain('Collected today</span><span class="headline-value">—</span>');
+  });
+
   it('renders only waiting on you when nothing else is sent, and never claims all is well', () => {
     const out = view({ awaiting_your_approval: full.awaiting_your_approval });
     expect(out).toContain('Cashout to bank');

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { get } from '../lib/api';
 import { useT } from '../lib/session';
-import { Amount, Empty, ErrorLine, useEvery, useLoad } from '../components/common';
+import { Amount, Empty, ErrorLine, ScopeNote, useEvery, useLoad } from '../components/common';
 import { Headline } from '../components/Headline';
 import { RouteChart } from '../components/RouteChart';
 import { Verdict } from '../components/Verdict';
@@ -21,7 +21,7 @@ export function HomeView({ cards, loadedAt }: { cards: HomeCards; loadedAt: Date
       {cards.verdict && <Verdict problems={cards.verdict.problems} loadedAt={loadedAt} />}
       {(cards.success_rate || cards.collected_today || cards.undetermined != null || cards.lowest_float) && <Headline cards={cards} />}
       <div className={cards.routes ? 'home-main' : undefined}>
-        {cards.routes && <div className="card home-chart"><RouteChart series={cards.routes.series} /></div>}
+        {cards.routes && <div className="card home-chart"><RouteChart series={cards.routes.series} /><ScopeNote scoped={cards.routes.scoped} /></div>}
         <section className="card waiting">
           <h2>{t('home.waiting')}</h2>
           {cards.awaiting_your_approval.length || discrepancies.length ? (
@@ -43,6 +43,7 @@ export function HomeView({ cards, loadedAt }: { cards: HomeCards; loadedAt: Date
       {cards.earnings && (
         <section className="business-line small muted">
           <span>{t('home.month_to_date')}</span>
+          <ScopeNote scoped={cards.earnings.scoped} />
           {cards.earnings.rows.map((r) => (
             <span className="business-row" key={r.currency}>
               {r.currency}: {t('home.platform_revenue')} <Amount minor={r.platform_revenue} currency={r.currency} />

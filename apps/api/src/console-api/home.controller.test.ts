@@ -73,7 +73,12 @@ describe('GET /console/home', () => {
     ];
     const cards = await home(grant('treasury.read_float', { scopeType: 'provider_accounts', providerAccountIds: ['p1'] }));
     expect(floatScope).toEqual(['p1']);
-    expect(cards.lowest_float).toEqual({ id: 'b', provider: 'Orange', country: 'CI', currency: 'XOF', direction: 'disbursement', cover_hours: 4, band: 'critical', proposed_transfer: 90000 });
+    expect(cards.lowest_float).toEqual({ scoped: true, id: 'b', provider: 'Orange', country: 'CI', currency: 'XOF', direction: 'disbursement', cover_hours: 4, band: 'critical', proposed_transfer: 90000 });
+  });
+
+  it('marks the lowest float as limited by scope only when the grant is scoped', async () => {
+    floats = [{ id: 'a', providerAccountName: 'MTN', countryCode: 'CM', currency: 'XAF', direction: 'disbursement', coverHours: 30, band: 'watch', proposedTransfer: null }];
+    expect(((await home(grant('treasury.read_float'))).lowest_float as { scoped: boolean }).scoped).toBe(false);
   });
 
   it('gives a null lowest_float when no view has cover', async () => {

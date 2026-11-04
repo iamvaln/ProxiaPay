@@ -50,7 +50,7 @@ export class HomeController {
       const views = await this.treasury.floatAccounts(this.db, auth.providerScope('treasury.read_float'));
       let lowest: FloatAccountView | null = null;
       for (const f of views) if (f.coverHours !== null && (lowest === null || f.coverHours < (lowest.coverHours as number))) lowest = f;
-      cards.lowest_float = lowest && { id: lowest.id, provider: lowest.providerAccountName, country: lowest.countryCode, currency: lowest.currency, direction: lowest.direction, cover_hours: lowest.coverHours, band: lowest.band, proposed_transfer: lowest.proposedTransfer };
+      cards.lowest_float = lowest && { scoped: auth.providerScope('treasury.read_float') !== null, id: lowest.id, provider: lowest.providerAccountName, country: lowest.countryCode, currency: lowest.currency, direction: lowest.direction, cover_hours: lowest.coverHours, band: lowest.band, proposed_transfer: lowest.proposedTransfer };
     }
     if (auth.has('reconciliation.read')) {
       cards.assigned_discrepancies = await this.db.selectFrom('discrepancy').select(['id', 'type', 'subject_reference', 'difference', 'currency_code']).where('assignee_id', '=', req.principal.administratorId).where('status', '<>', 'resolved').limit(10).execute();
