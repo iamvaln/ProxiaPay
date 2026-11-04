@@ -72,9 +72,11 @@ describe('overallSuccess', () => {
 
 describe('routeSeries', () => {
   it('returns 24 hourly buckets per route, oldest first, and keeps two routes of one country apart', async () => {
-    await txn('MOMO', hoursAgo(3), 'failed');
-    await txn('MOMO', hoursAgo(0.1), 'succeeded');
-    await txn('OM', hoursAgo(0.1), 'succeeded');
+    // Anchored to the current hour, so the buckets do not depend on the minute the test runs in.
+    const hourStart = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+    await txn('MOMO', new Date(hourStart - 3 * 3_600_000 + 60_000), 'failed');
+    await txn('MOMO', new Date(), 'succeeded');
+    await txn('OM', new Date(), 'succeeded');
     const series = await home.routeSeries(null, true);
     expect(series).toHaveLength(2);
     const momo = series.find((s) => s.payment_method_code === 'MOMO')!;
@@ -108,7 +110,9 @@ describe('collectedToday', () => {
     await txn('MOMO', new Date(), 'succeeded', principal, 'collection', 1000);
     await txn('MOMO', new Date(), 'failed');
     await txn('MOMO', new Date(), 'succeeded', principal, 'disbursement', 700);
-    await txn('MOMO', new Date(daysAgo(7).getTime() - 60_000), 'succeeded', principal, 'collection', 400);
+    // A moment before this time last week, but never before last week's midnight, even just after UTC midnight.
+    const sinceMidnight = Date.now() - Math.floor(Date.now() / 86_400_000) * 86_400_000;
+    await txn('MOMO', new Date(daysAgo(7).getTime() - Math.min(60_000, sinceMidnight / 2)), 'succeeded', principal, 'collection', 400);
     expect(await home.collectedToday(null)).toEqual([{ currency: 'XAF', today: 1000, last_week: 400 }]);
   });
 
