@@ -36,7 +36,7 @@ export function transactionList({ t, has, ref, reload, currency, project }: { t:
     ...chip<Txn>('reconciliation_status', t('col.reconciliation'), RECON),
     ...chip<Txn>('direction', t('col.type'), [{ value: 'collection', label: t('l.collection') }, { value: 'disbursement', label: t('l.disbursement') }]),
     ...(project ? [] : chip<Txn>('project', t('col.project'), ref.projects.map((p) => ({ value: p.id, label: p.name })))),
-    ...chip<Txn>('route', t('col.route'), ref.routes.map((r) => ({ value: r.id, label: `${r.country} · ${r.method} · ${t(`l.${r.direction}`)}` }))),
+    ...chip<Txn>('route', t('col.route'), ref.routes.map((r) => ({ value: r.id, label: `${r.country} · ${r.method} · ${t(`l.${r.direction}`)} · ${r.currency}` }))),
     ...chip<Txn>('country', t('l.country'), ref.countries.map((c) => ({ value: c.code, label: c.name }))),
     ...chip<Txn>('payment_method', t('l.method'), ref.methods),
     ...chip<Txn>('provider_account', t('l.provider_account'), ref.providers.map((p) => ({ value: p.id, label: p.name }))),

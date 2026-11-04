@@ -226,7 +226,7 @@ An address issued for a browser step is absent from this screen entirely, since 
 
 ### 5.3 Previews
 
-Previews are searchable alongside transactions, including those that expired without being confirmed. The list shows the project, route, amount, payer identifier, status, and the transaction it produced where it was confirmed.
+Previews are searchable alongside transactions, including those that expired without being confirmed. The list shows the project, route, amount, payer identifier, status, and the transaction it produced where it was confirmed. The search field takes a preview reference or a fragment of one (at least 4 characters; below that, the start of a reference).
 
 The value of this screen is the unconfirmed ones. A payer previewing the same payment repeatedly without completing is a signal about a route or about a wall they have hit, and the pattern is visible only where the record persists.
 

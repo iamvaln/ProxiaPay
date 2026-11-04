@@ -49,14 +49,17 @@ describe('the transaction list', () => {
     expect(keys(transactionList({ t: fr, has: () => true, ref, reload: none, project: true }))).not.toContain('project');
   });
 
-  it('offers a route chip with one option per route, labelled country · method · direction', () => {
+  it('offers a route chip with one option per route, labelled country · method · direction · currency', () => {
     const ref = { ...noRef, routes: [
-      { id: 'r1', country: 'Cameroun', method: 'MTN MoMo', direction: 'collection' },
-      { id: 'r2', country: "Côte d'Ivoire", method: 'MTN MoMo', direction: 'collection' },
-      { id: 'r3', country: 'Cameroun', method: 'MTN MoMo', direction: 'disbursement' },
+      { id: 'r1', country: 'Cameroun', method: 'MTN MoMo', direction: 'collection', currency: 'XAF' },
+      { id: 'r2', country: "Côte d'Ivoire", method: 'MTN MoMo', direction: 'collection', currency: 'XOF' },
+      { id: 'r3', country: 'Cameroun', method: 'MTN MoMo', direction: 'disbursement', currency: 'XAF' },
+      { id: 'r4', country: 'RDC', method: 'Airtel', direction: 'collection', currency: 'CDF' },
+      { id: 'r5', country: 'RDC', method: 'Airtel', direction: 'collection', currency: 'USD' },
     ] };
     const route = transactionList({ t: fr, has: () => true, ref, reload: none }).filters!.find((f) => f.key === 'route')!;
-    expect(route.options.map((o) => [o.value, o.label])).toEqual([['r1', 'Cameroun · MTN MoMo · encaissement'], ['r2', "Côte d'Ivoire · MTN MoMo · encaissement"], ['r3', 'Cameroun · MTN MoMo · décaissement']]);
+    expect(route.options.map((o) => [o.value, o.label])).toEqual([['r1', 'Cameroun · MTN MoMo · encaissement · XAF'], ['r2', "Côte d'Ivoire · MTN MoMo · encaissement · XOF"], ['r3', 'Cameroun · MTN MoMo · décaissement · XAF'], ['r4', 'RDC · Airtel · encaissement · CDF'], ['r5', 'RDC · Airtel · encaissement · USD']]);
+    expect(new Set(route.options.map((o) => o.label)).size).toBe(5);
     expect(transactionList({ t: fr, has: () => true, ref: noRef, reload: none }).filters!.map((f) => f.key)).not.toContain('route');
   });
 

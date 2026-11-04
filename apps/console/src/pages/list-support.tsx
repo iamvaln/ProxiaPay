@@ -41,7 +41,7 @@ export function useReload(): [number, () => void] {
   return [rev, () => setRev((n) => n + 1)];
 }
 
-export type Reference = { projects: { id: string; name: string }[]; providers: { id: string; name: string }[]; countries: { code: string; name: string }[]; methods: string[]; currencies: string[]; routes: { id: string; country: string; method: string; direction: string }[] };
+export type Reference = { projects: { id: string; name: string }[]; providers: { id: string; name: string }[]; countries: { code: string; name: string }[]; methods: string[]; currencies: string[]; routes: { id: string; country: string; method: string; direction: string; currency: string }[] };
 
 /**
  * The names the filter chips offer. What an administrator is not allowed to read is simply not offered, so a
@@ -61,7 +61,7 @@ export function useReference(): Reference & { ready: boolean } {
         methods: (methods?.payment_methods ?? []).map((m: any) => m.code),
         currencies: (countries?.currencies ?? []).map((c: any) => c.code),
         // One entry per route id: a route is the unit, so an operator in two countries stays two.
-        routes: (routes?.routes ?? []).map((r: any) => ({ id: r.id, country: r.country_name ?? r.country_code, method: r.payment_method_name ?? r.payment_method_code, direction: r.direction })),
+        routes: (routes?.routes ?? []).map((r: any) => ({ id: r.id, country: r.country_name ?? r.country_code, method: r.payment_method_name ?? r.payment_method_code, direction: r.direction, currency: r.currency_code })),
         ready: true,
       });
     });
