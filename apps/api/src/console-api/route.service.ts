@@ -53,7 +53,7 @@ export class RouteService {
       .innerJoin('route_version as rv', (j) => j.onRef('rv.route_id', '=', 'r.id').on('rv.valid_to', 'is', null))
       .innerJoin('country as c', 'c.code', 'r.country_code')
       .innerJoin('payment_method as pm', 'pm.code', 'r.payment_method_code')
-      .select(['r.id', 'r.country_code', 'c.name as country_name', 'r.currency_code', 'r.payment_method_code', 'pm.name as payment_method_name', 'r.direction', 'rv.id as version_id', 'rv.sequence', 'rv.processing_fee_bps', 'rv.platform_fee_bps', 'rv.processing_fee_bearer', 'rv.platform_fee_bearer', 'rv.active', 'rv.otp_required', 'rv.browser_required', 'c.active as country_active'])
+      .select(['r.id', 'r.country_code', 'c.name as country_name', 'r.currency_code', 'r.payment_method_code', 'pm.name as payment_method_name', 'r.direction', 'rv.id as version_id', 'rv.sequence', 'rv.processing_fee_bps', 'rv.platform_fee_bps', 'rv.processing_fee_bearer', 'rv.platform_fee_bearer', 'rv.minimum_amount', 'rv.maximum_amount', 'rv.active', 'rv.otp_required', 'rv.browser_required', 'c.active as country_active'])
       .orderBy(['r.country_code', 'r.payment_method_code', 'r.direction']);
     if (filters.country) q = q.where('r.country_code', '=', filters.country);
     if (filters.currency) q = q.where('r.currency_code', '=', filters.currency);

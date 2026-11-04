@@ -10,6 +10,7 @@ import { AlertService } from '../alerts/alert.service';
 import { HealthService } from '../alerts/health.service';
 import { AuditService } from '../audit/audit.service';
 import { PERMISSIONS } from '../permissions/permissions';
+import { pageQuerySchema, paginate, prefixPattern } from './pagination';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { ExportService } from './export.service';
 import { RoleService } from './role.service';
@@ -28,6 +29,12 @@ const policySchema = z.object({ minimum_severity: z.enum(['informational', 'warn
 const groupSchema = z.object({ name: nonEmpty(64), description: z.string().max(256).default(''), member_ids: z.array(z.string().uuid()).default([]), addresses: z.array(z.object({ channel: z.enum(['email', 'chat']), address: nonEmpty(256) })).default([]), active: z.boolean().default(true) });
 const reportSchema = z.object({ rows: z.enum(['project', 'direction', 'country', 'payment_method', 'provider_account', 'currency', 'day', 'month']).default('country'), cols: z.enum(['direction', 'currency', 'none']).default('none'), from: z.string().datetime().optional(), to: z.string().datetime().optional() });
 
+const period = { after: z.string().datetime().optional(), before: z.string().datetime().optional() };
+const alertsSchema = pageQuerySchema.extend({ status: z.enum(['open', 'acknowledged', 'cleared']).optional(), severity: z.enum(['informational', 'warning', 'critical']).optional(), category: z.string().optional(), ...period });
+const exportsSchema = pageQuerySchema.extend({ subject: z.string().optional(), requested_by: z.string().uuid().optional(), ...period });
+const auditSchema = pageQuerySchema.extend({ actor: z.string().uuid().optional(), subject_type: z.string().optional(), subject_id: z.string().optional(), ...period });
+const authHistorySchema = pageQuerySchema.extend({ administrator: z.string().uuid().optional(), outcome: z.string().optional(), ...period });
+
 /** Oversight (console spec 10): alerts, health, reporting, exports, administrators, roles, audit and authentication history. */
 @Controller('console/oversight')
 @UseGuards(SessionGuard)
@@ -45,10 +52,17 @@ export class OversightController {
 
   @Get('alerts')
   @RequirePermission('oversight.alerts.read')
-  async alertList(@Query('status') status: string | undefined) {
-    let q = this.db.selectFrom('alert').selectAll().orderBy('raised_at', 'desc').limit(200);
-    q = status === 'cleared' ? q.where('status', '=', 'cleared') : q.where('status', 'in', ['open', 'acknowledged']);
-    return { alerts: await q.execute() };
+  async alertList(@Query() query: Record<string, string>) {
+    const q = parseBody(alertsSchema, query);
+    // Severity sorts by weight, not alphabetically; the rank is a selected column so the sort can name it.
+    let qb = this.db.selectFrom('alert').selectAll().select(sql<number>`case severity when 'critical' then 3 when 'warning' then 2 else 1 end`.as('severity_rank'));
+    // Without a status the list is the live ones: what is open or acknowledged.
+    qb = q.status ? qb.where('status', '=', q.status) : qb.where('status', 'in', ['open', 'acknowledged']);
+    if (q.severity) qb = qb.where('severity', '=', q.severity);
+    if (q.category) qb = qb.where('category', '=', q.category);
+    if (q.after) qb = qb.where('raised_at', '>', new Date(q.after));
+    if (q.before) qb = qb.where('raised_at', '<', new Date(q.before));
+    return paginate(qb, q, { sorts: { raised: 'raised_at', severity: 'severity_rank' }, defaultSort: 'raised', id: 'id' });
   }
 
   @Get('alerts/:id')
@@ -56,7 +70,15 @@ export class OversightController {
   async alert(@Param('id') id: string) {
     const alert = await this.db.selectFrom('alert').selectAll().where('id', '=', id).executeTakeFirst();
     if (!alert) throw new PlatformError('NOT_FOUND', 'No such alert.');
-    return { alert, deliveries: await this.db.selectFrom('alert_delivery').selectAll().where('alert_id', '=', id).orderBy('id').execute() };
+    return { alert };
+  }
+
+  @Get('alerts/:id/deliveries')
+  @RequirePermission('oversight.alerts.read')
+  async alertDeliveries(@Param('id') id: string, @Query() query: Record<string, string>) {
+    const q = parseBody(pageQuerySchema, query);
+    if (!(await this.db.selectFrom('alert').select('id').where('id', '=', id).executeTakeFirst())) throw new PlatformError('NOT_FOUND', 'No such alert.');
+    return paginate(this.db.selectFrom('alert_delivery').selectAll().where('alert_id', '=', id), q, { sorts: { sent: 'sent_at' }, defaultSort: 'sent', id: 'id' });
   }
 
   @Post('alerts/:id/acknowledge')
@@ -175,30 +197,41 @@ export class OversightController {
 
   @Get('exports')
   @RequirePermission('oversight.verify_export')
-  async exportHistory() {
-    return { exports: await this.exports.history() };
+  async exportHistory(@Query() query: Record<string, string>) {
+    const q = parseBody(exportsSchema, query);
+    let qb = this.db.selectFrom('export_record as e').innerJoin('administrator as a', 'a.id', 'e.administrator_id').selectAll('e').select('a.email as requested_by');
+    if (q.subject) qb = qb.where('e.subject', '=', q.subject);
+    if (q.requested_by) qb = qb.where('e.administrator_id', '=', q.requested_by);
+    if (q.q) qb = qb.where(sql<boolean>`e.id::text like ${prefixPattern(q.q)}`);
+    if (q.after) qb = qb.where('e.created_at', '>', new Date(q.after));
+    if (q.before) qb = qb.where('e.created_at', '<', new Date(q.before));
+    return paginate(qb, q, { sorts: { created: 'e.created_at' }, defaultSort: 'created', id: 'e.id' });
   }
 
   @Get('audit')
   @RequirePermission('oversight.audit')
-  async auditLog(@Query() q: Record<string, string>) {
-    let query = this.db.selectFrom('audit_record as r').leftJoin('administrator as a', 'a.id', 'r.actor_id').leftJoin('administrator as ap', 'ap.id', 'r.approved_by').selectAll('r').select(['a.name as actor_name', 'ap.name as approver_name']).orderBy('r.id', 'desc').limit(200);
-    if (q.actor) query = query.where('r.actor_id', '=', q.actor);
-    if (q.subject_type) query = query.where('r.subject_type', '=', q.subject_type);
-    if (q.subject_id) query = query.where('r.subject_id', '=', q.subject_id);
-    if (q.after) query = query.where('r.occurred_at', '>', new Date(q.after));
-    if (q.before) query = query.where('r.occurred_at', '<', new Date(q.before));
-    if (q.cursor) query = query.where('r.id', '<', Number(q.cursor));
-    const records = await query.execute();
-    return { records, next_cursor: records.length === 200 ? records[records.length - 1]!.id : null };
+  async auditLog(@Query() query: Record<string, string>) {
+    const q = parseBody(auditSchema, query);
+    let qb = this.db.selectFrom('audit_record as r').leftJoin('administrator as a', 'a.id', 'r.actor_id').leftJoin('administrator as ap', 'ap.id', 'r.approved_by').selectAll('r').select(['a.name as actor_name', 'ap.name as approver_name']);
+    if (q.actor) qb = qb.where('r.actor_id', '=', q.actor);
+    if (q.subject_type) qb = qb.where('r.subject_type', '=', q.subject_type);
+    if (q.subject_id) qb = qb.where('r.subject_id', '=', q.subject_id);
+    if (q.after) qb = qb.where('r.occurred_at', '>', new Date(q.after));
+    if (q.before) qb = qb.where('r.occurred_at', '<', new Date(q.before));
+    // `when` sorts by id: occurred_at defaults to now(), so the order is the same, and the id is indexed.
+    return paginate(qb, q, { sorts: { when: 'r.id' }, defaultSort: 'when', id: 'r.id' });
   }
 
   @Get('authentication-history')
   @RequirePermission('oversight.auth_history')
-  async authHistory(@Query('cursor') cursor: string | undefined) {
-    let q = this.db.selectFrom('authentication_event').selectAll().orderBy('id', 'desc').limit(200);
-    if (cursor) q = q.where('id', '<', Number(cursor));
-    return { events: await q.execute() };
+  async authHistory(@Query() query: Record<string, string>) {
+    const q = parseBody(authHistorySchema, query);
+    let qb = this.db.selectFrom('authentication_event').selectAll();
+    if (q.administrator) qb = qb.where('administrator_id', '=', q.administrator);
+    if (q.outcome) qb = qb.where('outcome', '=', q.outcome);
+    if (q.after) qb = qb.where('occurred_at', '>', new Date(q.after));
+    if (q.before) qb = qb.where('occurred_at', '<', new Date(q.before));
+    return paginate(qb, q, { sorts: { when: 'id' }, defaultSort: 'when', id: 'id' });
   }
 
   @Get('administrators')

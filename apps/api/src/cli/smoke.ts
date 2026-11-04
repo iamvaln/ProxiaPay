@@ -113,13 +113,13 @@ check('reused reference → REFERENCE_CONFLICT', r.status === 409 && r.body.erro
 r = await j(`/console/transactions/${txn}`);
 check('console detail masks payer and shows ledger', r.status === 200 && r.body.payer.masked.includes('•') && r.body.ledger_entries.length === 1 && r.body.amounts.margin === 5, JSON.stringify(r.body.amounts));
 r = await j(`/console/search?q=677123456`);
-check('search by number finds the transaction and is audited', r.body.results?.some((x: any) => x.reference === txn));
+check('search by number finds the transaction and is audited', r.body.transactions?.some((x: any) => x.reference === txn));
 r = await j(`/console/oversight/audit?subject_type=payer`);
-check('audit record for identifier search', r.body.records?.length >= 1);
+check('audit record for identifier search', r.body.data?.length >= 1);
 r = await j(`/console/treasury/float`);
 check('float account for CM XAF collection exists with balance 1005', r.body.accounts?.[0]?.balance === 1005 && r.body.coverage?.[0]?.ratio === 1.005, JSON.stringify(r.body.coverage));
-r = await j(`/console/projects/${projectId}`);
-check('project detail shows notification delivery attempts', r.body.deliveries?.length === 1 && r.body.deliveries[0].event_type === 'transaction.succeeded');
+r = await j(`/console/projects/${projectId}/deliveries`);
+check('project deliveries list shows notification delivery attempts', r.body.total === 1 && r.body.data[0].event_type === 'transaction.succeeded');
 r = await j('/console/auth/sign-out', { method: 'POST' });
 r = await j('/console/home');
 check('after sign-out → 401', r.status === 401);

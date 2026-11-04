@@ -149,16 +149,14 @@ export class NotificationService {
     return { secret };
   }
 
-  async recentDeliveries(projectId: string, limit = 50) {
+  /** A project's deliveries, with the reference of the transaction each belongs to, as an unexecuted query to page. */
+  deliveriesQuery(projectId: string) {
     return this.db
       .selectFrom('notification_delivery as d')
       .innerJoin('project_notification_endpoint as e', 'e.id', 'd.endpoint_id')
       .innerJoin('transaction as t', 't.id', 'd.transaction_id')
       .select(['d.id', 'd.event_id', 'd.event_type', 'd.attempt', 'd.status', 'd.next_attempt_at', 'd.delivered_at', 'd.created_at', 'd.replayed_from', 't.reference as transaction_reference'])
-      .where('e.project_id', '=', projectId)
-      .orderBy('d.created_at', 'desc')
-      .limit(limit)
-      .execute();
+      .where('e.project_id', '=', projectId);
   }
 
   async deliveriesForTransaction(transactionId: string) {

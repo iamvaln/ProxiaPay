@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { get, post } from '../lib/api';
-import { useSession } from '../lib/session';
-import { Empty, ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
+import { useSession, useT } from '../lib/session';
+import { ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
+import { DataTable } from '../components/table/DataTable';
 
 /** Route detail (console spec 7.2): the current version, projects with their own rates, the version history as a sequence, and opening a new version with its comparison. */
 export function RouteDetailPage() {
   const { id } = useParams();
   const { has } = useSession();
+  const t = useT();
   const { data, error, reload } = useLoad(() => get<any>(`/configuration/routes/${id}`), [id]);
   const [draft, setDraft] = useState<any>(null);
   const [cmp, setCmp] = useState<any>(null);
@@ -40,12 +42,21 @@ export function RouteDetailPage() {
             <dt>Note</dt><dd>{c.note}</dd><dt>Fingerprint</dt><dd className="small muted">{c.fingerprint}</dd>
           </dl>
           <h3>Bindings, in fallback order</h3>
-          <table><thead><tr><th>#</th><th>Provider account</th><th className="num">Expected fee</th><th>Terms</th><th>Enabled</th><th>Limits</th></tr></thead>
-            <tbody>{c.bindings.map((b: any) => <tr key={b.id}><td>{b.priority}</td><td><Link to={`/configuration/providers/${b.provider_account_id}`}>{b.provider_account_name}</Link> <Pill value={b.provider_account_status} /></td><td className="num">{b.expected_fee_bps / 100}%{b.expected_fee_bps > c.processing_fee_bps && <Tag family="refused" title="Expected provider fee exceeds the processing fee">below cost</Tag>}</td><td><Pill value={b.terms_status} /></td><td>{b.enabled ? 'yes' : 'no'}</td><td className="small">{b.minimum_amount ?? '—'} / {b.maximum_amount ?? '—'}</td></tr>)}</tbody></table>
+          <DataTable<any> bare rows={c.bindings} rowKey={(b) => b.id} defaultSort="priority" empty={{ none: t('l.binding_none'), why: t('l.binding_why') }} columns={[
+            { key: 'priority', label: '#', render: (b) => b.priority },
+            { key: 'provider', label: t('l.provider_account'), render: (b) => <><Link to={`/configuration/providers/${b.provider_account_id}`}>{b.provider_account_name}</Link> <Pill value={b.provider_account_status} /></> },
+            { key: 'fee', label: t('col.expected_fee'), align: 'end', render: (b) => <>{b.expected_fee_bps / 100}%{b.expected_fee_bps > c.processing_fee_bps && <Tag family="refused" title="Expected provider fee exceeds the processing fee">below cost</Tag>}</> },
+            { key: 'terms', label: t('l.terms'), render: (b) => <Pill value={b.terms_status} /> },
+            { key: 'enabled', label: t('col.enabled'), render: (b) => (b.enabled ? t('l.yes') : t('l.no')) },
+            { key: 'limits', label: t('l.limits'), render: (b) => <span className="small">{b.minimum_amount ?? '—'} / {b.maximum_amount ?? '—'}</span> },
+          ]} />
         </div>
         <div className="card">
           <h2>Projects quoted their own rates</h2>
-          {data.projects_with_overrides.length === 0 ? <Empty text="Every project on this route pays the route's own terms." /> : <table><tbody>{data.projects_with_overrides.map((p: any) => <tr key={p.id}><td><Link to={`/projects/${p.id}`}>{p.name}</Link></td><td className="small">processing {p.processing_fee_bps != null ? `${p.processing_fee_bps / 100}%` : 'route'} · platform {p.platform_fee_bps != null ? `${p.platform_fee_bps / 100}%` : 'route'} · bearers {p.processing_fee_bearer ?? 'route'}/{p.platform_fee_bearer ?? 'route'}</td></tr>)}</tbody></table>}
+          <DataTable<any> bare rows={data.projects_with_overrides} rowKey={(p) => p.id} defaultSort="name" empty={{ none: t('l.override_none'), why: t('l.override_why') }} columns={[
+            { key: 'name', label: t('col.project'), render: (p) => <Link to={`/projects/${p.id}`}>{p.name}</Link> },
+            { key: 'rates', label: t('col.rates'), render: (p) => <span className="small">processing {p.processing_fee_bps != null ? `${p.processing_fee_bps / 100}%` : 'route'} · platform {p.platform_fee_bps != null ? `${p.platform_fee_bps / 100}%` : 'route'} · bearers {p.processing_fee_bearer ?? 'route'}/{p.platform_fee_bearer ?? 'route'}</span> },
+          ]} />
           <h2>Version history</h2>
           <ul>{data.versions.map((v: any) => <li key={v.id}>#{v.sequence} · <When value={v.valid_from} /> → {v.valid_to ? <When value={v.valid_to} /> : 'open'} {v.author ? `· ${v.author}` : ''} · <i>{v.note}</i>{Object.keys(v.changes_from_previous).length > 0 && <div className="diff">{Object.entries(v.changes_from_previous).map(([k, ch]: any) => <div key={k}>{k}: {String(ch.from)} → {String(ch.to)}</div>)}</div>}</li>)}</ul>
         </div>

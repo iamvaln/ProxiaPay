@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
-import { PlatformError } from '../common/errors';
+import { fieldInvalid, PlatformError } from '../common/errors';
 import { DB_TOKEN, type Db } from '../db/database';
 import { nonEmpty, parseBody } from '../http/validation';
 import { LedgerService } from '../ledger/ledger.service';
@@ -10,6 +10,7 @@ import { ConfirmationService } from '../admin-auth/confirmation.service';
 import { AuditService } from '../audit/audit.service';
 import { AlertService } from '../alerts/alert.service';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
+import { pageQuerySchema, paginate } from './pagination';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
 
@@ -18,6 +19,10 @@ const cashoutSchema = z.object({ float_account_id: z.string().uuid(), destinatio
 const fundingSchema = z.object({ target: z.enum(['float', 'project']), float_account_id: z.string().uuid().optional(), project_id: z.string().uuid().optional(), currency: z.string().length(3), amount: z.number().int().positive(), justification: nonEmpty(1000), reference: z.string().max(128).optional(), confirmation: confirmationSchema.optional() });
 const adjustmentSchema = z.object({ postings: z.array(z.object({ account_id: z.string().uuid(), side: z.enum(['debit', 'credit']), amount: z.number().int().positive() })).min(2), justification: nonEmpty(1000), discrepancy_id: z.string().uuid().optional(), reference: z.string().max(128).optional(), confirmation: confirmationSchema.optional() });
 const thresholdSchema = z.object({ target_hours: z.number().int().positive(), minimum_hours: z.number().int().positive(), override_amount: z.number().int().min(0).nullable().default(null) });
+
+const period = { after: z.string().datetime().optional(), before: z.string().datetime().optional() };
+const movementsSchema = pageQuerySchema.extend({ status: z.string().optional(), account: z.string().uuid().optional(), currency: z.string().length(3).optional(), ...period });
+const entriesSchema = pageQuerySchema.extend({ type: z.string().optional(), side: z.enum(['debit', 'credit']).optional(), ...period });
 
 /** Treasury (console spec 8): balances, float, transfers, cashouts, funding and adjustments. Every action that moves money requires a code. */
 @Controller('console/treasury')
@@ -48,15 +53,23 @@ export class TreasuryController {
 
   @Get('accounts/:id/entries')
   @RequirePermission('treasury.read_balances')
-  async entries(@Param('id') id: string, @Query('before') before: string | undefined, @Req() req: ConsoleRequest) {
+  async entries(@Param('id') id: string, @Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
+    const q = parseBody(entriesSchema, query);
     const acct = await this.db.selectFrom('ledger_account').selectAll().where('id', '=', id).executeTakeFirst();
     if (!acct) throw new PlatformError('NOT_FOUND', 'No such account.');
     if (acct.project_id && !req.auth.canReachProject('treasury.read_balances', acct.project_id)) throw new PlatformError('NOT_FOUND', 'No such account.');
     if (acct.provider_account_id && !req.auth.canReachProvider('treasury.read_float', acct.provider_account_id)) throw new PlatformError('NOT_FOUND', 'No such account.');
-    const entries = await this.ledger.entriesForAccount(this.db, id, 50, before ? Number(before) : undefined);
-    const refs = entries.filter((e) => e.transaction_id).map((e) => e.transaction_id!);
-    const txns = refs.length ? await this.db.selectFrom('transaction').select(['id', 'reference']).where('id', 'in', refs).execute() : [];
-    return { account: acct, balance: await this.ledger.balance(this.db, id), entries: entries.map((e) => ({ ...e, transaction_reference: txns.find((t) => t.id === e.transaction_id)?.reference ?? null })) };
+    return { account: acct, balance: await this.ledger.balance(this.db, id), ...(await this.entriesPage(id, q)) };
+  }
+
+  private entriesPage(accountId: string, q: z.infer<typeof entriesSchema>) {
+    let qb = this.ledger.entriesQuery(this.db, accountId);
+    if (q.type) qb = qb.where('e.entry_type', '=', q.type);
+    if (q.side) qb = qb.where('p.side', '=', q.side);
+    if (q.after) qb = qb.where('e.occurred_at', '>', new Date(q.after));
+    if (q.before) qb = qb.where('e.occurred_at', '<', new Date(q.before));
+    // Recording order, the ledger's own convention: a backdated entry lists where it was recorded.
+    return paginate(qb, q, { sorts: { when: 'p.id' }, defaultSort: 'when', id: 'p.id' });
   }
 
   @Get('project/:projectId/accounts')
@@ -79,9 +92,17 @@ export class TreasuryController {
     const all = await this.treasury.floatAccounts(this.db, req.auth.providerScope('treasury.read_float'));
     const acct = all.find((a) => a.id === id);
     if (!acct) throw new PlatformError('NOT_FOUND', 'No such float account.');
-    const entries = await this.ledger.entriesForAccount(this.db, id, 50);
     const withdrawable = req.auth.has('treasury.cashout.initiate') ? await this.treasury.withdrawable(this.db, id) : null;
-    return { account: acct, entries, withdrawable, paired_collection: all.find((a) => a.providerAccountId === acct.providerAccountId && a.countryCode === acct.countryCode && a.currency === acct.currency && a.direction !== acct.direction) ?? null };
+    return { account: acct, withdrawable, paired_collection: all.find((a) => a.providerAccountId === acct.providerAccountId && a.countryCode === acct.countryCode && a.currency === acct.currency && a.direction !== acct.direction) ?? null };
+  }
+
+  @Get('float/:id/entries')
+  @RequirePermission('treasury.read_float')
+  async floatEntries(@Param('id') id: string, @Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
+    const q = parseBody(entriesSchema, query);
+    const acct = (await this.treasury.floatAccounts(this.db, req.auth.providerScope('treasury.read_float'))).find((a) => a.id === id);
+    if (!acct) throw new PlatformError('NOT_FOUND', 'No such float account.');
+    return this.entriesPage(id, q);
   }
 
   @Put('float/:id/thresholds')
@@ -96,8 +117,16 @@ export class TreasuryController {
 
   @Get('transfers')
   @RequirePermission('treasury.read_float')
-  async transfers() {
-    return { transfers: await this.db.selectFrom('float_transfer as t').innerJoin('administrator as a', 'a.id', 't.initiated_by').selectAll('t').select('a.name as initiator').orderBy('t.created_at', 'desc').limit(100).execute() };
+  async transfers(@Query() query: Record<string, string>) {
+    const q = parseBody(movementsSchema, query);
+    if (q.sort === 'amount' && !q.currency) throw fieldInvalid('sort', 'sort: amount sorts only within one currency; set a currency filter');
+    let qb = this.db.selectFrom('float_transfer as t').innerJoin('administrator as a', 'a.id', 't.initiated_by').selectAll('t').select('a.name as initiator');
+    if (q.status) qb = qb.where('t.status', '=', q.status);
+    if (q.account) qb = qb.where((eb) => eb.or([eb('t.source_account_id', '=', q.account!), eb('t.destination_account_id', '=', q.account!)]));
+    if (q.currency) qb = qb.where('t.currency_code', '=', q.currency);
+    if (q.after) qb = qb.where('t.created_at', '>', new Date(q.after));
+    if (q.before) qb = qb.where('t.created_at', '<', new Date(q.before));
+    return paginate(qb, q, { sorts: { created: 't.created_at', amount: 't.amount' }, defaultSort: 'created', id: 't.id' });
   }
 
   @Post('transfers')
@@ -117,8 +146,16 @@ export class TreasuryController {
 
   @Get('cashouts')
   @RequirePermission('treasury.read_float')
-  async cashouts() {
-    return { cashouts: await this.db.selectFrom('cashout as c').innerJoin('administrator as i', 'i.id', 'c.initiated_by').leftJoin('administrator as ap', 'ap.id', 'c.approved_by').selectAll('c').select(['i.name as initiator', 'ap.name as approver']).orderBy('c.created_at', 'desc').limit(100).execute() };
+  async cashouts(@Query() query: Record<string, string>) {
+    const q = parseBody(movementsSchema, query);
+    if (q.sort === 'amount' && !q.currency) throw fieldInvalid('sort', 'sort: amount sorts only within one currency; set a currency filter');
+    let qb = this.db.selectFrom('cashout as c').innerJoin('administrator as i', 'i.id', 'c.initiated_by').leftJoin('administrator as ap', 'ap.id', 'c.approved_by').selectAll('c').select(['i.name as initiator', 'ap.name as approver']);
+    if (q.status) qb = qb.where('c.status', '=', q.status);
+    if (q.account) qb = qb.where('c.float_account_id', '=', q.account);
+    if (q.currency) qb = qb.where('c.currency_code', '=', q.currency);
+    if (q.after) qb = qb.where('c.created_at', '>', new Date(q.after));
+    if (q.before) qb = qb.where('c.created_at', '<', new Date(q.before));
+    return paginate(qb, q, { sorts: { created: 'c.created_at', amount: 'c.amount' }, defaultSort: 'created', id: 'c.id' });
   }
 
   @Get('cashouts/withdrawable/:floatAccountId')

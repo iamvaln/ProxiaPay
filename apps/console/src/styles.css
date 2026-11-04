@@ -126,3 +126,49 @@ form.stack label { display: grid; gap: 4px; font-size: 12px; font-weight: 600; c
 details summary { cursor: pointer; font-weight: 600; }
 pre { background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius-control); padding: 10px; overflow: auto; font-size: 12px; }
 .warnbox { background: var(--state-checking-bg); color: var(--ink); border: 1px solid var(--state-checking-line); padding: 10px 14px; border-radius: var(--radius-control); margin: 8px 0; }
+
+/* The shared table (DataTable): toolbar, chips, sortable headers, summary row, actions, pager. */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.dt-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.dt-bar input.dt-search { flex: 1; min-width: 220px; background: var(--soft); }
+.chip-wrap { position: relative; display: inline-flex; align-items: center; }
+button.chip { padding: 5px 12px; border-radius: 999px; font-size: 12px; background: var(--surface); }
+button.chip.active { background: var(--ink); color: var(--on-ink); border-color: var(--ink); padding-right: 30px; }
+button.chip-clear { position: absolute; right: 4px; padding: 0 6px; border: 0; background: none; color: var(--on-ink); font-size: 12px; border-radius: 999px; }
+button.chip-clear:hover { border: 0; }
+button.chip-clear:focus-visible { outline-color: var(--on-ink); outline-offset: -2px; }
+.chip-menu { position: absolute; top: 100%; left: 0; z-index: 5; margin-top: 4px; min-width: 160px; display: grid; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); padding: 4px; box-shadow: 0 4px 16px rgb(11 13 18 / 12%); }
+.chip-menu button { border: 0; text-align: left; font-weight: 500; white-space: nowrap; }
+.chip-menu button:hover { background: var(--soft); }
+.chip-menu button[aria-pressed="true"] { background: var(--ink); color: var(--on-ink); }
+th button.sort { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: center; text-transform: inherit; letter-spacing: inherit; font: inherit; color: inherit; }
+th button.sort:focus-visible { outline: 2px solid var(--on-ink); outline-offset: 2px; }
+th button.sort .s { font-size: 9px; opacity: 0.55; }
+th button.sort .s.on { opacity: 1; }
+th.chev, td.chev { width: 28px; padding-right: 0; }
+button.toggle { border: 0; background: none; padding: 0 4px; color: var(--muted); font-size: 12px; }
+th.act, td.act { text-align: right; white-space: nowrap; }
+td.act > * + * { margin-left: 4px; }
+td.act button, a.btn { padding: 4px 9px; font-size: 12px; }
+/* A list is narrow by design; what is left is tightened. A table too wide for its column scrolls inside its own frame, with Actions kept in view. */
+.dt-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-card); }
+.dt-scroll > table { border: 0; border-radius: 0; overflow: visible; }
+.dt th, .dt td { padding-left: 8px; padding-right: 8px; }
+.dt th.act, .dt td.act { position: sticky; right: 0; }
+.dt td.act { background: var(--surface); box-shadow: -6px 0 6px -6px rgb(11 13 17 / 0.2); }
+.dt tr.open td.act { background: var(--soft); }
+a.btn { display: inline-block; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font-weight: 600; text-decoration: none; }
+a.btn:hover { border-color: var(--muted); }
+a.btn.primary { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+tr.open td { background: var(--soft); border-bottom: 0; }
+tr.sum td { background: var(--soft); padding: 4px 12px 16px 40px; }
+.sumgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px 24px; }
+.sumgrid > div > span:first-child { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; margin-bottom: 2px; }
+.dt-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.dt-foot .sp { flex: 1; }
+.pg { display: inline-flex; gap: 4px; align-items: center; }
+.pg button { min-width: 30px; padding: 4px 6px; font-size: 12px; }
+.pg .gap { min-width: 20px; text-align: center; }
+.dt-empty { border: 1px dashed var(--line); border-radius: var(--radius-card); padding: 24px; text-align: center; }
+.dt-empty p { margin: 4px 0; }
+.dt-error { display: flex; gap: 12px; align-items: center; }
