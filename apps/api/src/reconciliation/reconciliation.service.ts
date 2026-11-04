@@ -324,10 +324,11 @@ export class ReconciliationService {
     return started;
   }
 
-  async runsFor(providerScope: string[] | null, limit = 50) {
-    let q = this.db.selectFrom('reconciliation_run as r').innerJoin('provider_account as pa', 'pa.id', 'r.provider_account_id').selectAll('r').select('pa.name as provider_account_name').orderBy('r.started_at', 'desc').limit(limit);
+  /** The runs visible to a provider scope, as an unexecuted query for the console to page. */
+  runsQuery(providerScope: string[] | null) {
+    let q = this.db.selectFrom('reconciliation_run as r').innerJoin('provider_account as pa', 'pa.id', 'r.provider_account_id').selectAll('r').select('pa.name as provider_account_name');
     if (providerScope) q = q.where('r.provider_account_id', 'in', providerScope.length ? providerScope : ['00000000-0000-0000-0000-000000000000']);
-    return q.execute();
+    return q;
   }
 
   lockRun(tx: Tx, runId: string) {

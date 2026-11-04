@@ -13,10 +13,11 @@ import { RoleService } from './role.service';
 import { EntitlementService } from './entitlement.service';
 import { RouteService } from './route.service';
 import { ExportService } from './export.service';
+import { HomeService } from './home.service';
 
 /** The console's server side: a separate interface project credentials never reach (spec 7). */
 @Module({
   controllers: [ConsoleAuthController, HomeController, ConsoleTransactionsController, ConsoleProjectsController, ConfigurationController, TreasuryController, ReconciliationController, OversightController],
-  providers: [SessionGuard, ApprovalService, RoleService, EntitlementService, RouteService, ExportService],
+  providers: [SessionGuard, ApprovalService, RoleService, EntitlementService, RouteService, ExportService, HomeService],
 })
 export class ConsoleApiModule {}

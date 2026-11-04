@@ -100,6 +100,8 @@ A single field accepting any reference the platform knows: a transaction referen
 
 Support work begins with a customer quoting a number or a reference, so this is the most travelled path in the console and warrants being present on every screen. The reference a customer holds is usually the operator's, taken from their confirmation message, which is why it is searchable alongside the platform's own.
 
+A reference may be typed whole or in part: a fragment of at least 4 characters, from anywhere in the reference and in any case, finds it (a shorter entry matches only a whole reference). A telephone number is the exception and matches only whole.
+
 Searching by telephone number requires the permission covering unmasked payer identifiers, and the search is recorded.
 
 ### 3.3 Conventions
@@ -144,24 +146,31 @@ Every attempt is recorded, and the record reaches the security alert category wh
 
 ### 4.2 Home
 
-The first screen after signing in. It presents cards, each drawn from an area the administrator has permission to see, so a finance administrator and a developer arrive at different screens.
+The first screen after signing in. It answers one question at a glance: is the platform working, and if not, where. Every block is drawn only where the administrator holds the permission behind its data, with that permission's scope applied, so a finance administrator and a developer arrive at different screens. The home reloads every 60 seconds while the tab is visible.
 
-| Card | Shows | Permission |
+From top to bottom:
+
+1. **The verdict.** One sentence in a state colour (confirmed, checking if the worst problem is a warning, refused if any is critical), a headline counting problems, a line naming each one in plain words, most severe first, and how long ago the data was loaded. Its sources are every open or acknowledged alert of severity warning or critical, whatever its kind, and every provider account in the suspended status. Problems are grouped by alert kind and subject, so twelve held undetermined transactions read as one problem, and are named by route, provider account or project, never by identifier. Route, provider account and project health problems stay separate. An administrator who can see none of the sources gets no verdict block at all, never "everything is running normally", which would be a claim they cannot verify.
+2. **Four headline figures**, each linking to the page where it is acted on: the success rate over the last hour against its 7-day baseline; money collected today per currency (succeeded collections, settled amount, by terminal time) against the same weekday last week, with no comparison where last week has no data; transactions with no known outcome; and the lowest float cover, with its account, country, direction and proposed transfer.
+3. **Success rate by route, last 24 hours**, a line chart beside "Waiting on you", with a Collection / Disbursement switch. The unit is the route (payment method, country, direction); routes of one operator in different countries are never merged. Routes running normally are drawn as one grey band from worst to best rate; a route that departs is drawn as its own line, coloured by operator and labelled at its end. A country filter draws every route of that country as its own line. An hour with fewer than 5 terminal transactions on a route has no point. A route is **departing** when it is 5 points under its own 7-day baseline on at least 20 terminal transactions in the last hour, or when it has an open route health alert. This is tighter than the alert rule (a drop of a third on at least 10), so a route is seen sliding before the alert fires, and a route named in the verdict is always visible. The open-alert condition counts only for administrators who hold the permission to read alerts.
+4. **Waiting on you.** The requests where this administrator can act as the second approver, then the discrepancies assigned to them, each with a link. The approval requests come first: work waiting on a named person is the one thing a console should not let them miss.
+5. **The business line.** One discreet line at the bottom, month to date, one row per currency, with **platform revenue** and **margin** as two figures.
+
+| Block | Permission | Scope |
 |---|---|---|
-| Awaiting your approval | Requests where this administrator can act as the second approver | The corresponding approve permission |
-| Open alerts | Count by severity, with the most recent critical alerts named | Read alerts |
-| Float cover | Accounts in the watch and critical bands, ordered by cover ascending | Read float |
-| Coverage ratio | Total float against encumbered balances, per currency | Read float |
-| Open discrepancies | Count by type, and those assigned to this administrator | Read runs and discrepancies |
-| Today's activity | Transaction count and value by direction, with success rate against its baseline | Read reports |
-| Earnings and cost recovery | Platform revenue for the period, and margin as a separate figure, each per currency | Read reports |
-| Provider status | Each provider account as active, degraded, or suspended | Read provider accounts |
+| Verdict, alert-backed problems | Read alerts | None (alerts are not scoped) |
+| Verdict, suspended provider accounts | Read provider accounts | None |
+| Overall success rate, collected today, no known outcome, the route chart | Read reports | The administrator's projects: rates, baselines and the departing flag are computed on them only |
+| Lowest float cover | Read float | Provider scope |
+| Waiting on you, approvals | The corresponding approve permission | As elsewhere |
+| Waiting on you, discrepancies | Read runs and discrepancies | As elsewhere |
+| Business line | Read reports | The administrator's projects |
 
-The approval card comes first. Work waiting on a named person is the one thing a console should not let them miss.
+The business line keeps its two figures apart deliberately. **Platform revenue** is what ProxiaPay earned for the service. **Margin** is the processing fee less what providers actually charged, and it measures whether cost recovery is working. Presenting them as one number would let a provider raising its rate appear as the platform earning less, which it is not, and would hide a route running below cost behind a healthy earnings figure. Margin may be negative, and the line shows it in the refused colour rather than flattening it into a total. Different currencies are never summed.
 
-The earnings card keeps its two figures apart deliberately. **Platform revenue** is what ProxiaPay earned for the service. **Margin** is the processing fee less what providers actually charged, and it measures whether cost recovery is working. Presenting them as one number would let a provider raising its rate appear as the platform earning less, which it is not, and would hide a route running below cost behind a healthy earnings figure. Margin may be negative, and the card shows it as such rather than flattening it into a total.
+Information that is only reassuring when healthy (provider status, coverage ratio, alert counts, float accounts in a healthy band) takes no space: it surfaces in the verdict when it goes wrong, and otherwise lives in Treasury, Reconciliation and Oversight.
 
-This set is a starting point. Which cards people actually want is learned by watching them work, and the screen is worth revisiting once it has been used for a few weeks.
+This set is a starting point. Which blocks people actually want is learned by watching them work, and the screen is worth revisiting once it has been used for a few weeks.
 
 ### 4.3 Approval queue
 
@@ -183,7 +192,9 @@ The queue shows age prominently. A cashout waiting three days is usually a reque
 
 A filtered table across projects within the administrator's scope.
 
-**Filters:** state, reconciliation status, direction, project, country, payment method, provider account, currency, date range, amount range, failure reason.
+**Search:** the search field takes a reference or a fragment of one (at least 4 characters; below that, the start of a reference).
+
+**Filters:** state, reconciliation status, direction, project, route, country, payment method, provider account, currency, date range, amount range, failure reason.
 
 **Columns:** reference, project, direction, route, requested amount, state, reconciliation status, created, terminal.
 
@@ -215,7 +226,7 @@ An address issued for a browser step is absent from this screen entirely, since 
 
 ### 5.3 Previews
 
-Previews are searchable alongside transactions, including those that expired without being confirmed. The list shows the project, route, amount, payer identifier, status, and the transaction it produced where it was confirmed.
+Previews are searchable alongside transactions, including those that expired without being confirmed. The list shows the project, route, amount, payer identifier, status, and the transaction it produced where it was confirmed. The search field takes a preview reference or a fragment of one (at least 4 characters; below that, the start of a reference).
 
 The value of this screen is the unconfirmed ones. A payer previewing the same payment repeatedly without completing is a signal about a route or about a wall they have hit, and the pattern is visible only where the record persists.
 

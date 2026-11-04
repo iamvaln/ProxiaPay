@@ -8,12 +8,16 @@ import { DiscrepancyService } from '../reconciliation/discrepancy.service';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { StatementService } from '../reconciliation/statement.service';
 import { ConfirmationService } from '../admin-auth/confirmation.service';
+import { pageQuerySchema, paginate } from './pagination';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
 
 const uploadSchema = z.object({ provider_account_id: z.string().uuid(), filename: nonEmpty(256), content_base64: z.string().min(1), period_start: z.string().datetime(), period_end: z.string().datetime() });
 const runSchema = z.object({ provider_account_id: z.string().uuid(), period_start: z.string().datetime(), period_end: z.string().datetime() });
 const decisionSchema = z.object({ decision: z.enum(['accepted', 'rejected']), comment: nonEmpty(2000), follow: z.enum(['none', 'correct_transaction', 'post_adjustment']).default('none'), adjustment: z.object({ postings: z.array(z.object({ account_id: z.string().uuid(), side: z.enum(['debit', 'credit']), amount: z.number().int().positive() })).min(2), justification: nonEmpty(1000) }).optional(), confirmation: confirmationSchema.optional() });
+
+const runsSchema = pageQuerySchema.extend({ provider_account: z.string().uuid().optional(), status: z.string().optional(), after: z.string().datetime().optional(), before: z.string().datetime().optional() });
+const discrepanciesSchema = pageQuerySchema.extend({ run: z.string().uuid().optional(), type: z.string().optional(), status: z.string().optional(), assignee: z.string().uuid().optional(), provider_account: z.string().uuid().optional(), recurred: z.string().optional() });
 
 /** Reconciliation (console spec 9): runs, statement upload, the discrepancy queue and detail with its decision. */
 @Controller('console/reconciliation')
@@ -34,8 +38,14 @@ export class ReconciliationController {
 
   @Get('runs')
   @RequirePermission('reconciliation.read')
-  async list(@Req() req: ConsoleRequest) {
-    return { runs: await this.runs.runsFor(this.scope(req)), scoped: this.scope(req) !== null };
+  async list(@Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
+    const q = parseBody(runsSchema, query);
+    let qb = this.runs.runsQuery(this.scope(req));
+    if (q.provider_account) qb = qb.where('r.provider_account_id', '=', q.provider_account);
+    if (q.status) qb = qb.where('r.status', '=', q.status);
+    if (q.after) qb = qb.where('r.started_at', '>', new Date(q.after));
+    if (q.before) qb = qb.where('r.started_at', '<', new Date(q.before));
+    return { ...(await paginate(qb, q, { sorts: { started: 'r.started_at' }, defaultSort: 'started', id: 'r.id' })), scoped: this.scope(req) !== null };
   }
 
   @Get('runs/:id')
@@ -43,7 +53,7 @@ export class ReconciliationController {
   async run(@Param('id') id: string, @Req() req: ConsoleRequest) {
     const run = await this.db.selectFrom('reconciliation_run').selectAll().where('id', '=', id).executeTakeFirst();
     if (!run || !req.auth.canReachProvider('reconciliation.read', run.provider_account_id)) throw new PlatformError('NOT_FOUND', 'No such run.');
-    return { run, discrepancies: await this.discrepancies.list({ run: id }, null, 500) };
+    return { run };
   }
 
   @Post('runs')
@@ -87,8 +97,10 @@ export class ReconciliationController {
 
   @Get('discrepancies')
   @RequirePermission('reconciliation.read')
-  async discrepancyList(@Query() q: Record<string, string>, @Req() req: ConsoleRequest) {
-    return { discrepancies: await this.discrepancies.list({ run: q.run, type: q.type, status: q.status, assignee: q.assignee, providerAccountId: q.provider_account, recurred: q.recurred === 'true' }, this.scope(req)), scoped: this.scope(req) !== null };
+  async discrepancyList(@Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
+    const q = parseBody(discrepanciesSchema, query);
+    const qb = this.discrepancies.query({ run: q.run, type: q.type, status: q.status, assignee: q.assignee, providerAccountId: q.provider_account, recurred: q.recurred === 'true' }, this.scope(req));
+    return { ...(await paginate(qb, q, { sorts: { detected: 'd.first_detected_at', type: 'd.type' }, defaultSort: 'detected', id: 'd.id' })), scoped: this.scope(req) !== null };
   }
 
   @Get('discrepancies/:id')

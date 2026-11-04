@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { ApiError, get } from './api';
+import { ApiError, SESSION_ENDED, get, sessionEvents } from './api';
 import { t, type Lang } from './i18n';
 
 export interface Me {
@@ -30,6 +30,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    const ended = () => setMe(null);
+    sessionEvents.addEventListener(SESSION_ENDED, ended);
+    return () => sessionEvents.removeEventListener(SESSION_ENDED, ended);
+  }, []);
   const setLang = (l: Lang) => { setLangState(l); localStorage.setItem('pp_lang', l); };
   return <Ctx.Provider value={{ me, loading, refresh, has: (p) => me?.permissions.includes(p) ?? false, lang, setLang }}>{children}</Ctx.Provider>;
 }

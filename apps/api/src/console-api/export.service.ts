@@ -54,8 +54,4 @@ export class ExportService {
     const rowsUnchanged = body === undefined ? null : createHmac('sha256', this.key).update(body).digest('hex') === record.signature;
     return { known: true, record: { id: record.id, requested_by: record.requested_by, at: record.created_at, environment: record.environment, subject: record.subject, filters: record.filters, row_count: record.row_count }, rows_unchanged: rowsUnchanged };
   }
-
-  async history(limit = 100) {
-    return this.db.selectFrom('export_record as e').innerJoin('administrator as a', 'a.id', 'e.administrator_id').selectAll('e').select('a.email as requested_by').orderBy('e.created_at', 'desc').limit(limit).execute();
-  }
 }
