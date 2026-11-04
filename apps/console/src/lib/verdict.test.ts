@@ -19,10 +19,10 @@ describe('headline', () => {
   it('counts problems in both languages', () => {
     expect(headline([], 'fr')).toBe('Tout fonctionne normalement');
     expect(headline([], 'en')).toBe('Everything is running normally');
-    expect(headline([warning, critical], 'fr')).toBe('2 problèmes demandent ton attention');
+    expect(headline([warning, critical], 'fr')).toBe('2 problèmes demandent votre attention');
     expect(headline([warning], 'en')).toBe('1 problem needs your attention');
     expect(headline([warning, critical], 'en')).toBe('2 problems need your attention');
-    expect(headline([warning], 'fr')).toBe('1 problème demande ton attention');
+    expect(headline([warning], 'fr')).toBe('1 problème demande votre attention');
   });
 });
 
@@ -39,7 +39,7 @@ describe('problemText', () => {
     ['undetermined', p('undetermined', null, { count: 12 }), '12 transactions sans issue connue', '12 transactions with no known outcome'],
     ['undetermined, one', p('undetermined', null, { count: 1 }), '1 transaction sans issue connue', '1 transaction with no known outcome'],
     ['float drift', p('float_drift', 'CM/XAF/disbursement'), 'CM/XAF/disbursement : la trésorerie s’écarte du solde du fournisseur', 'CM/XAF/disbursement float drifts from the provider balance'],
-    ['notification failing', p('notification_failing', null, { count: 3 }), '3 notifications en échec', '3 notifications failing'],
+    ['notification failing', p('notification_failing', 'Shop CM'), 'Shop CM : les notifications n’arrivent plus', 'Shop CM: notification deliveries failing'],
     ['unknown kind', p('something_new', 'Whatever', { title: 'Calls refused on origin' }), 'Calls refused on origin', 'Calls refused on origin'],
   ];
   it.each(cases)('%s', (_n, problem, fr, en) => {

@@ -14,11 +14,11 @@ export function headline(problems: Problem[], lang: Lang): string {
 }
 
 /** Kinds whose sentence depends on how many alerts were grouped into the problem. */
-const COUNTED = new Set(['undetermined', 'notification_failing']);
+const COUNTED = new Set(['undetermined']);
 /** Kinds with their own sentence; any other kind falls back to the alert's title, untranslated. */
 const SENTENCED = new Set([
   'health:success_rate:route', 'health:success_rate:provider_account', 'health:success_rate:project', 'breaker_open', 'provider_suspended',
-  'float_cover', 'float_insufficient', 'coverage_ratio', 'float_drift', ...COUNTED,
+  'float_cover', 'float_insufficient', 'coverage_ratio', 'float_drift', 'notification_failing', ...COUNTED,
 ]);
 
 export function problemText(p: Problem, lang: Lang): string {
