@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { PlatformError } from '../common/errors';
@@ -10,6 +10,7 @@ import { CredentialService, CREDENTIAL_SCOPES } from '../project-auth/credential
 import { ConfirmationService } from '../admin-auth/confirmation.service';
 import { AuditService } from '../audit/audit.service';
 import { EntitlementService, entitlementInputSchema } from './entitlement.service';
+import { pageQuerySchema, paginate } from './pagination';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
 
@@ -18,6 +19,9 @@ const credentialSchema = z.object({ scopes: z.array(z.enum(CREDENTIAL_SCOPES)).m
 const confirmOnly = z.object({ confirmation: confirmationSchema.optional(), reason: z.string().max(512).optional() });
 const originSchema = z.object({ cidr: z.string().regex(/^[0-9a-fA-F:.]+(\/\d{1,3})?$/), description: z.string().max(256).default('') });
 const endpointSchema = z.object({ url: z.string().url().max(2048).refine((u) => u.startsWith('https://') || process.env.NODE_ENV !== 'production', 'must be https in production') });
+
+const refusalsSchema = pageQuerySchema.extend({ after: z.string().datetime().optional(), before: z.string().datetime().optional() });
+const deliveriesSchema = pageQuerySchema.extend({ status: z.string().optional(), event: z.string().optional() });
 
 /** Projects (console spec 6): records, credential rotation, declared origins, entitlements, notification endpoint, activity. */
 @Controller('console/projects')
@@ -44,11 +48,14 @@ export class ConsoleProjectsController {
     let q = this.db.selectFrom('project').selectAll().orderBy('name');
     if (scope) q = q.where('id', 'in', scope.length ? scope : ['00000000-0000-0000-0000-000000000000']);
     const projects = await q.execute();
+    // One grouped query for every project's last 30 days. Amounts only add up inside a currency, so the value is a list per currency.
+    const { rows: activity } = await sql<{ project_id: string; currency_code: string; n: number; value: string }>`select project_id, currency_code, count(*)::int as n, coalesce(sum(requested_amount), 0)::bigint as value from transaction where created_at > now() - interval '30 days' and project_id = any(${projects.map((p) => p.id)}::uuid[]) group by 1, 2 order by 1, 2`.execute(this.db);
+    const { rows: creds } = await sql<{ project_id: string; n: number }>`select project_id, count(*)::int as n from project_credential where status = 'active' and project_id = any(${projects.map((p) => p.id)}::uuid[]) group by 1`.execute(this.db);
     const out = [];
     for (const p of projects) {
-      const { rows } = await sql<{ n: number; value: number }>`select count(*)::int as n, coalesce(sum(requested_amount), 0)::bigint as value from transaction where project_id = ${p.id} and created_at > now() - interval '30 days'`.execute(this.db);
+      const mine = activity.filter((a) => a.project_id === p.id);
       const { rows: routes } = await sql<{ n: number }>`select count(*)::int as n from entitlement e join entitlement_version v on v.entitlement_id = e.id and v.valid_to is null and v.active where e.project_id = ${p.id}`.execute(this.db);
-      out.push({ ...p, volume_30d: rows[0]!.n, value_30d: rows[0]!.value, balances: await this.ledger.projectBalances(this.db, p.id), routes_granted: routes[0]!.n });
+      out.push({ ...p, volume_30d: mine.reduce((n, a) => n + a.n, 0), value_30d: mine.map((a) => ({ currency: a.currency_code, value: Number(a.value) })), balances: await this.ledger.projectBalances(this.db, p.id), routes_granted: routes[0]!.n, credentials_active: creds.find((c) => c.project_id === p.id)?.n ?? 0 });
     }
     return { projects: out, scoped: scope !== null };
   }
@@ -76,14 +83,34 @@ export class ConsoleProjectsController {
     if (!project) throw new PlatformError('NOT_FOUND', 'No such project.');
     const credentials = await this.credentials.listForProject(id);
     const origins = await this.db.selectFrom('project_origin').selectAll().where('project_id', '=', id).where('active', '=', true).orderBy('created_at').execute();
-    const refusals = await this.db.selectFrom('origin_refusal').selectAll().where('project_id', '=', id).orderBy('occurred_at', 'desc').limit(20).execute();
     const endpoint = await this.db.selectFrom('project_notification_endpoint').select(['id', 'url', 'active', 'verified_at', 'created_at']).where('project_id', '=', id).where('active', '=', true).executeTakeFirst();
     return {
-      project, balances: await this.ledger.projectBalances(this.db, id), credentials, origins, origin_refusals: refusals,
+      project, balances: await this.ledger.projectBalances(this.db, id), credentials, origins,
       entitlements: await this.entitlements.listForProject(id), notification_endpoint: endpoint ? { ...endpoint, secret_set: true } : null,
-      deliveries: await this.notifications.recentDeliveries(id, 25),
-      activity: await this.db.selectFrom('transaction as t').innerJoin('route as r', 'r.id', 't.route_id').select(['t.reference', 't.direction', 't.state', 't.requested_amount', 't.currency_code', 't.created_at', 'r.country_code', 'r.payment_method_code']).where('t.project_id', '=', id).orderBy('t.created_at', 'desc').limit(25).execute(),
     };
+  }
+
+  @Get(':id/origin-refusals')
+  @RequirePermission('projects.read')
+  async originRefusals(@Param('id') id: string, @Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
+    this.reach(req, id);
+    const q = parseBody(refusalsSchema, query);
+    let qb = this.db.selectFrom('origin_refusal').selectAll().where('project_id', '=', id);
+    if (q.after) qb = qb.where('occurred_at', '>', new Date(q.after));
+    if (q.before) qb = qb.where('occurred_at', '<', new Date(q.before));
+    return paginate(qb, q, { sorts: { when: 'occurred_at' }, defaultSort: 'when', id: 'id' });
+  }
+
+  @Get(':id/deliveries')
+  @RequirePermission('projects.read')
+  async deliveries(@Param('id') id: string, @Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
+    this.reach(req, id);
+    const q = parseBody(deliveriesSchema, query);
+    // `attempted` is the delivery's creation: the first attempt is scheduled with it and the row carries no later stamp.
+    let qb = this.notifications.deliveriesQuery(id);
+    if (q.status) qb = qb.where('d.status', '=', q.status);
+    if (q.event) qb = qb.where('d.event_type', '=', q.event);
+    return paginate(qb, q, { sorts: { attempted: 'd.created_at' }, defaultSort: 'attempted', id: 'd.id' });
   }
 
   @Post(':id/credentials')

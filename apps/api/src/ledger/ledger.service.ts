@@ -443,15 +443,13 @@ export class LedgerService {
     return entries.map((e) => ({ ...e, postings: postings.filter((p) => p.entry_id === e.id) }));
   }
 
-  async entriesForAccount(exec: Executor, accountId: string, limit = 50, before?: number) {
-    let q = exec
+  /** An account's postings with their entries (and the transaction's reference), as an unexecuted query to page. */
+  entriesQuery(exec: Executor, accountId: string) {
+    return exec
       .selectFrom('ledger_posting as p')
       .innerJoin('ledger_entry as e', 'e.id', 'p.entry_id')
-      .select(['p.id', 'p.entry_id', 'p.side', 'p.amount', 'e.entry_type', 'e.occurred_at', 'e.transaction_id', 'e.author_id', 'e.justification', 'e.reference', 'e.discrepancy_id'])
-      .where('p.account_id', '=', accountId)
-      .orderBy('p.id', 'desc')
-      .limit(limit);
-    if (before) q = q.where('p.id', '<', before);
-    return q.execute();
+      .leftJoin('transaction as t', 't.id', 'e.transaction_id')
+      .select(['p.id', 'p.entry_id', 'p.side', 'p.amount', 'e.entry_type', 'e.occurred_at', 'e.transaction_id', 'e.author_id', 'e.justification', 'e.reference', 'e.discrepancy_id', 't.reference as transaction_reference'])
+      .where('p.account_id', '=', accountId);
   }
 }
