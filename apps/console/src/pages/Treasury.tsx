@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { get } from '../lib/api';
+import { money } from '../lib/format';
 import { useSession, useT } from '../lib/session';
 import { Amount, ConfirmedAction, ErrorLine, NeedsPermission, Pill, ScopeNote, Tag, When, useLoad } from '../components/common';
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type Filter } from '../components/table/DataTable';
+import { emptyFunding, fundingRequest, fundingTarget, walletChoices, type FundingTargets } from './funding';
 import { chip, chipBy, cleanCurrency, distinct, fetchPage, periodFilter, useReload, useTab } from './list-support';
 
 type Row = Record<string, any>;
@@ -116,9 +118,9 @@ export function projectBalanceList({ t, rows }: { t: Tr; rows: Row[] }): Listed 
 /** One row per project and currency, from the endpoint's per-project lists. */
 export const balanceRows = (projects: Row[]): Row[] => projects.flatMap((p) => (p.balances.length ? p.balances.map((b: Row) => ({ project: p.project, ...b })) : [{ project: p.project, currency: null }]));
 
-/** Treasury (console spec 8): balances, float ordered by cover, transfers, cashouts, funding and adjustments. */
+/** Treasury (console spec 8): balances, float ordered by cover, transfers, cashouts and funding. Adjustments live in Reconciliation. */
 export function TreasuryPage() {
-  const { has } = useSession();
+  const { has, lang } = useSession();
   const [tab, setTab] = useTab(['float', 'balances', 'transfers', 'cashouts', 'funding'] as const, 'float');
   const float = useLoad(() => get<any>('/treasury/float'), [tab]);
   const balances = useLoad(() => (has('treasury.read_balances') ? get<any>('/treasury/balances') : Promise.resolve(null)), [tab]);
@@ -129,13 +131,12 @@ export function TreasuryPage() {
   const [transfer, setTransfer] = useState({ source_account_id: '', destination_account_id: '', amount: 0, provider_fee: 0, provider_reference: '', note: '' });
   const [cashout, setCashout] = useState({ float_account_id: '', destination: '', amount: 0, supporting_document: '', justification: '' });
   const [withdrawable, setWithdrawable] = useState<any>(null);
-  const [funding, setFunding] = useState({ target: 'float', float_account_id: '', project_id: '', currency: 'XAF', amount: 0, justification: '', reference: '' });
-  const [adjustment, setAdjustment] = useState({ postings: [{ account_id: '', side: 'debit', amount: 0 }, { account_id: '', side: 'credit', amount: 0 }], justification: '', reference: '' });
+  const [funding, setFunding] = useState(emptyFunding);
+  const fundingTargets = useLoad(() => (tab === 'funding' && has('treasury.funding') ? get<FundingTargets>('/treasury/funding/targets') : Promise.resolve(null)), [tab]);
+  const choices = walletChoices(fundingTargets.data, funding.provider_account_id, funding);
   const accounts = float.data?.accounts ?? [];
-  const others = float.data?.other_accounts ?? [];
   const floatLabels: Accounts = accounts.map((a: any) => ({ id: a.id, label: `${a.providerAccountName} ${a.countryCode} ${a.currency} ${a.direction}` }));
   const currencies: string[] = (float.data?.coverage ?? []).map((c: any) => c.currency);
-  const accountOptions = [...accounts.map((a: any) => ({ id: a.id, label: `${a.providerAccountName} ${a.countryCode} ${a.currency} ${a.direction}` })), ...others.map((a: any) => ({ id: a.id, label: `${a.type.replace(/_/g, ' ')} ${a.currency_code}${a.settlement_destination ? ` (${a.settlement_destination})` : ''}` }))];
   return (
     <>
       <h1>Treasury</h1>
@@ -191,32 +192,28 @@ export function TreasuryPage() {
           ) : <NeedsPermission permission="treasury.cashout.initiate" />}
         </div>
       </>)}
-      {tab === 'funding' && (<div className="grid2">
-        <div className="card">
+      {tab === 'funding' && (<div>
+        <div className="card" style={{ maxWidth: 700 }}>
           <h2>Funding</h2>
           <p className="small muted">Placing capital at a provider and granting a project a balance are separate acts; granting a balance without float behind it moves the coverage ratio.</p>
           {has('treasury.funding') ? (
-            <ConfirmedAction operationType="funding.post" values={funding} path="/treasury/funding" label="Post funding" onDone={() => float.reload()} disabled={funding.amount <= 0 || !funding.justification || (funding.target === 'float' ? !funding.float_account_id : !funding.project_id)}
-              summary={<div className="stack" style={{ display: 'grid', gap: 8 }}>
-                <div className="row"><select value={funding.target} onChange={(e) => setFunding({ ...funding, target: e.target.value })}><option value="float">float account</option><option value="project">project balance</option></select>
-                  {funding.target === 'float' ? <select value={funding.float_account_id} onChange={(e) => { const a = accounts.find((x: any) => x.id === e.target.value); setFunding({ ...funding, float_account_id: e.target.value, currency: a?.currency ?? funding.currency }); }}><option value="">account</option>{accounts.map((a: any) => <option key={a.id} value={a.id}>{a.providerAccountName} {a.countryCode} {a.currency} {a.direction}</option>)}</select>
-                    : <select value={funding.project_id} onChange={(e) => setFunding({ ...funding, project_id: e.target.value })}><option value="">project</option>{(balances.data?.projects ?? []).map((p: any) => <option key={p.project.id} value={p.project.id}>{p.project.name}</option>)}</select>}
-                  <input style={{ width: 70 }} value={funding.currency} onChange={(e) => setFunding({ ...funding, currency: e.target.value.toUpperCase() })} />
-                  <input type="number" placeholder="amount" value={funding.amount || ''} onChange={(e) => setFunding({ ...funding, amount: Number(e.target.value) })} /></div>
-                <div className="row"><input placeholder="justification" value={funding.justification} onChange={(e) => setFunding({ ...funding, justification: e.target.value })} style={{ width: 300 }} /><input placeholder="reference" value={funding.reference} onChange={(e) => setFunding({ ...funding, reference: e.target.value })} /></div>
+            <ConfirmedAction operationType="funding.post" values={fundingRequest(funding)} path="/treasury/funding" label="Post funding"
+              done={() => t('fund.posted', { amount: money(funding.amount, funding.currency, lang), target: fundingTarget(funding, fundingTargets.data, (balances.data?.projects ?? []).find((p: any) => p.project.id === funding.project_id)?.project.name, t) })}
+              onDone={() => { setFunding(emptyFunding); float.reload(); balances.reload(); }} disabled={funding.amount <= 0 || !funding.justification || (funding.target === 'float' ? !choices.complete : !funding.project_id)}
+              summary={<div className="stack" style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+                {funding.target === 'float' && <p className="small muted">{t('fund.opens_float')}</p>}
+                <div className="row"><select value={funding.target} onChange={(e) => setFunding({ ...funding, target: e.target.value })}><option value="float">{t('fund.target_float')}</option><option value="project">{t('fund.target_project')}</option></select>
+                  {funding.target === 'float' ? <>
+                    <select aria-label={t('fund.provider_account')} value={funding.provider_account_id} onChange={(e) => setFunding({ ...funding, provider_account_id: e.target.value, country: '', direction: '' })}><option value="">{t('fund.provider_account')}</option>{(fundingTargets.data?.provider_accounts ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+                    <select aria-label={t('fund.country')} value={funding.country} onChange={(e) => setFunding({ ...funding, country: e.target.value, direction: '' })}><option value="">{t('fund.country')}</option>{choices.countries.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                    <select aria-label={t('fund.currency')} value={choices.currencies.includes(funding.currency) ? funding.currency : ''} onChange={(e) => setFunding({ ...funding, currency: e.target.value, direction: '' })}><option value="">{t('fund.currency')}</option>{choices.currencies.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                    <select aria-label={t('fund.direction')} value={funding.direction} onChange={(e) => setFunding({ ...funding, direction: e.target.value })}><option value="">{t('fund.direction')}</option>{choices.directions.map((d) => <option key={d} value={d}>{t(`fund.${d}`)}</option>)}</select></>
+                    : <select value={funding.project_id} onChange={(e) => setFunding({ ...funding, project_id: e.target.value })}><option value="">{t('fund.project')}</option>{(balances.data?.projects ?? []).map((p: any) => <option key={p.project.id} value={p.project.id}>{p.project.name}</option>)}</select>}
+                  {funding.target === 'project' && <input aria-label={t('fund.currency')} placeholder={t('fund.currency')} style={{ width: 90 }} value={funding.currency} onChange={(e) => setFunding({ ...funding, currency: e.target.value.toUpperCase() })} />}
+                  <input type="number" min={1} placeholder={t('fund.amount')} aria-label={t('fund.amount')} style={{ width: 140 }} value={funding.amount || ''} onChange={(e) => setFunding({ ...funding, amount: Number(e.target.value) })} /></div>
+                <div className="row"><input placeholder={t('fund.justification')} aria-label={t('fund.justification')} value={funding.justification} onChange={(e) => setFunding({ ...funding, justification: e.target.value })} style={{ width: 300 }} /><input placeholder={t('fund.reference')} aria-label={t('fund.reference')} value={funding.reference} onChange={(e) => setFunding({ ...funding, reference: e.target.value })} /></div>
               </div>} />
           ) : <NeedsPermission permission="treasury.funding" />}
-        </div>
-        <div className="card">
-          <h2>Adjustment</h2>
-          <p className="small muted">Corrects the ledger with an ordinary balanced entry; above the threshold a second approver is required.</p>
-          {has('treasury.adjustment.post') ? (
-            <ConfirmedAction operationType="adjustment.post" values={adjustment} path="/treasury/adjustments" label="Post adjustment" disabled={!adjustment.justification || adjustment.postings.some((p) => !p.account_id || p.amount <= 0)}
-              summary={<div className="stack" style={{ display: 'grid', gap: 8 }}>
-                {adjustment.postings.map((p, i) => <div className="row" key={i}><select value={p.account_id} onChange={(e) => { const ps = [...adjustment.postings]; ps[i] = { ...p, account_id: e.target.value }; setAdjustment({ ...adjustment, postings: ps }); }}><option value="">account</option>{accountOptions.map((a: any) => <option key={a.id} value={a.id}>{a.label}</option>)}</select><select value={p.side} onChange={(e) => { const ps = [...adjustment.postings]; ps[i] = { ...p, side: e.target.value }; setAdjustment({ ...adjustment, postings: ps }); }}><option>debit</option><option>credit</option></select><input type="number" value={p.amount || ''} onChange={(e) => { const ps = [...adjustment.postings]; ps[i] = { ...p, amount: Number(e.target.value) }; setAdjustment({ ...adjustment, postings: ps }); }} /></div>)}
-                <input placeholder="justification" value={adjustment.justification} onChange={(e) => setAdjustment({ ...adjustment, justification: e.target.value })} />
-              </div>} />
-          ) : <NeedsPermission permission="treasury.adjustment.post" />}
         </div>
       </div>)}
     </>

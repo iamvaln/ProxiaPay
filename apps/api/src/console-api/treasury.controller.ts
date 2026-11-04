@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { fieldInvalid, PlatformError } from '../common/errors';
-import { DB_TOKEN, type Db } from '../db/database';
+import { DB_TOKEN, type Db, type Tx } from '../db/database';
 import { nonEmpty, parseBody } from '../http/validation';
 import { LedgerService } from '../ledger/ledger.service';
 import { TreasuryService } from '../treasury/treasury.service';
@@ -16,7 +16,7 @@ import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.
 
 const transferSchema = z.object({ source_account_id: z.string().uuid(), destination_account_id: z.string().uuid(), amount: z.number().int().positive(), provider_fee: z.number().int().min(0).default(0), provider_reference: z.string().max(128).optional(), note: z.string().max(512).optional(), confirmation: confirmationSchema.optional() });
 const cashoutSchema = z.object({ float_account_id: z.string().uuid(), destination: nonEmpty(128), amount: z.number().int().positive(), supporting_document: nonEmpty(512), justification: nonEmpty(1000), confirmation: confirmationSchema.optional() });
-const fundingSchema = z.object({ target: z.enum(['float', 'project']), float_account_id: z.string().uuid().optional(), project_id: z.string().uuid().optional(), currency: z.string().length(3), amount: z.number().int().positive(), justification: nonEmpty(1000), reference: z.string().max(128).optional(), confirmation: confirmationSchema.optional() });
+const fundingSchema = z.object({ target: z.enum(['float', 'project']), float_account_id: z.string().uuid().optional(), provider_account_id: z.string().uuid().optional(), country: z.string().regex(/^[A-Z]{2}$/).optional(), direction: z.enum(['collection', 'disbursement']).optional(), project_id: z.string().uuid().optional(), currency: z.string().length(3), amount: z.number().int().positive(), justification: nonEmpty(1000), reference: z.string().max(128).optional(), confirmation: confirmationSchema.optional() });
 const adjustmentSchema = z.object({ postings: z.array(z.object({ account_id: z.string().uuid(), side: z.enum(['debit', 'credit']), amount: z.number().int().positive() })).min(2), justification: nonEmpty(1000), discrepancy_id: z.string().uuid().optional(), reference: z.string().max(128).optional(), confirmation: confirmationSchema.optional() });
 const thresholdSchema = z.object({ target_hours: z.number().int().positive(), minimum_hours: z.number().int().positive(), override_amount: z.number().int().min(0).nullable().default(null) });
 
@@ -173,25 +173,70 @@ export class TreasuryController {
       this.treasury.initiateCashout(tx, { floatAccountId: input.float_account_id, destination: input.destination, amount: input.amount, supportingDocument: input.supporting_document, justification: input.justification, actorId: req.principal.administratorId, confirmationId: c }));
   }
 
+  /** What Funding can open: each provider account with the wallets (country, currency, direction) it holds. */
+  @Get('funding/targets')
+  @RequirePermission('treasury.funding')
+  async fundingTargets(@Req() req: ConsoleRequest) {
+    const scope = req.auth.providerScope('treasury.funding');
+    let q = this.db.selectFrom('provider_account').select(['id', 'name']).orderBy('name');
+    if (scope) q = q.where('id', 'in', scope.length ? scope : ['00000000-0000-0000-0000-000000000000']);
+    const accounts = await q.execute();
+    const caps = await this.db.selectFrom('provider_account_capability').select(['provider_account_id', 'country_code', 'currency_code', 'direction']).distinct().orderBy('country_code').orderBy('currency_code').orderBy('direction').execute();
+    return { provider_accounts: accounts.map((a) => ({ ...a, wallets: caps.filter((c) => c.provider_account_id === a.id).map((c) => ({ country: c.country_code, currency: c.currency_code, direction: c.direction })) })) };
+  }
+
+  /**
+   * The float a funding goes to: the one named, or the one for a wallet the provider account really
+   * has, opened on first use. The first collection is not needed to open it.
+   */
+  private async resolveFloat(tx: Tx, input: z.infer<typeof fundingSchema>, auth: ConsoleRequest['auth']): Promise<string> {
+    const wallet = [input.provider_account_id, input.country, input.direction];
+    if (input.float_account_id) {
+      if (wallet.some((v) => v !== undefined)) throw fieldInvalid('float_account_id', 'Name the float account, or the provider account, country and direction, not both.');
+      const acct = await tx.selectFrom('ledger_account').select(['type', 'currency_code', 'provider_account_id']).where('id', '=', input.float_account_id).executeTakeFirst();
+      if (!acct || acct.type !== 'float' || !acct.provider_account_id) throw fieldInvalid('float_account_id', 'That is not a float account.');
+      await this.assertFundable(tx, acct.provider_account_id, auth, 'float_account_id');
+      if (acct.currency_code !== input.currency) throw fieldInvalid('currency', `That float account holds ${acct.currency_code}, not ${input.currency}.`);
+      return input.float_account_id;
+    }
+    if (!input.provider_account_id || !input.country || !input.direction) throw fieldInvalid('float_account_id', 'Name the float account, or the provider account, country and direction.');
+    await this.assertFundable(tx, input.provider_account_id, auth, 'provider_account_id');
+    const capability = await tx.selectFrom('provider_account_capability').select('provider_account_id')
+      .where('provider_account_id', '=', input.provider_account_id).where('country_code', '=', input.country).where('currency_code', '=', input.currency).where('direction', '=', input.direction).executeTakeFirst();
+    if (!capability) throw fieldInvalid('provider_account_id', `That provider account has no ${input.direction} wallet in ${input.country} for ${input.currency}.`);
+    return this.ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId: input.provider_account_id, countryCode: input.country, currency: input.currency, direction: input.direction });
+  }
+
+  /** A provider account out of the administrator's scope is refused as if it did not exist; a suspended one cannot be funded. */
+  private async assertFundable(tx: Tx, providerAccountId: string, auth: ConsoleRequest['auth'], field: string): Promise<void> {
+    const provider = await tx.selectFrom('provider_account').select('status').where('id', '=', providerAccountId).executeTakeFirst();
+    if (!provider || !auth.canReachProvider('treasury.funding', providerAccountId)) throw fieldInvalid(field, 'No such provider account.');
+    if (provider.status !== 'active') throw fieldInvalid(field, 'That provider account is suspended; restore it before funding its float.');
+  }
+
   @Post('funding')
   @HttpCode(201)
   @RequirePermission('treasury.funding')
   async funding(@Body() body: unknown, @Req() req: ConsoleRequest) {
     const { confirmation, ...input } = parseBody(fundingSchema, body);
-    const entryId = await withConfirmation(this.db, this.confirmations, req.principal, 'funding.post', input, confirmation, async (tx, c) => {
+    const funded = await withConfirmation(this.db, this.confirmations, req.principal, 'funding.post', input, confirmation, async (tx, c) => {
       let id: string;
+      let floatAccountId: string | undefined;
       if (input.target === 'float') {
-        if (!input.float_account_id) throw new PlatformError('FIELD_INVALID', 'Name the float account.', { field: 'float_account_id' });
-        id = await this.ledger.postFloatFunding(tx, { floatAccountId: input.float_account_id, currency: input.currency, amount: input.amount, authorId: req.principal.administratorId, justification: input.justification, reference: input.reference });
+        floatAccountId = await this.resolveFloat(tx, input, req.auth);
+        id = await this.ledger.postFloatFunding(tx, { floatAccountId, currency: input.currency, amount: input.amount, authorId: req.principal.administratorId, justification: input.justification, reference: input.reference });
       } else {
         if (!input.project_id) throw new PlatformError('FIELD_INVALID', 'Name the project.', { field: 'project_id' });
-        id = await this.ledger.postProjectFunding(tx, { projectId: input.project_id, currency: input.currency, amount: input.amount, authorId: req.principal.administratorId, justification: input.justification, reference: input.reference });
+        // A project out of the administrator's scope is refused as if it did not exist.
+        const project = await tx.selectFrom('project').select('id').where('id', '=', input.project_id).executeTakeFirst();
+        if (!project || !req.auth.canReachProject('treasury.funding', input.project_id)) throw fieldInvalid('project_id', 'No such project.');
+        id =await this.ledger.postProjectFunding(tx, { projectId: input.project_id, currency: input.currency, amount: input.amount, authorId: req.principal.administratorId, justification: input.justification, reference: input.reference });
       }
-      await this.audit.record(tx, { actorId: req.principal.administratorId, action: `funding.${input.target}`, subjectType: 'ledger_entry', subjectId: id, next: input, confirmationId: c });
-      return id;
+      await this.audit.record(tx, { actorId: req.principal.administratorId, action: `funding.${input.target}`, subjectType: 'ledger_entry', subjectId: id, next: floatAccountId ? { ...input, float_account_id: floatAccountId } : input, confirmationId: c });
+      return { id, floatAccountId };
     });
     const coverage = await this.treasury.coverageByCurrency();
-    return { entry_id: entryId, coverage };
+    return { entry_id: funded.id, float_account_id: funded.floatAccountId, coverage };
   }
 
   @Post('adjustments')
