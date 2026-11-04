@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError, get, post } from '../lib/api';
 import { useSession, useT, type Me } from '../lib/session';
 import type { Lang } from '../lib/i18n';
@@ -12,6 +12,9 @@ export function SignInPage() {
   const { refresh, lang, setLang, me } = useSession();
   const t = useT();
   const nav = useNavigate();
+  const from = (useLocation().state as { from?: string } | null)?.from;
+  // Only an in-console path is honoured, never another origin.
+  const back = from && from.startsWith('/') && !from.startsWith('//') && !from.startsWith('/sign-in') ? from : '/';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
@@ -36,7 +39,7 @@ export function SignInPage() {
   };
   const verify = async (e: React.FormEvent) => {
     e.preventDefault(); setError(null); setBusy(true);
-    try { await post('/auth/second-factor', { code }); await refresh(); nav('/'); } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+    try { await post('/auth/second-factor', { code }); await refresh(); nav(back); } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   };
 
   return (

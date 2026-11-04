@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider, useSession } from './lib/session';
 import { Shell } from './components/Shell';
 import { SignInPage } from './pages/SignIn';
@@ -20,8 +20,10 @@ import { SearchPage } from './pages/Search';
 
 function Guarded({ children }: { children: React.ReactNode }) {
   const { me, loading } = useSession();
+  const here = useLocation();
   if (loading) return <p className="muted" style={{ padding: 24 }}>…</p>;
-  if (!me || !me.second_factor_complete) return <Navigate to="/sign-in" replace />;
+  // Sign-in brings the administrator back to the page they were on.
+  if (!me || !me.second_factor_complete) return <Navigate to="/sign-in" replace state={{ from: here.pathname + here.search }} />;
   return <Shell>{children}</Shell>;
 }
 
