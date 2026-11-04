@@ -144,7 +144,9 @@ pre { background: var(--soft); border: 1px solid var(--line); border-radius: var
 .headline-row { display: flex; flex-direction: column; }
 
 /* ===== Home: route chart ===== */
-.route-chart { position: relative; }
+.route-chart { position: relative; overflow: visible; }
+/* The chart's tooltip and end labels reach past the card's edge; the card must not clip them. */
+.card.home-chart { overflow: visible; }
 .route-chart .rc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .route-chart .rc-head h2 { margin: 0; }
 .route-chart .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-control); overflow: hidden; }

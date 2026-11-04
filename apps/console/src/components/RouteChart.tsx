@@ -81,7 +81,7 @@ export function RouteChart({ series }: { series: RouteSeries[] }) {
   const tipLo = tipValues[0], tipHi = tipValues[1];
 
   return (
-    <div className="card route-chart" ref={box}>
+    <div className="route-chart" ref={box}>
       <div className="rc-head">
         <div>
           <h2>{t('home.chart.title')}</h2>
