@@ -78,28 +78,34 @@ export function NeedsPermission({ permission }: { permission: string }) {
   return <span className="small muted">{t('common.permission_needed', { permission })}</span>;
 }
 
+/** What the administrator reads once an operation commits: sent for approval, or done. */
+export function committedMessage(result: unknown, t: (key: string) => string): string {
+  return (result as { status?: string } | null)?.status === 'pending_approval' ? t('common.sent_for_approval') : t('common.done');
+}
+
 /**
  * The confirmation pattern of console spec 11.1: the screen shows what will happen, a code is
  * requested, entered, and the operation commits. The code is bound to the submitted values.
+ * `done` words the outcome; it is read with the values as they were committed.
  */
-export function ConfirmedAction({ operationType, values, path, method = 'POST', label, summary, onDone, disabled, subject }: {
-  operationType: string; values: Record<string, unknown>; path: string; method?: 'POST' | 'PUT' | 'DELETE' | 'PATCH'; label: string; summary?: React.ReactNode; onDone?: (result: unknown) => void; disabled?: boolean; subject?: string;
+export function ConfirmedAction({ operationType, values, path, method = 'POST', label, summary, onDone, done, disabled, subject }: {
+  operationType: string; values: Record<string, unknown>; path: string; method?: 'POST' | 'PUT' | 'DELETE' | 'PATCH'; label: string; summary?: React.ReactNode; onDone?: (result: unknown) => void; done?: (result: unknown) => string; disabled?: boolean; subject?: string;
 }) {
   const t = useT();
   const [stage, setStage] = useState<'idle' | 'code' | 'busy'>('idle');
   const [confirmationId, setConfirmationId] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<unknown>(null);
+  const [committed, setCommitted] = useState<string | null>(null);
   const begin = async () => {
-    setError(null); setStage('busy');
+    setError(null); setCommitted(null); setStage('busy');
     try { const c = await requestConfirmation(operationType, values, subject); setConfirmationId(c.confirmation_id); setStage('code'); } catch (e) { setError((e as Error).message); setStage('idle'); }
   };
   const commit = async () => {
     setError(null); setStage('busy');
     try {
       const r = await post(path.replace(/^\/console/, ''), { ...values, confirmation: { id: confirmationId, code } });
-      setResult(r); setStage('idle'); setCode(''); onDone?.(r);
+      setCommitted(done?.(r) ?? committedMessage(r, t)); setStage('idle'); setCode(''); onDone?.(r);
     } catch (e) {
       const err = e as ApiError;
       setError(err.details?.attempts_remaining !== undefined ? `${err.message} (${err.details.attempts_remaining} attempts left)` : err.message);
@@ -121,7 +127,7 @@ export function ConfirmedAction({ operationType, values, path, method = 'POST', 
         </div>
       )}
       <ErrorLine error={error} />
-      {result != null && <details><summary>Result</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>}
+      {committed && <p className="ok" role="status">✓ {committed}</p>}
     </div>
   );
 }

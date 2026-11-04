@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '../lib/i18n';
-import { emptyFunding, fundingRequest, walletChoices, type FundingTargets } from './funding';
+import { emptyFunding, fundingRequest, fundingTarget, walletChoices, type FundingTargets } from './funding';
+import { committedMessage } from '../components/common';
 
 const targets: FundingTargets = {
   provider_accounts: [
@@ -43,5 +44,20 @@ describe('the funding wording', () => {
       expect(t('en', k)).not.toBe(k);
       expect(t('fr', k)).not.toBe(k);
     }
+  });
+});
+
+describe('once a funding is posted', () => {
+  const fr = (k: string) => t('fr', k);
+  it('names the wallet it went to, by provider name and in the session language', () => {
+    expect(fundingTarget({ ...filled, target: 'float', provider_account_id: 'pa1', country: 'CM', currency: 'XAF', direction: 'disbursement' }, targets, undefined, fr)).toBe('Ejara Pay · CM · XAF · décaissement');
+  });
+  it('names the project for a project balance', () => {
+    expect(fundingTarget({ ...filled, target: 'project', project_id: 'p1' }, targets, 'MonJeton', fr)).toBe('MonJeton');
+  });
+  it('says an operation waiting for a second administrator was sent for approval, not done', () => {
+    expect(committedMessage({ status: 'pending_approval', approval_request_id: 'a1' }, fr)).toContain('approbation');
+    expect(committedMessage({ status: 'posted' }, fr)).toBe('C’est fait.');
+    expect(committedMessage({ entry_id: 'e1' }, fr)).toBe('C’est fait.');
   });
 });

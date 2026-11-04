@@ -38,3 +38,10 @@ export function walletChoices(targets: FundingTargets | null, providerAccountId:
     complete: wallets.some((w) => w.country === picked.country && w.currency === picked.currency && w.direction === picked.direction),
   };
 }
+
+/** Where a funding went, as the confirmation message names it: the wallet, or the project. */
+export function fundingTarget(f: FundingForm, targets: FundingTargets | null, projectName: string | undefined, t: (key: string) => string): string {
+  if (f.target !== 'float') return projectName ?? f.project_id;
+  const provider = targets?.provider_accounts.find((p) => p.id === f.provider_account_id)?.name ?? f.provider_account_id;
+  return `${provider} · ${f.country} · ${f.currency} · ${t(`fund.${f.direction}`)}`;
+}
