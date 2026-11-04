@@ -4,6 +4,7 @@ import { get, post } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import { Amount, ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type Filter, type RowAction } from '../components/table/DataTable';
+import { AdjustmentForm } from './Adjustment';
 import { chip, fetchPage, periodFilter, useReference, useReload, useTab, type Reference } from './list-support';
 
 const TYPES = ['float_drift', 'fee_variance', 'orphan_transaction', 'missing_transaction', 'state_divergence', 'stale_undetermined', 'unconfirmed_transfer', 'checkpoint_mismatch'];
@@ -73,9 +74,9 @@ export function runList({ t, ref }: { t: Tr; ref: Reference }): Pick<DataTablePr
   return { columns, filters, actions, summary, rowKey: (r) => r.id, defaultSort: 'started', defaultOrder: 'desc', empty: { none: t('l.run_none'), why: t('l.run_why') } };
 }
 
-const TABS = ['discrepancies', 'runs', 'upload'] as const;
+const TABS = ['discrepancies', 'runs', 'upload', 'adjustment'] as const;
 
-/** Reconciliation (console spec 9.1–9.3): runs, statement upload with what was read, and the discrepancy queue with recurrence shown prominently. */
+/** Reconciliation (console spec 9.1–9.3): runs, statement upload with what was read, the discrepancy queue with recurrence shown prominently, and free-standing adjustments. */
 export function ReconciliationPage() {
   const { id: routeRun } = useParams();
   const [params] = useSearchParams();
@@ -120,6 +121,7 @@ export function ReconciliationPage() {
           {has('reconciliation.run') ? <button className="primary" onClick={async () => { await post<{ run_id: string }>(`/reconciliation/statements/${uploaded.import.id}/run`); setUploaded(null); setTab('runs'); }}>Run the comparison</button> : <NeedsPermission permission="reconciliation.run" />}
         </div>}
       </div>)}
+      {tab === 'adjustment' && <AdjustmentForm />}
     </>
   );
 }
