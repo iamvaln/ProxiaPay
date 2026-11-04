@@ -100,6 +100,8 @@ A single field accepting any reference the platform knows: a transaction referen
 
 Support work begins with a customer quoting a number or a reference, so this is the most travelled path in the console and warrants being present on every screen. The reference a customer holds is usually the operator's, taken from their confirmation message, which is why it is searchable alongside the platform's own.
 
+A reference may be typed whole or in part: a fragment of at least 4 characters, from anywhere in the reference and in any case, finds it (a shorter entry matches only a whole reference). A telephone number is the exception and matches only whole.
+
 Searching by telephone number requires the permission covering unmasked payer identifiers, and the search is recorded.
 
 ### 3.3 Conventions
@@ -190,7 +192,9 @@ The queue shows age prominently. A cashout waiting three days is usually a reque
 
 A filtered table across projects within the administrator's scope.
 
-**Filters:** state, reconciliation status, direction, project, country, payment method, provider account, currency, date range, amount range, failure reason.
+**Search:** the search field takes a reference or a fragment of one (at least 4 characters; below that, the start of a reference).
+
+**Filters:** state, reconciliation status, direction, project, route, country, payment method, provider account, currency, date range, amount range, failure reason.
 
 **Columns:** reference, project, direction, route, requested amount, state, reconciliation status, created, terminal.
 
@@ -222,7 +226,7 @@ An address issued for a browser step is absent from this screen entirely, since 
 
 ### 5.3 Previews
 
-Previews are searchable alongside transactions, including those that expired without being confirmed. The list shows the project, route, amount, payer identifier, status, and the transaction it produced where it was confirmed.
+Previews are searchable alongside transactions, including those that expired without being confirmed. The list shows the project, route, amount, payer identifier, status, and the transaction it produced where it was confirmed. The search field takes a preview reference or a fragment of one (at least 4 characters; below that, the start of a reference).
 
 The value of this screen is the unconfirmed ones. A payer previewing the same payment repeatedly without completing is a signal about a route or about a wall they have hit, and the pattern is visible only where the record persists.
 

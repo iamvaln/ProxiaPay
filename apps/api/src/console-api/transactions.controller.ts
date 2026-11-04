@@ -1,5 +1,5 @@
 import { Controller, Get, HttpCode, Inject, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { sql } from 'kysely';
+import { sql, type ExpressionBuilder } from 'kysely';
 import { z } from 'zod';
 import { fieldInvalid, PlatformError } from '../common/errors';
 import { CryptoService } from '../crypto/crypto.service';
@@ -13,7 +13,7 @@ import { TransactionService } from '../transactions/transaction.service';
 import { AuditService } from '../audit/audit.service';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
 import { ExportService } from './export.service';
-import { pageQuerySchema, paginate, prefixPattern } from './pagination';
+import { containsPattern, FRAGMENT_MIN, pageQuerySchema, paginate, prefixPattern } from './pagination';
 
 const searchSchema = pageQuerySchema.extend({
   state: z.string().optional(), reconciliation_status: z.string().optional(), direction: z.enum(['collection', 'disbursement']).optional(),
@@ -27,6 +27,23 @@ const previewsSchema = pageQuerySchema.extend({
   status: z.string().optional(), project: z.string().uuid().optional(), msisdn: z.string().max(32).optional(),
   created_after: z.string().datetime().optional(), created_before: z.string().datetime().optional(),
 });
+
+/**
+ * Any of the columns holds the reference: as a fragment (case-insensitive, served by the trigram indexes of migration 0003,
+ * whose expressions are `lower(col)`) when a pattern is given, else whole.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const referenceMatch = (eb: ExpressionBuilder<any, any>, columns: string[], q: string, fragment: string | null) =>
+  eb.or(columns.map((c) => (fragment ? eb(sql`lower(${sql.ref(c)})`, 'like', sql`lower(${fragment})`) : eb(sql.ref(c), '=', q))));
+
+/**
+ * The transactions whose own references, or whose current attempt's, match. One subquery with a branch per table, so that
+ * each branch can use its trigram index; an OR across the attempt join would scan both tables. Fragment or whole as above.
+ */
+export const transactionsMatching = (q: string, fragment: string | null) => {
+  const test = (col: string) => (fragment ? sql`lower(${sql.ref(col)}) like lower(${fragment})` : sql`${sql.ref(col)} = ${q}`);
+  return sql<boolean>`t.id in (select id from transaction where ${test('reference')} or ${test('project_reference')} union all select a2.transaction_id from transaction_attempt a2 join transaction t2 on t2.id = a2.transaction_id and t2.current_attempt_id = a2.id where ${test('a2.provider_reference')} or ${test('a2.operator_reference')})`;
+};
 
 /** Transaction search, detail, previews and global search (console spec 3.2, 5). Scope is applied in the query, never after. */
 @Controller('console')
@@ -68,8 +85,13 @@ export class ConsoleTransactionsController {
     if (q.provider_account) query = query.where('a.provider_account_id', '=', q.provider_account);
     if (q.currency) query = query.where('t.currency_code', '=', q.currency);
     if (q.q) {
-      const prefix = prefixPattern(q.q);
-      query = query.where((eb) => eb.or([eb('t.reference', 'like', prefix), eb('t.project_reference', 'like', prefix), eb('a.provider_reference', 'like', prefix), eb('a.operator_reference', 'like', prefix)]));
+      if (q.q.length >= FRAGMENT_MIN) {
+        const fragment = containsPattern(q.q);
+        query = query.where(transactionsMatching(q.q, fragment));
+      } else {
+        const prefix = prefixPattern(q.q);
+        query = query.where((eb) => eb.or([eb('t.reference', 'like', prefix), eb('t.project_reference', 'like', prefix), eb('a.provider_reference', 'like', prefix), eb('a.operator_reference', 'like', prefix)]));
+      }
     }
     if (q.failure_reason) query = query.where('t.failure_reason', '=', q.failure_reason);
     if (q.created_after) query = query.where('t.created_at', '>', new Date(q.created_after));
@@ -109,7 +131,7 @@ export class ConsoleTransactionsController {
     const q = (raw ?? '').trim();
     if (!q) return { transactions: [], previews: [], capped: false };
     const scope = this.scopeIds(req);
-    const txnBase = this.db.selectFrom('transaction as t').leftJoin('transaction_attempt as a', 'a.id', 't.current_attempt_id').select(['t.id', 't.reference', 't.project_id', 't.state']);
+    const txnBase = this.db.selectFrom('transaction as t').select(['t.id', 't.reference', 't.project_id', 't.state']);
     const previewBase = this.db.selectFrom('preview').select(['id', 'reference', 'project_id', 'status as state']);
     // One row past the cap is fetched, so that hitting the cap exactly is told apart from stopping at it.
     const cut = <R>(rows: R[], cap: number) => ({ rows: rows.slice(0, cap), capped: rows.length > cap });
@@ -131,9 +153,11 @@ export class ConsoleTransactionsController {
       await this.audit.record(this.db, { actorId: req.principal.administratorId, action: 'search.by_identifier', subjectType: 'payer', subjectId: `…${digits.slice(-4)}`, next: { matches: transactions.rows.length + previews.rows.length } });
       return { transactions: transactions.rows, previews: previews.rows, capped: transactions.capped || previews.capped };
     }
-    let qb = txnBase.where((eb) => eb.or([eb('t.reference', '=', q), eb('t.project_reference', '=', q), eb('a.provider_reference', '=', q), eb('a.operator_reference', '=', q)])).limit(51);
+    // From FRAGMENT_MIN characters a reference is found by any part of it, whatever the case; below, only whole.
+    const fragment = q.length >= FRAGMENT_MIN ? containsPattern(q) : null;
+    let qb = txnBase.where(transactionsMatching(q, fragment)).orderBy('t.created_at', 'desc').orderBy('t.id', 'desc').limit(51);
     if (scope) qb = qb.where('t.project_id', 'in', scope);
-    let pb = previewBase.where((eb) => eb.or([eb('reference', '=', q), eb('project_reference', '=', q)])).limit(21);
+    let pb = previewBase.where((eb) => referenceMatch(eb, ['reference', 'project_reference'], q, fragment)).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(21);
     if (scope) pb = pb.where('project_id', 'in', scope);
     const transactions = cut(await qb.execute(), 50);
     const previews = cut(await pb.execute(), 20);
@@ -224,7 +248,7 @@ export class ConsoleTransactionsController {
     if (q.status) qb = qb.where('p.status', '=', q.status);
     if (q.project) qb = qb.where('p.project_id', '=', q.project);
     if (q.msisdn) qb = qb.where('p.msisdn_masked', '=', q.msisdn);
-    if (q.q) qb = qb.where('p.reference', 'like', prefixPattern(q.q));
+    if (q.q) qb = q.q.length >= FRAGMENT_MIN ? qb.where(sql<boolean>`lower(p.reference) like lower(${containsPattern(q.q)})`) : qb.where('p.reference', 'like', prefixPattern(q.q));
     if (q.created_after) qb = qb.where('p.created_at', '>', new Date(q.created_after));
     if (q.created_before) qb = qb.where('p.created_at', '<', new Date(q.created_before));
     // Payers who previewed and let it lapse: within the administrator's projects, 21 fetched so a stop at 20 can be told.

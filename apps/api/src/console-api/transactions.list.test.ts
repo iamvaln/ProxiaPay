@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createTestContext, type TestContext } from '../test/context';
 import { consoleRequest } from '../test/console-request';
@@ -9,7 +10,8 @@ import { LedgerService } from '../ledger/ledger.service';
 import { NotificationService } from '../notifications/notification.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { AuditService } from '../audit/audit.service';
-import { ConsoleTransactionsController } from './transactions.controller';
+import { ConsoleTransactionsController, transactionsMatching } from './transactions.controller';
+import { containsPattern } from './pagination';
 
 let t: TestContext;
 let controller: ConsoleTransactionsController;
@@ -65,6 +67,36 @@ describe('GET /console/transactions on the page contract', () => {
     const prefix = await controller.search({ q: refs[1]!.slice(0, 8) }, consoleRequest(t));
     expect(prefix.data.map((r) => r.reference)).toContain(refs[1]);
     expect((await controller.search({ q: '%' }, consoleRequest(t))).total).toBe(0);
+  });
+
+  it('finds a transaction by a fragment from the middle of its reference, in any case', async () => {
+    const { refs } = await seed('shop', 3);
+    const res = await controller.search({ q: refs[1]!.slice(12, 18).toLowerCase() }, consoleRequest(t));
+    expect(res.data.map((r) => r.reference)).toEqual([refs[1]]);
+    const other = await seed('beta', 1);
+    expect((await controller.search({ q: other.refs[0]!.slice(12, 18) }, consoleRequest(t, { scope: [(await t.db.selectFrom('project').select('id').where('code', '=', 'shop').executeTakeFirstOrThrow()).id] }))).total).toBe(0);
+    expect((await controller.search({ q: '____' }, consoleRequest(t))).total).toBe(0);
+    expect((await controller.search({ q: refs[1]!.slice(12, 15) }, consoleRequest(t))).total).toBe(0);
+  });
+
+  it('uses the trigram indexes for a fragment', async () => {
+    await seed('shop', 1);
+    const plan = await t.db.transaction().execute(async (trx) => {
+      await sql`set local enable_seqscan = off`.execute(trx);
+      const rows = await trx.selectFrom('transaction as t').select('t.id').where(transactionsMatching('ab12', containsPattern('ab12'))).explain();
+      return rows.map((r) => r['QUERY PLAN']).join('\n');
+    });
+    expect(plan).toContain('transaction_reference_trgm_idx');
+    expect(plan).toContain('transaction_project_reference_trgm_idx');
+  });
+
+  it('filters by route', async () => {
+    const { refs } = await seed('shop', 2);
+    const route = await t.db.selectFrom('transaction').select('route_id').where('reference', '=', refs[0]!).executeTakeFirstOrThrow();
+    const hit = await controller.search({ route: route.route_id }, consoleRequest(t));
+    expect(hit.total).toBe(2);
+    const other = await controller.search({ route: '00000000-0000-0000-0000-000000000000' }, consoleRequest(t));
+    expect(other.total).toBe(0);
   });
 
   it('scoped total counts only the scoped projects', async () => {

@@ -5,6 +5,10 @@ export class ApiError extends Error {
   }
 }
 
+/** Fires when the server says the session is gone (idle or absolute expiry, sign-out elsewhere), so the console returns to sign-in. */
+export const sessionEvents = new EventTarget();
+export const SESSION_ENDED = 'session-ended';
+
 export async function api<T = unknown>(path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<T> {
   const res = await fetch(`/console${path}`, {
     method: init.method ?? 'GET',
@@ -17,6 +21,7 @@ export async function api<T = unknown>(path: string, init: { method?: string; bo
   const data = text ? JSON.parse(text) : undefined;
   if (!res.ok) {
     const e = data?.error ?? {};
+    if (res.status === 401 && e.code === 'UNAUTHENTICATED') sessionEvents.dispatchEvent(new Event(SESSION_ENDED));
     throw new ApiError(res.status, e.code ?? 'INTERNAL_ERROR', e.message ?? res.statusText, e.details, e.field);
   }
   return data as T;
