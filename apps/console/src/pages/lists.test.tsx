@@ -154,7 +154,7 @@ describe('every list page', () => {
   // Every page is checked. The only raw tables left are not lists: they are laid out by hand and carry no rows to search, sort or page.
   const PAGES = readdirSync(dir).filter((f) => f.endsWith('.tsx') && !f.endsWith('.test.tsx')).sort();
   const NOT_LISTS: Record<string, number> = {
-    'Home.tsx': 6, // dashboard cards
+    'Home.tsx': 1, // "Waiting on you": approvals and assigned discrepancies
     'TransactionDetail.tsx': 3, // ledger T-accounts
     'Discrepancy.tsx': 1, // the postings preview of a correction
     'Oversight.tsx': 3, // health measures (the per-dimension helper and failure reasons) and the reporting pivot

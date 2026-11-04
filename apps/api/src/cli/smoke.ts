@@ -44,7 +44,7 @@ check('second factor accepted', r.status === 200);
 r = await j('/console/auth/me');
 check('me has Owner permissions and environment', r.body.permissions?.length > 40 && r.body.environment === 'sandbox');
 r = await j('/console/home');
-check('home renders cards', r.status === 200 && r.body.cards.provider_status?.length === 1, Object.keys(r.body.cards ?? {}).join(','));
+check('home renders cards', r.status === 200 && Array.isArray(r.body.cards.verdict?.problems) && Array.isArray(r.body.cards.routes?.series) && 'success_rate' in r.body.cards, Object.keys(r.body.cards ?? {}).join(','));
 r = await j('/console/projects', { method: 'GET', body: undefined }, { 'x-requested-with': '' });
 check('GET without header is fine', r.status === 200);
 r = await j('/console/projects', { method: 'POST', body: { code: 'shop', name: 'Shop' } }, { 'x-requested-with': '' });
