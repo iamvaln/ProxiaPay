@@ -7,6 +7,8 @@ import { ConfirmationService } from '../admin-auth/confirmation.service';
 import { AuditService } from '../audit/audit.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { TreasuryController } from './treasury.controller';
+import { Authorisation, type Grant } from '../admin-auth/authorisation.service';
+import { ALL_PERMISSIONS } from '../permissions/permissions';
 
 let t: TestContext;
 const get = <T>(token: new (...a: never[]) => T) => t.app.get(token as never) as T;
@@ -160,6 +162,28 @@ describe('funding opens the float it funds', () => {
       const foreign = await get(LedgerService).getOrCreateAccount(t.db, { type: 'float', providerAccountId: otherId, countryCode: mine.country, currency: mine.currency, direction: 'disbursement' });
       await expect(fund(req, { ...base, currency: mine.currency, float_account_id: foreign })).rejects.toMatchObject({ code: 'FIELD_INVALID' });
       expect(await get(LedgerService).balance(t.db, foreign)).toBe(0);
+    });
+  });
+
+  describe('project funding', () => {
+    /** An administrator whose treasury.funding reaches only the given projects. */
+    async function scopedTo(projectIds: string[]) {
+      const req = await asAdmin();
+      const grants: Grant[] = ALL_PERMISSIONS.map((permission) => permission === 'treasury.funding'
+        ? { permission, scopeType: 'projects', projectIds, providerAccountIds: [] }
+        : { permission, scopeType: 'all', projectIds: [], providerAccountIds: [] });
+      return { ...req, auth: new Authorisation(req.principal.administratorId, grants) } as typeof req;
+    }
+    const project = { target: 'project', currency: 'XAF', amount: 5000, justification: 'opening balance' };
+
+    it('funds a project within the scope and refuses one outside it, or one that does not exist', async () => {
+      const mine = await t.project('mine');
+      const other = await t.project('other');
+      const req = await scopedTo([mine.id]);
+      await expect(fund(req, { ...project, project_id: mine.id })).resolves.toHaveProperty('entry_id');
+      await expect(fund(req, { ...project, project_id: other.id })).rejects.toMatchObject({ code: 'FIELD_INVALID', message: 'No such project.' });
+      await expect(fund(await asAdmin(), { ...project, project_id: '11111111-1111-4111-8111-111111111111' })).rejects.toMatchObject({ code: 'FIELD_INVALID', message: 'No such project.' });
+      expect(await t.db.selectFrom('ledger_entry').select('id').where('entry_type', '=', 'project_funding').execute()).toHaveLength(1);
     });
   });
 

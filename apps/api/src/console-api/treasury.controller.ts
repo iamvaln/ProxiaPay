@@ -227,7 +227,10 @@ export class TreasuryController {
         id = await this.ledger.postFloatFunding(tx, { floatAccountId, currency: input.currency, amount: input.amount, authorId: req.principal.administratorId, justification: input.justification, reference: input.reference });
       } else {
         if (!input.project_id) throw new PlatformError('FIELD_INVALID', 'Name the project.', { field: 'project_id' });
-        id = await this.ledger.postProjectFunding(tx, { projectId: input.project_id, currency: input.currency, amount: input.amount, authorId: req.principal.administratorId, justification: input.justification, reference: input.reference });
+        // A project out of the administrator's scope is refused as if it did not exist.
+        const project = await tx.selectFrom('project').select('id').where('id', '=', input.project_id).executeTakeFirst();
+        if (!project || !req.auth.canReachProject('treasury.funding', input.project_id)) throw fieldInvalid('project_id', 'No such project.');
+        id =await this.ledger.postProjectFunding(tx, { projectId: input.project_id, currency: input.currency, amount: input.amount, authorId: req.principal.administratorId, justification: input.justification, reference: input.reference });
       }
       await this.audit.record(tx, { actorId: req.principal.administratorId, action: `funding.${input.target}`, subjectType: 'ledger_entry', subjectId: id, next: floatAccountId ? { ...input, float_account_id: floatAccountId } : input, confirmationId: c });
       return { id, floatAccountId };
