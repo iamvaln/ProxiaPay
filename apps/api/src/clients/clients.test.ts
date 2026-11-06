@@ -209,6 +209,45 @@ describe('clients for the platform', () => {
   });
 });
 
+describe('guards on the platform side', () => {
+  it('refuses to remove a client assignment through the roles page', async () => {
+    const staff = await t.admin();
+    const owner = await member((await newClient('Acme')).id, 'Client owner');
+    const a = await t.db.selectFrom('role_assignment').select('id').where('membership_id', '=', owner.membershipId).executeTakeFirstOrThrow();
+    await expect(roles().propose({ kind: 'assignment_remove', assignment_id: a.id }, { id: staff.id, permissions: ['admin.roles'] }, 'why')).rejects.toMatchObject({ code: 'PERMISSION_DENIED', message: 'Client access is changed through the client\'s team.' });
+    await expect(t.db.transaction().execute((tx) => roles().applyChange(tx, { kind: 'assignment_remove', assignment_id: a.id }, staff.id, null))).rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
+    expect(await t.db.selectFrom('role_assignment').select('id').where('id', '=', a.id).execute()).toHaveLength(1);
+  });
+
+  it('refuses to disable the account of the last active owner of a client', async () => {
+    const staff = await t.admin();
+    const acme = await newClient('Acme');
+    const only = await member(acme.id, 'Client owner');
+    const req = requestOf(staff.id);
+    await expect(controller().disableAccount(only.adminId, { confirmation }, req)).rejects.toMatchObject({ code: 'FIELD_INVALID', message: 'A client keeps at least one active owner; invite a successor first.' });
+    expect((await t.db.selectFrom('administrator').select('status').where('id', '=', only.adminId).executeTakeFirstOrThrow()).status).toBe('active');
+    await member(acme.id, 'Client owner');
+    await controller().disableAccount(only.adminId, { confirmation }, req);
+    // In a disabled client the rule does not apply.
+    const gone = await newClient('Gone');
+    const lone = await member(gone.id, 'Client owner');
+    await t.db.updateTable('client').set({ status: 'disabled' }).where('id', '=', gone.id).execute();
+    await controller().disableAccount(lone.adminId, { confirmation }, req);
+  });
+
+  it('refuses an owner invitation and a re-enabled membership in a disabled client', async () => {
+    const staff = await t.admin();
+    const acme = await newClient('Acme');
+    const dev = await member(acme.id, 'Client developer', 'disabled');
+    await t.db.updateTable('client').set({ status: 'disabled' }).where('id', '=', acme.id).execute();
+    const req = requestOf(staff.id);
+    await expect(controller().inviteOwner(acme.id, { name: 'N', email: 'n@acme.test', confirmation }, req)).rejects.toMatchObject({ code: 'RULE_VIOLATION', message: 'That client is disabled.' });
+    await expect(controller().membershipStatus(dev.membershipId, { status: 'active', confirmation }, req)).rejects.toMatchObject({ code: 'RULE_VIOLATION', message: 'That client is disabled.' });
+    expect((await statusOf(dev.membershipId)).status).toBe('disabled');
+    expect(mailsTo('n@acme.test')).toHaveLength(0);
+  });
+});
+
 describe('attaching a project to a client', () => {
   it('refuses a disabled client and a missing one', async () => {
     const staff = await t.admin();

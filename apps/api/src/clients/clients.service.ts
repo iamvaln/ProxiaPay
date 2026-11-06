@@ -56,21 +56,24 @@ export class ClientsService {
     // The client row serialises concurrent changes to its owners, so two disablings cannot each see the other owner still active.
     await tx.selectFrom('client').select('id').where('id', '=', m.client_id).forUpdate().execute();
     if (status === 'active' && m.client_status === 'disabled') throw new PlatformError('RULE_VIOLATION', CLIENT_DISABLED);
-    if (status === 'disabled' && m.status === 'active' && m.client_status === 'active' && (await this.invitations.accessOf(tx, m.id)).profile === 'owner') {
-      const others = await tx
-        .selectFrom('client_membership as m2')
-        .innerJoin('role_assignment as ra', 'ra.membership_id', 'm2.id')
-        .innerJoin('role as r', 'r.id', 'ra.role_id')
-        .select('m2.id')
-        .where('m2.client_id', '=', m.client_id)
-        .where('m2.status', '=', 'active')
-        .where('m2.id', '!=', m.id)
-        .where('r.name', '=', 'Client owner')
-        .limit(1)
-        .execute();
-      if (others.length === 0) throw new PlatformError('FIELD_INVALID', LAST_OWNER);
-    }
+    if (status === 'disabled' && m.status === 'active' && m.client_status === 'active' && (await this.invitations.accessOf(tx, m.id)).profile === 'owner') await this.assertOtherOwner(tx, m.client_id, m.id);
     return this.invitations.setStatus(tx, m.id, status, actorId, { auditAction: 'membership.status' });
+  }
+
+  /** Another active owner must remain in the client. */
+  private async assertOtherOwner(tx: Tx, clientId: string, membershipId: string): Promise<void> {
+    const others = await tx
+      .selectFrom('client_membership as m2')
+      .innerJoin('role_assignment as ra', 'ra.membership_id', 'm2.id')
+      .innerJoin('role as r', 'r.id', 'ra.role_id')
+      .select('m2.id')
+      .where('m2.client_id', '=', clientId)
+      .where('m2.status', '=', 'active')
+      .where('m2.id', '!=', membershipId)
+      .where('r.name', '=', 'Client owner')
+      .limit(1)
+      .execute();
+    if (others.length === 0) throw new PlatformError('FIELD_INVALID', LAST_OWNER);
   }
 
   async resend(tx: Tx, membershipId: string, actorId: string): Promise<Invited> {
@@ -84,6 +87,12 @@ export class ClientsService {
       ? await tx.selectFrom('administrator').select(['id', 'status']).where('id', '=', administratorId).where('kind', '=', 'client').forUpdate().executeTakeFirst()
       : undefined;
     if (!a) throw new PlatformError('NOT_FOUND', 'No such account.');
+    // Every active client this person owns must keep another active owner. Client rows are locked in order, as setMembershipStatus does.
+    const owned = await tx.selectFrom('client_membership as m').innerJoin('client as c', 'c.id', 'm.client_id').select(['m.id', 'm.client_id']).where('m.administrator_id', '=', a.id).where('m.status', '=', 'active').where('c.status', '=', 'active').orderBy('m.client_id').execute();
+    for (const m of owned) {
+      await tx.selectFrom('client').select('id').where('id', '=', m.client_id).forUpdate().execute();
+      if ((await this.invitations.accessOf(tx, m.id)).profile === 'owner') await this.assertOtherOwner(tx, m.client_id, m.id);
+    }
     await tx.updateTable('administrator').set({ status: 'disabled' }).where('id', '=', a.id).execute();
     await tx.updateTable('admin_session').set({ revoked_at: sql`now()`, revoked_by: actorId }).where('administrator_id', '=', a.id).where('revoked_at', 'is', null).execute();
     await this.audit.record(tx, { actorId, action: 'administrator.disable', subjectType: 'administrator', subjectId: a.id, prior: { status: a.status }, next: { status: 'disabled' } });

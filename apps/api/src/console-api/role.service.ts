@@ -93,6 +93,10 @@ export class RoleService {
       const role = await exec.selectFrom('role').select('kind').where('id', '=', change.role_id).executeTakeFirst();
       if (role?.kind === 'client') throw new PlatformError('PERMISSION_DENIED', 'Client roles are fixed.');
     }
+    if (change.kind === 'assignment_remove' && change.assignment_id) {
+      const a = await exec.selectFrom('role_assignment').select('membership_id').where('id', '=', change.assignment_id).executeTakeFirst();
+      if (a?.membership_id) throw new PlatformError('PERMISSION_DENIED', 'Client access is changed through the client\'s team.');
+    }
     if (change.kind === 'assignment_add' && change.administrator_id && change.role_id) {
       const admin = await exec.selectFrom('administrator').select('kind').where('id', '=', change.administrator_id).executeTakeFirst();
       const role = await exec.selectFrom('role').select('kind').where('id', '=', change.role_id).executeTakeFirst();
