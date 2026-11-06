@@ -77,7 +77,8 @@ holds by construction rather than endpoint by endpoint.
   credentials and team there (agreed with Valentine).
 - Clients reading the audit log, alerts, reconciliation, treasury floats or
   configuration.
-- Multiple clients per account. An account belongs to at most one client.
+- A view that mixes several clients. A person in two teams works in one
+  client at a time.
 
 ## Anti-goals
 
@@ -108,6 +109,8 @@ holds by construction rather than endpoint by endpoint.
 - Accounts are created by an **invitation link** that ProxiaPay emails, not by
   a password someone else chose. This applies to the owner Valentine creates
   and to the members the owner invites.
+- A person can be a member of several clients' teams. They work in **one
+  client at a time**, chosen with a selector. There is never a mixed view.
 - **On the sandbox, a project a client creates gets its routes
   automatically**, so the client can start testing without waiting. In
   production, Valentine still opens routes by hand.
@@ -119,24 +122,49 @@ holds by construction rather than endpoint by endpoint.
 There is a new `client` table: id, name, status (`active` or `disabled`),
 created_by, created_at.
 
-- `administrator.client_id` is nullable. `null` means platform staff; a value
-  means a client account.
 - `project.client_id` is nullable. `null` means a platform project, as
   MonJeton is today.
 
 Valentine can attach an existing platform project to a client. A project never
 moves from one client to another.
 
-Disabling a client disables all its accounts and revokes their sessions. Its
+### People and memberships (decided by Valentine)
+
+A person can belong to several clients' teams: a freelance developer or an
+accountant working for two integrators, for example.
+
+- **An account is a person**: one email, one password and, in production, one
+  TOTP. `administrator.kind` is `platform` or `client`. A platform account never
+  joins a client's team, since it already sees everything.
+- **A new `client_membership` table** links a client account to a client:
+  administrator, client, status (`active` or `disabled`), invited_by,
+  created_at. A client account has one membership per client it works for.
+- **Rights belong to the membership.** Each role assignment of a client
+  account names its membership, so a person can be a Developer at A on two
+  projects and Finance at B on all of them.
+- **One client at a time.** The session holds an active client. Every scope is
+  computed from the active membership only: lists, search, exports and counts.
+  A selector at the top of the console ("A ▾") switches client and reloads the
+  console in the new context. With one membership the selector is not shown.
+  Signing in lands on the client used last.
+- **Owners see only their own team.** An owner at A cannot tell that a member
+  also works for B.
+- **Disabling** acts on a membership, not on the person. An owner disables a
+  member of their team, which revokes the sessions whose active client is
+  theirs. Valentine can also disable the whole account, which revokes all its
+  sessions.
+
+Disabling a client disables all its memberships and revokes the sessions
+active in it. Its
 projects keep working through the API. Suspending a project remains a separate,
-existing operation. Re-enabling the client re-enables only the accounts that
-the client's disabling switched off. Accounts disabled one by one stay
+existing operation. Re-enabling the client re-enables only the memberships
+that the client's disabling switched off. Memberships disabled one by one stay
 disabled.
 
 **The owner's lifecycle** (*my call*):
 - Ownership is the owner role's assignment, not a column on `client`.
 - Valentine can invite a second owner, for example a successor, and can
-  disable any client account, owner or member, one by one.
+  disable any membership, owner or member, one by one.
 - Valentine can resend an invitation.
 - An owner cannot disable another owner or change their own assignment, which
   is already the rule for staff.
@@ -148,13 +176,13 @@ disabled.
 - The three client roles are seeded like the existing roles, and marked
   `client` so that:
   - the roles page shows them read-only;
-  - they can only be assigned to client accounts;
+  - they can only be assigned to client accounts, through a membership;
   - client accounts can only hold them.
-- A new scope type, `client`, means "every project of my client, including
-  future ones". The owner's assignment uses it.
+- A new scope type, `client`, means "every project of the membership's
+  client, including future ones". The owner's assignment uses it.
 - A member's assignment uses the existing `projects` scope. Every project in
-  the list must belong to the member's client, and this is checked whenever the
-  assignment is written.
+  the list must belong to the membership's client, and this is checked whenever
+  the assignment is written.
 - Member management uses a new permission, `client.members`, held only by the
   owner role. Profiles map to permissions as follows:
 
@@ -226,9 +254,17 @@ The API needs a gate that does not depend on every handler remembering scope.
 
 The API already sends mail through Resend (`alerts/mailer.ts`).
 
-- An invitation creates the account with no usable password, and emails a
-  single-use link that expires after 72 hours. Opening the link lets the
-  invitee set their own password.
+- **For a new email**, an invitation creates the account with no usable
+  password and a pending membership, and emails a single-use link that expires
+  after 72 hours. Opening the link lets the invitee set their own password.
+- **For an email that already has a client account**, no second account is
+  created. The person gets an email saying they were added to the client's
+  team, and the pending membership appears in their console to accept.
+- **The inviting owner sees the same answer either way** ("invitation sent"),
+  so they learn nothing about the address elsewhere.
+- **An email held by a platform account** gets the same "invitation sent"
+  answer. Nothing is sent, and Valentine gets an informational alert
+  (*my call*).
 - On first sign-in in production, the invitee then enrols TOTP. On the sandbox
   the second factor accepts any six digits.
 - The owner can resend an expired invitation.
@@ -247,6 +283,10 @@ platform staff.
   informational alert tells Valentine that a project is waiting for routes.
   Until it has routes, the client's project page says so ("Waiting for
   ProxiaPay to open your routes").
+- **Project page:** the client it belongs to. Valentine can attach a
+  client-less project to a client.
+- **Unchanged:** routes, entitlements, limits and fees are set as today, from
+  the project page.
 
 ### Automatic routes on the sandbox
 
@@ -265,17 +305,18 @@ platform staff.
 - **Routes opened later** on the sandbox are not added to existing client
   projects. Valentine grants them as today (*my call*: keeps the rule simple
   and visible).
-- **Project page:** the client it belongs to. Valentine can attach a
-  client-less project to a client.
-- **Unchanged:** routes, entitlements, limits and fees are set as today, from
-  the project page.
 
 ## Constraints
 
 - Same codebase and migrations for sandbox and production. A client exists
   only in the environment where it was created.
-- Migration `0004`: the `client` table, the `client_id` columns, the `client`
-  scope type, the role kind, the new permissions and the invitation tokens. No
+- Migration `0004`:
+  - the `client` and `client_membership` tables;
+  - `project.client_id` and `administrator.kind`;
+  - the membership on `role_assignment`;
+  - the `client` scope type and the role kind;
+  - the session's active client;
+  - the new permissions and the invitation tokens. No
   backfill: existing administrators and projects stay platform-side.
 - `proxiapay_app` needs grants on the new tables.
 - No existing account is converted. Today both environments hold only
@@ -284,9 +325,6 @@ platform staff.
 - Attaching a project to a client while a platform account holds a `projects`
   scope on it is allowed. The confirmation names those accounts so Valentine
   sees who else still reaches it (*my call*).
-- Inviting an email that already has an account fails with "this address
-  cannot be invited; contact ProxiaPay". That reveals that the address exists
-  somewhere, which is accepted like project codes (*my call*).
 - Project codes stay globally unique. A taken code answers "that code is
   taken" without saying by whom. That reveals only that the code exists, which
   is accepted.
