@@ -10,13 +10,15 @@ import { CredentialService, CREDENTIAL_SCOPES } from '../project-auth/credential
 import { ConfirmationService } from '../admin-auth/confirmation.service';
 import { AuditService } from '../audit/audit.service';
 import { EntitlementService, entitlementInputSchema } from './entitlement.service';
+import { ClientProjectsService } from './client-projects.service';
 import { pageQuerySchema, paginate } from './pagination';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
 import { ClientAccessible } from './client-access';
 import type { Permission } from '../permissions/permissions';
 
-const projectSchema = z.object({ code: z.string().regex(/^[a-z0-9][a-z0-9-]{1,31}$/), name: nonEmpty(128) });
+const projectSchema = z.object({ code: z.string().regex(/^[a-z0-9][a-z0-9-]{1,31}$/), name: nonEmpty(128), client_id: z.string().uuid().optional() });
+const attachSchema = z.object({ client_id: z.string().uuid(), confirmation: confirmationSchema.optional() });
 const credentialSchema = z.object({ scopes: z.array(z.enum(CREDENTIAL_SCOPES)).min(1), confirmation: confirmationSchema.optional() });
 const confirmOnly = z.object({ confirmation: confirmationSchema.optional(), reason: z.string().max(512).optional() });
 const originSchema = z.object({ cidr: z.string().regex(/^[0-9a-fA-F:.]+(\/\d{1,3})?$/), description: z.string().max(256).default('') });
@@ -37,6 +39,7 @@ export class ConsoleProjectsController {
     private readonly confirmations: ConfirmationService,
     private readonly entitlements: EntitlementService,
     private readonly audit: AuditService,
+    private readonly clientProjects: ClientProjectsService,
   ) {}
 
   /** Reach is checked with the permission the handler declares, so a grant scoped to one sub-resource does not need `projects.manage`. */
@@ -64,20 +67,36 @@ export class ConsoleProjectsController {
     return { projects: out, scoped: scope !== null };
   }
 
+  /** A client needs `projects.create_own` and its project is its own; the platform needs `projects.manage` and may name a client. One decorator cannot say "either", so the handler does. */
   @Post()
   @ClientAccessible()
   @HttpCode(201)
-  @RequirePermission('projects.manage')
   async create(@Body() body: unknown, @Req() req: ConsoleRequest) {
-    const input = parseBody(projectSchema, body);
+    const { client_id: requested, ...input } = parseBody(projectSchema, body);
+    const byClient = req.auth.isClient;
+    req.auth.require(byClient ? 'projects.create_own' : 'projects.manage');
+    // A client's body never chooses the client: the active one is the only one it can create for.
+    const clientId = byClient ? req.auth.clientId : (requested ?? null);
+    if (byClient && !clientId) throw new PlatformError('PERMISSION_DENIED', 'Choose a client to work in first.');
     return this.db.transaction().execute(async (tx) => {
-      const p = await tx.insertInto('project').values({ ...input, created_by: req.principal.administratorId }).returning(['id', 'code', 'name', 'status']).executeTakeFirstOrThrow().catch((e) => {
-        if ((e as { code?: string }).code === '23505') throw new PlatformError('CONFLICT', 'A project with that code exists.');
+      if (!byClient && clientId && !(await tx.selectFrom('client').select('id').where('id', '=', clientId).executeTakeFirst())) throw new PlatformError('FIELD_INVALID', 'No such client.', { field: 'client_id' });
+      const p = await tx.insertInto('project').values({ ...input, client_id: clientId, created_by: req.principal.administratorId }).returning(['id', 'code', 'name', 'status', 'client_id']).executeTakeFirstOrThrow().catch((e) => {
+        if ((e as { code?: string }).code === '23505') throw new PlatformError('FIELD_INVALID', 'That code is taken.', { field: 'code' });
         throw e;
       });
-      await this.audit.record(tx, { actorId: req.principal.administratorId, action: 'project.create', subjectType: 'project', subjectId: p.id, next: input });
+      await this.audit.record(tx, { actorId: req.principal.administratorId, action: 'project.create', subjectType: 'project', subjectId: p.id, next: { ...input, client_id: clientId } });
+      if (byClient) await this.clientProjects.openRoutes(tx, p);
       return p;
     });
+  }
+
+  /** Platform only: a project never moves between clients, and the response names the platform accounts that still reach it. */
+  @Post(':id/client')
+  @HttpCode(200)
+  @RequirePermission('admin.clients')
+  async attachClient(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
+    const { client_id, confirmation } = parseBody(attachSchema, body);
+    return withConfirmation(this.db, this.confirmations, req.principal, 'project.attach_client', { project_id: id, client_id }, confirmation, (tx, cid) => this.clientProjects.attach(tx, id, client_id, req.principal.administratorId, cid));
   }
 
   @Get(':id')

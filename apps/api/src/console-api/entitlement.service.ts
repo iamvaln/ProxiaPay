@@ -57,12 +57,13 @@ export class EntitlementService {
     return { binding_provider: binding.name, expected_fee_bps: binding.expected_fee_bps, processing_fee_bps: bps, shortfall_per_10000: subtract(computeFee(sample, { bps: binding.expected_fee_bps, fixed: binding.expected_fee_fixed }).amount, computeFee(sample, { bps, fixed: 0 }).amount) };
   }
 
-  async grantOrAmend(projectId: string, input: EntitlementInput, actorId: string) {
+  /** `opts.tx` joins the caller's transaction; `opts.auditAction` replaces the grant/amend action name (the sandbox's automatic grants). */
+  async grantOrAmend(projectId: string, input: EntitlementInput, actorId: string | null, opts: { tx?: Tx; auditAction?: string } = {}) {
     const warning = await this.shortfall(input.route_id, input.processing_fee_bps);
     if (warning && !input.accept_shortfall) throw new PlatformError('RULE_VIOLATION', 'The processing rate sits below the expected provider fee; accept the shortfall deliberately or correct the rate.', { details: { warning } });
     if ((input.processing_fee_bps == null) !== (input.processing_fee_fixed == null)) input.processing_fee_fixed = input.processing_fee_bps == null ? null : (input.processing_fee_fixed ?? 0);
     if ((input.platform_fee_bps == null) !== (input.platform_fee_fixed == null)) input.platform_fee_fixed = input.platform_fee_bps == null ? null : (input.platform_fee_fixed ?? 0);
-    return this.db.transaction().execute(async (tx) => {
+    const run = async (tx: Tx) => {
       await sql`select pg_advisory_xact_lock(hashtext('entitlement_grant'), hashtext(${projectId + input.route_id}))`.execute(tx);
       let ent = await tx.selectFrom('entitlement').select('id').where('project_id', '=', projectId).where('route_id', '=', input.route_id).executeTakeFirst();
       if (!ent) ent = await tx.insertInto('entitlement').values({ project_id: projectId, route_id: input.route_id }).returning('id').executeTakeFirstOrThrow();
@@ -71,9 +72,10 @@ export class EntitlementService {
       const { note, accept_shortfall, route_id, ...values } = input;
       void accept_shortfall; void route_id;
       const version = await tx.insertInto('entitlement_version').values({ ...values, entitlement_id: ent.id, sequence: (current?.sequence ?? 0) + 1, active: true, created_by: actorId, note }).returning(['id', 'sequence']).executeTakeFirstOrThrow();
-      await this.audit.record(tx, { actorId, action: current ? 'entitlement.amend' : 'entitlement.grant', subjectType: 'entitlement', subjectId: ent.id, prior: current ?? null, next: { ...values, note, sequence: version.sequence } });
+      await this.audit.record(tx, { actorId, action: opts.auditAction ?? (current ? 'entitlement.amend' : 'entitlement.grant'), subjectType: 'entitlement', subjectId: ent.id, prior: current ?? null, next: { ...values, note, sequence: version.sequence } });
       return { entitlement_id: ent.id, version_id: version.id, sequence: version.sequence, warning_accepted: warning ?? null };
-    });
+    };
+    return opts.tx ? run(opts.tx) : this.db.transaction().execute(run);
   }
 
   /** An entitlement is reached through its own project only; another project's id answers as missing. */

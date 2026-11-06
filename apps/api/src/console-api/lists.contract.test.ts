@@ -32,8 +32,8 @@ const controllers = {
   reconciliation: () => new ReconciliationController(t.db, get(ReconciliationService), nul, get(DiscrepancyService), nul, nul),
   treasury: () => new TreasuryController(t.db, get(LedgerService), get(TreasuryService), nul, nul, nul, nul, nul),
   oversight: () => new OversightController(t.db, nul, nul, nul, nul, nul, nul, nul),
-  projects: () => new ConsoleProjectsController(t.db, get(LedgerService), nul, get(NotificationService), nul, nul, nul),
-  projectDetail: () => new ConsoleProjectsController(t.db, get(LedgerService), get(CredentialService), get(NotificationService), nul, new EntitlementService(t.db, get(AuditService)), nul),
+  projects: () => new ConsoleProjectsController(t.db, get(LedgerService), nul, get(NotificationService), nul, nul, nul, nul),
+  projectDetail: () => new ConsoleProjectsController(t.db, get(LedgerService), get(CredentialService), get(NotificationService), nul, new EntitlementService(t.db, get(AuditService)), nul, nul),
 };
 
 beforeAll(async () => { t = await createTestContext(); });

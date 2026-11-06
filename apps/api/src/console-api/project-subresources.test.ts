@@ -33,7 +33,7 @@ const confirmations = { consume: async () => undefined, recordFailedAttempt: asy
 beforeAll(async () => {
   t = await createTestContext();
   const get = <T>(token: new (...a: never[]) => T) => t.app.get(token as never) as T;
-  projects = new ConsoleProjectsController(t.db, get(LedgerService), get(CredentialService), get(NotificationService), confirmations, new EntitlementService(t.db, get(AuditService)), get(AuditService));
+  projects = new ConsoleProjectsController(t.db, get(LedgerService), get(CredentialService), get(NotificationService), confirmations, new EntitlementService(t.db, get(AuditService)), get(AuditService), null as never);
   transactions = new ConsoleTransactionsController(t.db, get(TransactionReader), get(TransactionService), get(LedgerService), get(NotificationService), get(CryptoService), get(AuditService), null as never);
 });
 afterAll(() => t.close());
