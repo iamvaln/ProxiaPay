@@ -255,6 +255,11 @@ function GrantForm({ id, routes, reload }: { id: string; routes: Row[]; reload: 
 /** Project detail (console spec 6.2), one tab per concern; the tab lives in the URL beside the tables' state. */
 export function ProjectDetailPage() {
   const { id } = useParams();
+  // Keyed by project: the router reuses the page between projects, and a secret shown for one must not linger on another.
+  return <ProjectDetail key={id} id={id!} />;
+}
+
+function ProjectDetail({ id }: { id: string }) {
   const { has } = useSession();
   const t = useT();
   const [tab, setTab] = useTab(TABS, 'overview');
