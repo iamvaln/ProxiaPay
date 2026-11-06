@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, post, requestConfirmation } from '../lib/api';
+import { ApiError, api, requestConfirmation } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import { moneyParts, utc, when } from '../lib/format';
 import { STATE_SYMBOL, stateFamily, type StateFamily } from '../lib/states';
@@ -104,7 +104,7 @@ export function ConfirmedAction({ operationType, values, path, method = 'POST', 
   const commit = async () => {
     setError(null); setStage('busy');
     try {
-      const r = await post(path.replace(/^\/console/, ''), { ...values, confirmation: { id: confirmationId, code } });
+      const r = await api(path.replace(/^\/console/, ''), { method, body: { ...values, confirmation: { id: confirmationId, code } } });
       setCommitted(done?.(r) ?? committedMessage(r, t)); setStage('idle'); setCode(''); onDone?.(r);
     } catch (e) {
       const err = e as ApiError;
@@ -112,7 +112,6 @@ export function ConfirmedAction({ operationType, values, path, method = 'POST', 
       setStage(err.code === 'CONFIRMATION_INVALID' && !err.details?.exhausted ? 'code' : 'idle');
     }
   };
-  void method;
   return (
     <div>
       {summary}

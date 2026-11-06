@@ -137,7 +137,7 @@ export function ProjectDetailPage() {
             // The rotation actions are code-confirmed components, so they sit in a cell of their own under the table's header.
             { key: 'actions', label: t('table.actions'), render: (c) => c.status === 'active' && has('projects.credentials') ? <div className="row">
               {c.role === 'secondary' && <ConfirmedAction operationType="credential.promote" values={{ credential_id: c.id }} path={`/projects/${id}/credentials/${c.id}/promote`} label="Promote" onDone={reload} />}
-              {c.role === 'secondary' && active.length > 1 && <ConfirmedAction operationType="credential.delete" values={{ credential_id: c.id }} path={`/projects/${id}/credentials/${c.id}`} label="Delete" onDone={reload} />}
+              {c.role === 'secondary' && active.length > 1 && <ConfirmedAction operationType="credential.delete" values={{ credential_id: c.id }} path={`/projects/${id}/credentials/${c.id}`} method="DELETE" label="Delete" onDone={reload} />}
               {c.role === 'primary' && <button disabled title="The primary credential cannot be deleted; promote the secondary first.">Delete</button>}
               {active.length === 1 && c.role === 'secondary' && <button disabled title="A project keeps at least one credential.">Delete</button>}
               <ConfirmedAction operationType="credential.revoke" values={{ credential_id: c.id, reason: 'revoked from console' }} path={`/projects/${id}/credentials/${c.id}/revoke`} label="Revoke" onDone={reload} />
