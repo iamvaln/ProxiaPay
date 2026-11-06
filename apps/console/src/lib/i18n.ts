@@ -409,6 +409,12 @@ const STRINGS: Record<string, { en: string; fr: string }> = {
   'expect.cidr': { en: 'an IP address or range, such as 10.0.0.0/8', fr: 'une adresse IP ou une plage, par exemple 10.0.0.0/8' },
   'expect.description': { en: 'up to 256 characters', fr: '256 caractères au plus' },
   'expect.url': { en: 'a full address starting with https://', fr: 'une adresse complète commençant par https://' },
+  // Values shown once, where they are made.
+  'secret.once': { en: 'Shown once, now: copy each value before you leave this page.', fr: 'Affiché une seule fois, maintenant : copiez chaque valeur avant de quitter cette page.' },
+  'secret.copy': { en: 'Copy', fr: 'Copier' }, 'secret.copied': { en: 'Copied', fr: 'Copié' },
+  'secret.copy_failed': { en: 'The browser refused; select the value and copy it by hand.', fr: 'Le navigateur a refusé ; sélectionnez la valeur et copiez-la à la main.' },
+  'secret.dismiss': { en: 'I’ve copied it', fr: 'Je l’ai copié' },
+  'secret.key': { en: 'Key', fr: 'Clé' }, 'secret.secret': { en: 'Secret', fr: 'Secret' }, 'secret.signing': { en: 'Signing secret', fr: 'Secret de signature' },
 };
 
 export function t(lang: Lang, key: string, vars: Record<string, string | number> = {}): string {
