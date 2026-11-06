@@ -15,6 +15,7 @@ const signInSchema = z.object({ email: z.string().trim().email().max(254), passw
 const codeSchema = z.object({ code: z.string().regex(/^\d{6}$/) });
 const passwordSchema = z.object({ current_password: z.string().min(1).max(256), new_password: z.string().min(12).max(256) });
 const preferencesSchema = z.object({ language: z.enum(['en', 'fr']).optional(), timezone: z.string().max(64).optional() });
+const activeClientSchema = z.object({ client_id: z.string().uuid() });
 const confirmationRequestSchema = z.object({ operation_type: nonEmpty(64), values: z.unknown(), subject_reference: z.string().max(128).optional() });
 
 /** Sign-in with a second factor (console spec 4.1), session management, and one-time code requests. */
@@ -83,13 +84,26 @@ export class ConsoleAuthController {
   @AllowPartialSession()
   async me(@Req() req: ConsoleRequest) {
     const p = req.principal;
+    const memberships = p.kind === 'client' ? await this.auth.activeMemberships(p.administratorId) : [];
     return {
       administrator: { id: p.administratorId, name: p.name, email: p.email, language: p.language, timezone: p.timezone },
+      kind: p.kind,
+      active_client: p.kind === 'client' ? (memberships.filter((m) => m.client_id === p.activeClientId).map((m) => ({ id: m.client_id, name: m.name }))[0] ?? null) : null,
+      clients: memberships.map((m) => ({ id: m.client_id, name: m.name })),
       second_factor_complete: p.secondFactorComplete,
       permissions: p.secondFactorComplete ? req.auth.permissions() : [],
       environment: this.config.PROXIAPAY_ENV,
       permission_catalogue: PERMISSIONS,
     };
+  }
+
+  @Post('active-client')
+  @HttpCode(200)
+  @UseGuards(SessionGuard)
+  async switchClient(@Body() body: unknown, @Req() req: ConsoleRequest) {
+    const { client_id } = parseBody(activeClientSchema, body);
+    await this.auth.switchClient(req.principal, client_id);
+    return { ok: true };
   }
 
   @Patch('preferences')

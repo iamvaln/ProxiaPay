@@ -83,7 +83,7 @@ export class AuthorisationService {
       .where('ra.administrator_id', '=', administratorId)
       .where('ra.membership_id', 'is', null)
       .execute();
-    return new Authorisation(administratorId, this.grantsOf(rows, []), null, false);
+    return new Authorisation(administratorId, this.grantsOf(rows, [], false), null, false);
   }
 
   /** A client account is authorised by its active membership alone; the other memberships of the same person count for nothing. */
@@ -105,12 +105,13 @@ export class AuthorisationService {
     if (rows.length === 0) return new Authorisation(administratorId, [], activeClientId, true);
     // Resolved at load time, so a project created after the assignment is covered.
     const projects = await this.db.selectFrom('project').select('id').where('client_id', '=', activeClientId).execute();
-    return new Authorisation(administratorId, this.grantsOf(rows, projects.map((p) => p.id)), activeClientId, true);
+    return new Authorisation(administratorId, this.grantsOf(rows, projects.map((p) => p.id), true), activeClientId, true);
   }
 
   private grantsOf(
     rows: { assignment_id: string; permission_key: string; scope_type: string; project_id: string | null; provider_account_id: string | null }[],
     clientProjectIds: string[],
+    clientAccount: boolean,
   ): Grant[] {
     const byAssignment = new Map<string, Grant[]>();
     for (const r of rows) {
@@ -130,6 +131,15 @@ export class AuthorisationService {
       if (r.provider_account_id) grant.providerAccountIds.push(r.provider_account_id);
       byAssignment.set(r.assignment_id, list);
     }
-    return [...byAssignment.values()].flat();
+    const grants = [...byAssignment.values()].flat();
+    if (!clientAccount) return grants;
+    // Whatever its scope_type, a client account's grant never reaches beyond the active client's projects.
+    const own = new Set(clientProjectIds);
+    return grants.map((g) => ({
+      permission: g.permission,
+      scopeType: 'projects',
+      projectIds: g.scopeType === 'provider_accounts' ? [] : (g.scopeType === 'all' ? [...own] : g.projectIds.filter((id) => own.has(id))),
+      providerAccountIds: [],
+    }));
   }
 }

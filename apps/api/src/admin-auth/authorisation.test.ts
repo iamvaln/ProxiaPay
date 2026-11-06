@@ -94,3 +94,37 @@ describe('authorisation from the active membership', () => {
     expect(auth.projectScope('projects.credentials')).toBeNull();
   });
 });
+
+describe('a client account is always narrowed to its active client', () => {
+  it('gains nothing from an assignment that belongs to no membership', async () => {
+    const c = await newClient('Acme');
+    await newProject(c.id, 'acme-1');
+    const person = await clientPerson();
+    await membership(person.id, c.id, 'Client developer');
+    const owner = await t.db.selectFrom('role').select('id').where('name', '=', 'Owner').executeTakeFirstOrThrow();
+    await t.db.insertInto('role_assignment').values({ administrator_id: person.id, role_id: owner.id, scope_type: 'all' }).execute();
+    const auth = await service().load(person.id, c.id);
+    expect(auth.has('admin.clients')).toBe(false);
+    expect(auth.projectScope('projects.credentials')).not.toBeNull();
+  });
+
+  it('turns a membership-bound all-scope into the active client\'s projects only', async () => {
+    const c = await newClient('Acme');
+    const other = await newClient('Other');
+    const p1 = await newProject(c.id, 'acme-1');
+    await newProject(other.id, 'other-1');
+    const person = await clientPerson();
+    const m = await membership(person.id, c.id, 'Client developer');
+    const owner = await t.db.selectFrom('role').select('id').where('name', '=', 'Owner').executeTakeFirstOrThrow();
+    await t.db.insertInto('role_assignment').values({ administrator_id: person.id, role_id: owner.id, scope_type: 'all', membership_id: m.id }).execute();
+    const pr = await t.db.selectFrom('role').select('id').where('name', '=', 'Finance').executeTakeFirst();
+    if (pr) await t.db.insertInto('role_assignment').values({ administrator_id: person.id, role_id: pr.id, scope_type: 'provider_accounts', membership_id: m.id }).execute();
+    const auth = await service().load(person.id, c.id);
+    for (const perm of auth.permissions()) {
+      const scope = auth.projectScope(perm);
+      expect(scope).not.toBeNull();
+      expect(scope!.every((id) => id === p1.id)).toBe(true);
+      expect(auth.providerScope(perm)).toEqual([]);
+    }
+  });
+});

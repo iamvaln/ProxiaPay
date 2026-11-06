@@ -16,6 +16,9 @@ export interface SessionPrincipal {
   language: 'en' | 'fr';
   timezone: string;
   secondFactorComplete: boolean;
+  /** Platform staff or a client account; code tells them apart by this, never by whether a client is active. */
+  kind: 'platform' | 'client';
+  activeClientId: string | null;
 }
 
 interface Client { address: string; description: string }
@@ -67,12 +70,24 @@ export class AdminAuthService {
       if (admin) await this.maybeLock(admin.id, normalised, client);
       throw new PlatformError('CREDENTIALS_INVALID', 'The address and password did not match.');
     }
+    // A client account works inside one client at a time: the last one used if still active, else the oldest.
+    let activeClientId: string | null = null;
+    if (admin.kind === 'client') {
+      const memberships = await this.activeMemberships(admin.id);
+      activeClientId = (memberships.find((m) => m.client_id === admin.last_client_id) ?? memberships[0])?.client_id ?? null;
+      if (!activeClientId) {
+        await this.recordAuthEvent({ email: normalised, administratorId: admin.id, outcome: 'failure', reason: 'no active client', client });
+        await this.maybeLock(admin.id, normalised, client);
+        throw new PlatformError('CREDENTIALS_INVALID', 'The address and password did not match.');
+      }
+    }
     const absolute = await this.settings.number('session.absolute_seconds');
     const token = CryptoService.randomToken(32);
     await this.db
       .insertInto('admin_session')
       .values({
         administrator_id: admin.id,
+        active_client_id: activeClientId,
         token_hash: CryptoService.tokenHash(token),
         expires_at: new Date(now.getTime() + absolute * 1000),
         origin_address: client.address,
@@ -130,7 +145,7 @@ export class AdminAuthService {
     const row = await this.db
       .selectFrom('admin_session as s')
       .innerJoin('administrator as a', 'a.id', 's.administrator_id')
-      .select(['s.id as session_id', 's.second_factor_at', 's.expires_at', 's.last_seen_at', 'a.id as admin_id', 'a.name', 'a.email', 'a.language', 'a.timezone', 'a.status'])
+      .select(['s.id as session_id', 's.second_factor_at', 's.expires_at', 's.last_seen_at', 'a.id as admin_id', 'a.name', 'a.email', 'a.language', 'a.timezone', 'a.status', 'a.kind', 's.active_client_id'])
       .where('s.token_hash', '=', CryptoService.tokenHash(token))
       .where('s.revoked_at', 'is', null)
       .where('s.expires_at', '>', sql<Date>`now()`)
@@ -149,7 +164,32 @@ export class AdminAuthService {
       language: row.language as 'en' | 'fr',
       timezone: row.timezone,
       secondFactorComplete: row.second_factor_at != null,
+      kind: row.kind as 'platform' | 'client',
+      activeClientId: row.active_client_id,
     };
+  }
+
+  /** The clients a person may work in: active membership of an active client, oldest membership first. */
+  async activeMemberships(administratorId: string): Promise<{ client_id: string; name: string }[]> {
+    return this.db
+      .selectFrom('client_membership as m')
+      .innerJoin('client as c', 'c.id', 'm.client_id')
+      .select(['m.client_id', 'c.name'])
+      .where('m.administrator_id', '=', administratorId)
+      .where('m.status', '=', 'active')
+      .where('c.status', '=', 'active')
+      .orderBy('m.created_at', 'asc')
+      .execute();
+  }
+
+  /** Moves a session to another of the person's clients. A client they do not belong to is reported as absent, not forbidden. */
+  async switchClient(principal: SessionPrincipal, clientId: string): Promise<void> {
+    const belongs = principal.kind === 'client' && (await this.activeMemberships(principal.administratorId)).some((m) => m.client_id === clientId);
+    if (!belongs) throw new PlatformError('NOT_FOUND', 'Not found.');
+    await this.db.transaction().execute(async (tx) => {
+      await tx.updateTable('admin_session').set({ active_client_id: clientId }).where('id', '=', principal.sessionId).execute();
+      await tx.updateTable('administrator').set({ last_client_id: clientId }).where('id', '=', principal.administratorId).execute();
+    });
   }
 
   async revokeSession(sessionId: string, revokedBy: string | null): Promise<void> {
