@@ -1,7 +1,6 @@
 import 'reflect-metadata';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { RequestMethod, type ExecutionContext, type Type } from '@nestjs/common';
-import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import type { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PlatformError } from '../common/errors';
 import { Authorisation, type AuthorisationService, type Grant } from '../admin-auth/authorisation.service';
@@ -10,7 +9,7 @@ import type { ConfirmationService } from '../admin-auth/confirmation.service';
 import { ALL_PERMISSIONS, type Permission } from '../permissions/permissions';
 import type { TreasuryService } from '../treasury/treasury.service';
 import { createTestContext, type TestContext } from '../test/context';
-import { ConsoleApiModule } from './console-api.module';
+import { consoleRoutes, type ConsoleRoute as Route } from '../test/console-routes';
 import { ApprovalService } from './approval.service';
 import { HomeController } from './home.controller';
 import { HomeService } from './home.service';
@@ -31,6 +30,7 @@ const CLIENT_ACCESSIBLE_ROUTES = [
   'POST console/auth/second-factor',
   'POST console/auth/second-factor/enrol',
   'POST console/auth/active-client',
+  'GET console/client/home',
   'GET console/transactions',
   'GET console/transactions/export',
   'GET console/search',
@@ -55,29 +55,6 @@ const CLIENT_ACCESSIBLE_ROUTES = [
 
 /** Handlers that run before any session exists, so SessionGuard (and the wall) never sees them. */
 const UNGUARDED_ROUTES = ['GET console/auth/environment', 'POST console/auth/sign-in'];
-
-interface Route { key: string; controller: Type; handler: (...args: unknown[]) => unknown; guarded: boolean }
-
-function consoleRoutes(): Route[] {
-  const controllers = Reflect.getMetadata('controllers', ConsoleApiModule) as Type[];
-  const routes: Route[] = [];
-  for (const controller of controllers) {
-    const base = String(Reflect.getMetadata(PATH_METADATA, controller) ?? '');
-    const classGuards = (Reflect.getMetadata(GUARDS_METADATA, controller) ?? []) as unknown[];
-    for (const name of Object.getOwnPropertyNames(controller.prototype)) {
-      // The descriptor, not the property: reading a getter (`secure`) off the prototype would run it.
-      const handler = Object.getOwnPropertyDescriptor(controller.prototype, name)?.value as unknown;
-      if (name === 'constructor' || typeof handler !== 'function') continue;
-      const path = Reflect.getMetadata(PATH_METADATA, handler) as string | undefined;
-      if (path === undefined) continue;
-      const method = RequestMethod[Reflect.getMetadata(METHOD_METADATA, handler) as number];
-      const full = `${base}/${path}`.split('/').filter(Boolean).join('/');
-      const guards = [...classGuards, ...((Reflect.getMetadata(GUARDS_METADATA, handler) ?? []) as unknown[])];
-      routes.push({ key: `${method} ${full}`, controller, handler: handler as Route['handler'], guarded: guards.includes(SessionGuard) });
-    }
-  }
-  return routes;
-}
 
 const principalOf = (kind: 'platform' | 'client', secondFactorComplete = true): SessionPrincipal => ({
   sessionId: 's', administratorId: '00000000-0000-0000-0000-0000000000ad', name: 'Someone', email: 'someone@proxia.test', language: 'en', timezone: 'UTC',

@@ -14,6 +14,7 @@ import { pageQuerySchema, paginate } from './pagination';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
 import { ClientAccessible } from './client-access';
+import { clientBalances } from './client-views';
 
 const transferSchema = z.object({ source_account_id: z.string().uuid(), destination_account_id: z.string().uuid(), amount: z.number().int().positive(), provider_fee: z.number().int().min(0).default(0), provider_reference: z.string().max(128).optional(), note: z.string().max(512).optional(), confirmation: confirmationSchema.optional() });
 const cashoutSchema = z.object({ float_account_id: z.string().uuid(), destination: nonEmpty(128), amount: z.number().int().positive(), supporting_document: nonEmpty(512), justification: nonEmpty(1000), confirmation: confirmationSchema.optional() });
@@ -50,6 +51,8 @@ export class TreasuryController {
     const projects = await q.execute();
     const out = [];
     for (const p of projects) out.push({ project: p, balances: await this.ledger.projectBalances(this.db, p.id) });
+    // Never the float coverage: it is ProxiaPay's treasury, whatever the client account holds.
+    if (req.auth.isClient) return { projects: out.map((r) => ({ project: { id: r.project.id, name: r.project.name, code: r.project.code }, balances: clientBalances(r.balances) })), scoped: scope !== null };
     return { projects: out, scoped: scope !== null, coverage: req.auth.has('treasury.read_float') ? await this.treasury.coverageByCurrency() : undefined };
   }
 
@@ -79,7 +82,10 @@ export class TreasuryController {
   @RequirePermission('treasury.read_balances')
   async projectAccounts(@Param('projectId') projectId: string, @Req() req: ConsoleRequest) {
     if (!req.auth.canReachProject('treasury.read_balances', projectId)) throw new PlatformError('NOT_FOUND', 'No such project.');
-    return { accounts: await this.db.selectFrom('ledger_account').select(['id', 'type', 'currency_code']).where('project_id', '=', projectId).execute() };
+    const accounts = await this.db.selectFrom('ledger_account').select(['id', 'type', 'currency_code']).where('project_id', '=', projectId).execute();
+    // Ledger account ids lead only to platform handlers (entries); a client has the kinds and currencies.
+    if (req.auth.isClient) return { accounts: accounts.map((a) => ({ type: a.type, currency_code: a.currency_code })) };
+    return { accounts };
   }
 
   @Get('float')

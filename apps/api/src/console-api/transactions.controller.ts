@@ -14,6 +14,7 @@ import { AuditService } from '../audit/audit.service';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
 import { ClientAccessible } from './client-access';
 import { ExportService } from './export.service';
+import { CLIENT_TRANSACTION_COLUMNS, clientTransactionDetail, clientTransactionRow } from './client-views';
 import { containsPattern, FRAGMENT_MIN, pageQuerySchema, paginate, prefixPattern } from './pagination';
 
 const searchSchema = pageQuerySchema.extend({
@@ -83,7 +84,8 @@ export class ConsoleTransactionsController {
     if (q.route) query = query.where('t.route_id', '=', q.route);
     if (q.country) query = query.where('r.country_code', '=', q.country);
     if (q.payment_method) query = query.where('r.payment_method_code', '=', q.payment_method);
-    if (q.provider_account) query = query.where('a.provider_account_id', '=', q.provider_account);
+    // A client never names a provider account: the filter would tell it which ids carry its payments.
+    if (q.provider_account && !req.auth.isClient) query = query.where('a.provider_account_id', '=', q.provider_account);
     if (q.currency) query = query.where('t.currency_code', '=', q.currency);
     if (q.q) {
       if (q.q.length >= FRAGMENT_MIN) {
@@ -109,6 +111,7 @@ export class ConsoleTransactionsController {
     const q = parseBody(searchSchema, query);
     if (q.sort === 'amount' && !q.currency) throw fieldInvalid('sort', 'sort: amount sorts only within one currency; set a currency filter');
     const page = await paginate(this.baseQuery(req, q), q, { sorts: { created: 't.created_at', amount: 't.requested_amount' }, defaultSort: 'created', id: 't.id' });
+    if (req.auth.isClient) return { ...page, data: page.data.map(clientTransactionRow), scoped: this.scopeIds(req) !== null };
     return { ...page, scoped: this.scopeIds(req) !== null };
   }
 
@@ -120,7 +123,8 @@ export class ConsoleTransactionsController {
     const q = parseBody(searchSchema, query);
     const { page: _p, page_size: _s, sort: _o, order: _d, ...filters } = query;
     const rows = await this.baseQuery(req, q).orderBy('t.created_at', 'desc').orderBy('t.id', 'desc').limit(10_000).execute();
-    const columns = ['reference', 'project_reference', 'project_name', 'direction', 'country_code', 'payment_method_code', 'currency_code', 'requested_amount', 'charged_amount', 'settled_amount', 'state', 'reconciliation_status', 'failure_reason', 'provider_reference', 'operator_reference', 'created_at', 'terminal_at'];
+    const platformColumns = ['reference', 'project_reference', 'project_name', 'direction', 'country_code', 'payment_method_code', 'currency_code', 'requested_amount', 'charged_amount', 'settled_amount', 'state', 'reconciliation_status', 'failure_reason', 'provider_reference', 'operator_reference', 'created_at', 'terminal_at'];
+    const columns = req.auth.isClient ? platformColumns.filter((c) => (CLIENT_TRANSACTION_COLUMNS as readonly string[]).includes(c)) : platformColumns;
     return this.exports.produce(req.principal.administratorId, 'transactions', filters, columns, rows as Record<string, unknown>[]);
   }
 
@@ -185,7 +189,7 @@ export class ConsoleTransactionsController {
     const deliveries = await this.notifications.deliveriesForTransaction(txn.id);
     const discrepancies = await this.db.selectFrom('discrepancy').select(['id', 'type', 'status', 'difference', 'currency_code']).where('transaction_id', '=', txn.id).execute();
     const original = txn.original_transaction_id ? await this.db.selectFrom('transaction').select('reference').where('id', '=', txn.original_transaction_id).executeTakeFirst() : null;
-    return {
+    const detail = {
       transaction: api,
       project,
       amounts: {
@@ -205,6 +209,9 @@ export class ConsoleTransactionsController {
       exchanges_available: req.auth.has('transactions.read_exchanges'),
       correlation_id: txn.correlation_id,
     };
+    if (!req.auth.isClient) return detail;
+    const method = await this.db.selectFrom('payment_method').select('name').where('code', '=', route.payment_method_code).executeTakeFirstOrThrow();
+    return clientTransactionDetail(detail, { payment_method_name: method.name });
   }
 
   @Post('transactions/:reference/reveal-identifier')

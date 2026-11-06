@@ -6,7 +6,8 @@ import { parseBody } from '../http/validation';
 import { TreasuryService, type FloatAccountView } from '../treasury/treasury.service';
 import { HomeService } from './home.service';
 import { ApprovalService } from './approval.service';
-import { SessionGuard, type ConsoleRequest } from './session.guard';
+import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
+import { ClientAccessible } from './client-access';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { ConfirmationService } from '../admin-auth/confirmation.service';
 import { subtract } from '../money/money';
@@ -56,6 +57,18 @@ export class HomeController {
       cards.assigned_discrepancies = await this.db.selectFrom('discrepancy').select(['id', 'type', 'subject_reference', 'difference', 'currency_code']).where('assignee_id', '=', req.principal.administratorId).where('status', '<>', 'resolved').limit(10).execute();
     }
     return { cards };
+  }
+
+  /**
+   * A client's home (client accounts spec, "Console for client accounts"): the headline figures of its own projects only.
+   * The platform home's verdict, route chart and earnings are ProxiaPay's, so they have no place here.
+   */
+  @Get('client/home')
+  @ClientAccessible()
+  @RequirePermission('transactions.read')
+  async clientHome(@Req() req: ConsoleRequest) {
+    const scope = req.auth.projectScope('transactions.read');
+    return { collected_today: await this.homeService.collectedToday(scope), success_rate: await this.homeService.overallSuccess(scope), undetermined: await this.homeService.undetermined(scope) };
   }
 
   @Get('approvals')

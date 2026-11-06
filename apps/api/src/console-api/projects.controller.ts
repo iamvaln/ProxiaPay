@@ -15,6 +15,7 @@ import { pageQuerySchema, paginate } from './pagination';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
 import { ClientAccessible } from './client-access';
+import { clientProjectDetail, clientProjectSummary } from './client-views';
 import type { Permission } from '../permissions/permissions';
 
 const projectSchema = z.object({ code: z.string().regex(/^[a-z0-9][a-z0-9-]{1,31}$/), name: nonEmpty(128), client_id: z.string().uuid().optional() });
@@ -64,6 +65,7 @@ export class ConsoleProjectsController {
       const { rows: routes } = await sql<{ n: number }>`select count(*)::int as n from entitlement e join entitlement_version v on v.entitlement_id = e.id and v.valid_to is null and v.active where e.project_id = ${p.id}`.execute(this.db);
       out.push({ ...p, volume_30d: mine.reduce((n, a) => n + a.n, 0), value_30d: mine.map((a) => ({ currency: a.currency_code, value: Number(a.value) })), balances: await this.ledger.projectBalances(this.db, p.id), routes_granted: routes[0]!.n, credentials_active: creds.find((c) => c.project_id === p.id)?.n ?? 0 });
     }
+    if (req.auth.isClient) return { projects: out.map(clientProjectSummary), scoped: scope !== null };
     return { projects: out, scoped: scope !== null };
   }
 
@@ -109,8 +111,11 @@ export class ConsoleProjectsController {
     const credentials = await this.credentials.listForProject(id);
     const origins = await this.db.selectFrom('project_origin').selectAll().where('project_id', '=', id).where('active', '=', true).orderBy('created_at').execute();
     const endpoint = await this.db.selectFrom('project_notification_endpoint').select(['id', 'url', 'active', 'verified_at', 'created_at']).where('project_id', '=', id).where('active', '=', true).executeTakeFirst();
+    const balances = await this.ledger.projectBalances(this.db, id);
+    // A client sees its own resolved terms per route, never the entitlement rows with the route's base fees, notes and authors.
+    if (req.auth.isClient) return clientProjectDetail({ project, balances, credentials, origins, notification_endpoint: endpoint ?? null }, await this.entitlements.termsForProject(id));
     return {
-      project, balances: await this.ledger.projectBalances(this.db, id), credentials, origins,
+      project, balances, credentials, origins,
       entitlements: await this.entitlements.listForProject(id), notification_endpoint: endpoint ? { ...endpoint, secret_set: true } : null,
     };
   }

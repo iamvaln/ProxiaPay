@@ -5,6 +5,7 @@ import { PlatformError } from '../common/errors';
 import { DB_TOKEN, type Db, type Tx } from '../db/database';
 import { AuditService } from '../audit/audit.service';
 import { computeFee, subtract } from '../money/money';
+import type { GrantedRoute } from './client-views';
 
 export const entitlementInputSchema = z.object({
   route_id: z.string().uuid(),
@@ -44,6 +45,27 @@ export class EntitlementService {
       .execute();
     const history = await this.db.selectFrom('entitlement_version as v').innerJoin('entitlement as e', 'e.id', 'v.entitlement_id').leftJoin('administrator as a', 'a.id', 'v.created_by').select(['v.entitlement_id', 'v.sequence', 'v.valid_from', 'v.valid_to', 'v.note', 'v.active', 'a.name as author']).where('e.project_id', '=', projectId).orderBy('v.sequence', 'desc').execute();
     return rows.map((r) => ({ ...r, history: history.filter((h) => h.entitlement_id === r.id) }));
+  }
+
+  /** Each open grant of the project with the open version of its route, for resolving the project's own terms; a route without an open version is left out. */
+  async termsForProject(projectId: string): Promise<GrantedRoute[]> {
+    const grants = await this.db
+      .selectFrom('entitlement as e')
+      .innerJoin('entitlement_version as ev', (j) => j.onRef('ev.entitlement_id', '=', 'e.id').on('ev.valid_to', 'is', null))
+      .innerJoin('route as r', 'r.id', 'e.route_id')
+      .innerJoin('payment_method as pm', 'pm.code', 'r.payment_method_code')
+      .innerJoin('country as c', 'c.code', 'r.country_code')
+      .selectAll('ev')
+      .select(['r.id as route_id', 'r.country_code', 'r.payment_method_code', 'r.direction', 'r.currency_code', 'pm.name as payment_method_name', 'c.active as country_active'])
+      .where('e.project_id', '=', projectId)
+      .orderBy(['r.country_code', 'r.payment_method_code', 'r.direction', 'r.currency_code'])
+      .execute();
+    if (!grants.length) return [];
+    const versions = await this.db.selectFrom('route_version').selectAll().where('route_id', 'in', grants.map((g) => g.route_id)).where('valid_to', 'is', null).execute();
+    return grants.flatMap(({ route_id, country_code, payment_method_code, direction, currency_code, payment_method_name, country_active, ...entitlementVersion }) => {
+      const routeVersion = versions.find((v) => v.route_id === route_id);
+      return routeVersion ? [{ country_code, payment_method_code, payment_method_name, direction, currency_code, country_active, routeVersion, entitlementVersion }] : [];
+    });
   }
 
   /** Warns where a rate granted here sits below what the route's provider is expected to charge (spec 3.4). */
