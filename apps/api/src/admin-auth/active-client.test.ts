@@ -122,7 +122,11 @@ describe('the active client of a session', () => {
     await t.db.updateTable('client_membership').set({ status: 'disabled' }).where('client_id', '=', b.id).execute();
     const p = await signIn(person.email, person.password);
     const me = await controller().me({ principal: { ...p, secondFactorComplete: true }, auth: await authorisation().load(p.administratorId, p.activeClientId) } as never);
-    expect(me).toMatchObject({ kind: 'client', active_client: { id: a.id, name: 'A' }, clients: [{ id: a.id, name: 'A' }] });
+    expect(me).toMatchObject({ kind: 'client', active_client: { id: a.id, name: 'A' }, clients: [{ id: a.id, name: 'A' }], pending_clients: [] });
+    // A pending membership is offered for acceptance, never as a client to work in.
+    const pending = await t.db.updateTable('client_membership').set({ status: 'pending' }).where('client_id', '=', b.id).returning('id').executeTakeFirstOrThrow();
+    const again = await controller().me({ principal: { ...p, secondFactorComplete: true }, auth: await authorisation().load(p.administratorId, p.activeClientId) } as never);
+    expect(again).toMatchObject({ clients: [{ id: a.id, name: 'A' }], pending_clients: [{ membership_id: pending.id, client_name: 'B' }] });
   });
 });
 

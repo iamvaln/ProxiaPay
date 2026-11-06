@@ -95,6 +95,8 @@ export class ConsoleAuthController {
       kind: p.kind,
       active_client: p.kind === 'client' ? (memberships.filter((m) => m.client_id === p.activeClientId).map((m) => ({ id: m.client_id, name: m.name }))[0] ?? null) : null,
       clients: memberships.map((m) => ({ id: m.client_id, name: m.name })),
+      // Offered for acceptance by POST memberships/:mid/accept; none of them is a client to switch to yet.
+      pending_clients: p.kind === 'client' ? await this.auth.pendingMemberships(p.administratorId) : [],
       second_factor_complete: p.secondFactorComplete,
       permissions: p.secondFactorComplete ? req.auth.permissions() : [],
       environment: this.config.PROXIAPAY_ENV,

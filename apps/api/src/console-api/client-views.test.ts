@@ -4,6 +4,8 @@ import { consoleRoutes } from '../test/console-routes';
 import { AdminAuthService } from '../admin-auth/admin-auth.service';
 import { Authorisation, AuthorisationService } from '../admin-auth/authorisation.service';
 import type { ConfirmationService } from '../admin-auth/confirmation.service';
+import { AlertService } from '../alerts/alert.service';
+import { Mailer } from '../alerts/mailer';
 import { AuditService } from '../audit/audit.service';
 import { CONFIG, type AppConfig } from '../config/config';
 import { CryptoService } from '../crypto/crypto.service';
@@ -29,6 +31,8 @@ import { ConsoleProjectsController } from './projects.controller';
 import type { ConsoleRequest } from './session.guard';
 import { ConsoleTransactionsController } from './transactions.controller';
 import { TreasuryController } from './treasury.controller';
+import { TeamController } from './team.controller';
+import { InvitationService } from '../clients/invitation.service';
 
 let t: TestContext;
 const get = <T>(token: new (...a: never[]) => T) => t.app.get(token as never) as T;
@@ -39,6 +43,7 @@ const controllers = {
   treasury: () => new TreasuryController(t.db, get(LedgerService), get(TreasuryService), nul, nul, nul, nul, nul),
   home: () => new HomeController(t.db, get(TreasuryService), nul, {} as ConfirmationService, new HomeService(t.db)),
   auth: () => new ConsoleAuthController(t.db, t.app.get<AppConfig>(CONFIG), get(AdminAuthService), get(SettingsService), nul),
+  team: () => new TeamController(t.db, new InvitationService(t.db, t.app.get(CONFIG), get(Mailer), get(AlertService), get(AuditService))),
 };
 
 beforeAll(async () => {
@@ -233,6 +238,7 @@ describe('client views', () => {
         'GET console/projects/:id/deliveries': () => controllers.projects().deliveries(project.id, {}, req),
         'GET console/treasury/balances': () => controllers.treasury().balances(req),
         'GET console/treasury/project/:projectId/accounts': () => controllers.treasury().projectAccounts(project.id, req),
+        'GET console/team': () => controllers.team().list(req),
       };
       // Every client-accessible read is called here: opening a new one to clients without adding it fails.
       expect(Object.keys(calls).sort()).toEqual(consoleRoutes().filter((r) => r.clientAccessible && r.key.startsWith('GET ')).map((r) => r.key).sort());

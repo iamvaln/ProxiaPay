@@ -51,10 +51,16 @@ const CLIENT_ACCESSIBLE_ROUTES = [
   'POST console/projects/:id/notification-endpoint/regenerate-secret',
   'GET console/treasury/balances',
   'GET console/treasury/project/:projectId/accounts',
+  'GET console/team',
+  'POST console/team',
+  'PUT console/team/:mid',
+  'POST console/team/:mid/status',
+  'POST console/team/:mid/resend',
+  'POST console/auth/memberships/:mid/accept',
 ];
 
 /** Handlers that run before any session exists, so SessionGuard (and the wall) never sees them. */
-const UNGUARDED_ROUTES = ['GET console/auth/environment', 'POST console/auth/sign-in'];
+const UNGUARDED_ROUTES = ['GET console/auth/environment', 'POST console/auth/sign-in', 'GET console/invitations/:token', 'POST console/invitations/:token'];
 
 const principalOf = (kind: 'platform' | 'client', secondFactorComplete = true): SessionPrincipal => ({
   sessionId: 's', administratorId: '00000000-0000-0000-0000-0000000000ad', name: 'Someone', email: 'someone@proxia.test', language: 'en', timezone: 'UTC',

@@ -182,6 +182,19 @@ export class AdminAuthService {
       .execute();
   }
 
+  /** Memberships waiting for the person to accept them, of active clients: they grant nothing until then. */
+  async pendingMemberships(administratorId: string): Promise<{ membership_id: string; client_name: string }[]> {
+    return this.db
+      .selectFrom('client_membership as m')
+      .innerJoin('client as c', 'c.id', 'm.client_id')
+      .select(['m.id as membership_id', 'c.name as client_name'])
+      .where('m.administrator_id', '=', administratorId)
+      .where('m.status', '=', 'pending')
+      .where('c.status', '=', 'active')
+      .orderBy('m.created_at', 'asc')
+      .execute();
+  }
+
   /** Moves a session to another of the person's clients. A client they do not belong to is reported as absent, not forbidden. */
   async switchClient(principal: SessionPrincipal, clientId: string): Promise<void> {
     const belongs = principal.kind === 'client' && (await this.activeMemberships(principal.administratorId)).some((m) => m.client_id === clientId);
