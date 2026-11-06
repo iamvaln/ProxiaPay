@@ -444,6 +444,9 @@ const STRINGS: Record<string, { en: string; fr: string }> = {
   'grant.committed': { en: 'Version #{sequence} committed.', fr: 'Version n° {sequence} enregistrée.' },
   'grant.shortfall': { en: 'The processing rate sits below what {provider} is expected to charge ({pct} %): {shortfall} short per 10,000. Tick the box below to accept it deliberately.', fr: 'Le taux de traitement est inférieur à ce que {provider} doit facturer ({pct} %) : {shortfall} de manque pour 10 000. Cochez la case ci-dessous pour l’accepter délibérément.' },
   'grant.accept_shortfall': { en: 'Accept a processing rate below the expected provider fee', fr: 'Accepter un taux de traitement inférieur aux frais attendus du fournisseur' },
+  'proj.new': { en: 'New project', fr: 'Nouveau projet' }, 'proj.create': { en: 'Create', fr: 'Créer' },
+  'proj.code_hint': { en: 'Lowercase letters, digits and hyphens, 2 to 32 characters.', fr: 'Lettres minuscules, chiffres et tirets, de 2 à 32 caractères.' },
+  'proj.created': { en: 'Project {code} created.', fr: 'Projet {code} créé.' },
 };
 
 export function t(lang: Lang, key: string, vars: Record<string, string | number> = {}): string {

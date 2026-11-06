@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { get, post } from '../lib/api';
 import { useSession, useT } from '../lib/session';
-import { Amount, ErrorLine, NeedsPermission, Pill, ScopeNote, When, useLoad } from '../components/common';
+import { Amount, ErrorLine, NeedsPermission, Pill, ScopeNote, SubmitForm, When, useLoad } from '../components/common';
 import { DataTable, SummaryGrid, type Column, type DataTableProps } from '../components/table/DataTable';
 import { chipBy, distinct } from './list-support';
 
@@ -37,24 +37,29 @@ export function projectList({ t, rows }: { t: Tr; rows: Row[] }): Pick<DataTable
 export function ProjectsPage() {
   const { has } = useSession();
   const t = useT();
+  const hint = useId();
   const { data, error, reload } = useLoad(() => get<any>('/projects'));
   const [form, setForm] = useState({ code: '', name: '' });
-  const [err, setErr] = useState<string | null>(null);
+  const create = async () => {
+    const p = await post<{ code: string }>('/projects', form);
+    setForm({ code: '', name: '' }); reload();
+    return t('proj.created', { code: p.code });
+  };
   return (
     <>
-      <h1>Projects</h1>
+      <h1>{t('nav.projects')}</h1>
       <ErrorLine error={error} />
       {data && <ScopeNote scoped={data.scoped} />}
       {data && <DataTable<Row> rows={data.projects} {...projectList({ t, rows: data.projects })} />}
       <div className="card" style={{ marginTop: 16, maxWidth: 520 }}>
-        <h2>New project</h2>
+        <h2>{t('proj.new')}</h2>
         {has('projects.manage') ? (
-          <form className="stack" onSubmit={async (e) => { e.preventDefault(); setErr(null); try { await post('/projects', form); setForm({ code: '', name: '' }); reload(); } catch (x) { setErr((x as Error).message); } }}>
-            <label>Code<input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} pattern="[a-z0-9][a-z0-9-]{1,31}" required /></label>
-            <label>Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
-            <ErrorLine error={err} />
-            <button className="primary">Create</button>
-          </form>
+          <SubmitForm submitLabel={t('proj.create')} onSubmit={create}>
+            {/* The API takes lowercase only, so the field writes what it will accept. */}
+            <label>{t('field.code')}<input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toLowerCase() })} pattern="[a-z0-9][a-z0-9\-]{1,31}" aria-describedby={hint} required /></label>
+            <p id={hint} className="small muted">{t('proj.code_hint')}</p>
+            <label>{t('field.name')}<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
+          </SubmitForm>
         ) : <NeedsPermission permission="projects.manage" />}
       </div>
     </>
