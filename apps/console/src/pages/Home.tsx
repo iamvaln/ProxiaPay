@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { get } from '../lib/api';
-import { useT } from '../lib/session';
-import { Amount, Empty, ErrorLine, ScopeNote, useEvery, useLoad } from '../components/common';
+import { get, post } from '../lib/api';
+import { useSession, useT } from '../lib/session';
+import { Amount, Empty, ErrorLine, ScopeNote, SubmitForm, useEvery, useLoad } from '../components/common';
 import { Headline } from '../components/Headline';
 import { RouteChart } from '../components/RouteChart';
 import { Verdict } from '../components/Verdict';
@@ -56,7 +56,25 @@ export function HomeView({ cards, loadedAt }: { cards: HomeCards; loadedAt: Date
   );
 }
 
-export function HomePage() {
+/** Memberships offered to this account and not yet accepted; accepting one makes the client available to switch to. */
+export function PendingInvitations() {
+  const { me, refresh } = useSession();
+  const t = useT();
+  if (!me?.pending_clients.length) return null;
+  return (
+    <section className="card">
+      <h2>{t('pending.title')}</h2>
+      {me.pending_clients.map((p) => (
+        <div key={p.membership_id}>
+          <p>{t('pending.invited', { client: p.client_name })}</p>
+          <SubmitForm className="" submitLabel={t('pending.accept')} onSubmit={async () => { await post(`/auth/memberships/${p.membership_id}/accept`); await refresh(); }}><></></SubmitForm>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function LoadedHome() {
   const { data, error, reload } = useLoad(() => get<Home>('/home'));
   useEvery(reload, 60_000);
   // A new response object marks a successful load; "updated n s ago" counts from it.
@@ -65,4 +83,14 @@ export function HomePage() {
   if (error && !data) return <ErrorLine error={error} />;
   if (!data) return <p className="muted">…</p>;
   return <HomeView cards={data.cards} loadedAt={loadedAt} />;
+}
+
+export function HomePage() {
+  const { me } = useSession();
+  const t = useT();
+  // A client account with no active client has no home yet: the invitation waiting for it is the page.
+  if (me?.kind === 'client' && !me.active_client) {
+    return <><h1>{t('nav.home')}</h1><PendingInvitations />{!me.pending_clients.length && <Empty text={t('pending.none')} />}</>;
+  }
+  return <><PendingInvitations /><LoadedHome /></>;
 }

@@ -2,6 +2,23 @@ export type Lang = 'en' | 'fr';
 
 /** Interface text in both languages (console spec 3.3). Content people entered is never translated. */
 const STRINGS: Record<string, { en: string; fr: string }> = {
+  'nav.team': { en: 'Team', fr: 'Équipe' }, 'nav.account': { en: 'Account', fr: 'Compte' }, 'nav.client': { en: 'Client', fr: 'Client' },
+  'account.title': { en: 'Account', fr: 'Compte' }, 'account.password': { en: 'Change password', fr: 'Changer le mot de passe' },
+  'account.current': { en: 'Current password', fr: 'Mot de passe actuel' }, 'account.new': { en: 'New password', fr: 'Nouveau mot de passe' },
+  'account.confirm': { en: 'Confirm the new password', fr: 'Confirmer le nouveau mot de passe' },
+  'account.hint': { en: 'At least 12 characters.', fr: 'Au moins 12 caractères.' },
+  'account.mismatch': { en: 'The two new passwords are not the same.', fr: 'Les deux nouveaux mots de passe ne sont pas identiques.' },
+  'account.changed': { en: 'Password changed.', fr: 'Mot de passe modifié.' },
+  'account.sessions': { en: 'Your sessions', fr: 'Vos sessions' }, 'account.session_current': { en: 'this session', fr: 'cette session' },
+  'account.session_revoked': { en: 'ended', fr: 'terminée' }, 'account.session_seen': { en: 'last seen {when}', fr: 'vue pour la dernière fois {when}' },
+  'pending.title': { en: 'Invitations', fr: 'Invitations' }, 'pending.invited': { en: 'You were invited to join {client}', fr: 'Vous avez été invité à rejoindre {client}' },
+  'pending.accept': { en: 'Accept', fr: 'Accepter' },
+  'pending.none': { en: 'Your account is not attached to a client yet.', fr: 'Votre compte n’est pas encore rattaché à un client.' },
+  'invitation.set_password': { en: 'Set your password', fr: 'Choisissez votre mot de passe' },
+  'invitation.join': { en: 'Join {client}', fr: 'Rejoindre {client}' },
+  'invitation.for': { en: 'You were invited to {client} on ProxiaPay.', fr: 'Vous avez été invité à rejoindre {client} sur ProxiaPay.' },
+  'invitation.invalid': { en: 'This invitation link is no longer valid. Ask for a new one.', fr: 'Ce lien d’invitation n’est plus valable. Demandez-en un nouveau.' },
+  'invitation.accepted': { en: 'Invitation accepted. Sign in to continue.', fr: 'Invitation acceptée. Connectez-vous pour continuer.' },
   'nav.home': { en: 'Home', fr: 'Accueil' }, 'nav.transactions': { en: 'Transactions', fr: 'Transactions' }, 'nav.projects': { en: 'Projects', fr: 'Projets' },
   'nav.configuration': { en: 'Configuration', fr: 'Configuration' }, 'nav.treasury': { en: 'Treasury', fr: 'Trésorerie' }, 'nav.reconciliation': { en: 'Reconciliation', fr: 'Rapprochement' },
   'nav.oversight': { en: 'Oversight', fr: 'Supervision' }, 'nav.sign_out': { en: 'Sign out', fr: 'Déconnexion' },

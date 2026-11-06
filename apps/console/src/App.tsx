@@ -17,6 +17,8 @@ import { ReconciliationPage } from './pages/Reconciliation';
 import { DiscrepancyPage } from './pages/Discrepancy';
 import { OversightPage } from './pages/Oversight';
 import { SearchPage } from './pages/Search';
+import { AccountPage } from './pages/Account';
+import { InvitationPage } from './pages/Invitation';
 
 function Guarded({ children }: { children: React.ReactNode }) {
   const { me, loading } = useSession();
@@ -32,7 +34,9 @@ export function App() {
     <SessionProvider>
       <Routes>
         <Route path="/sign-in" element={<SignInPage />} />
+        <Route path="/invitation/:token" element={<InvitationPage />} />
         <Route path="/" element={<Guarded><HomePage /></Guarded>} />
+        <Route path="/account" element={<Guarded><AccountPage /></Guarded>} />
         <Route path="/approvals" element={<Guarded><ApprovalsPage /></Guarded>} />
         <Route path="/search" element={<Guarded><SearchPage /></Guarded>} />
         <Route path="/transactions" element={<Guarded><TransactionsPage /></Guarded>} />
