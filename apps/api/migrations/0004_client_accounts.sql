@@ -26,6 +26,7 @@ CREATE TABLE client_membership (
   accepted_at        timestamptz,
   UNIQUE (client_id, administrator_id)
 );
+CREATE INDEX client_membership_admin_idx ON client_membership (administrator_id);
 
 CREATE TABLE invitation (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -36,6 +37,7 @@ CREATE TABLE invitation (
   used_at       timestamptz,
   created_at    timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX invitation_membership_idx ON invitation (membership_id);
 
 ALTER TABLE project ADD COLUMN client_id uuid REFERENCES client(id);
 CREATE INDEX project_client_idx ON project (client_id);

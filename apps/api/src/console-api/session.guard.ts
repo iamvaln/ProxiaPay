@@ -55,7 +55,7 @@ export class SessionGuard implements CanActivate {
     req.principal = principal;
     const store = requestContext.getStore();
     if (store) store.administratorId = principal.administratorId;
-    req.auth = await this.authorisation.load(principal.administratorId);
+    req.auth = await this.authorisation.load(principal.administratorId, null);
     const required = this.reflector.getAllAndOverride<Permission | undefined>(PERMISSION_KEY, [ctx.getHandler(), ctx.getClass()]);
     if (required) req.auth.require(required);
     return true;
