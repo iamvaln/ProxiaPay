@@ -1,5 +1,4 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
-import { sql } from 'kysely';
 import { z } from 'zod';
 import { PlatformError } from '../common/errors';
 import { DB_TOKEN, type Db } from '../db/database';
@@ -42,25 +41,8 @@ export class TeamController {
   @RequirePermission('client.members')
   async list(@Req() req: ConsoleRequest) {
     const clientId = this.clientOf(req);
-    const rows = await this.db
-      .selectFrom('client_membership as m')
-      .innerJoin('administrator as a', 'a.id', 'm.administrator_id')
-      .select(['m.id', 'a.name', 'm.invited_name', 'a.email', 'm.status', 'm.accepted_at'])
-      .select(sql<boolean>`exists (select 1 from invitation i where i.membership_id = m.id and i.used_at is null and i.expires_at > now())`.as('link_open'))
-      .where('m.client_id', '=', clientId)
-      .orderBy('m.created_at')
-      .orderBy('m.id')
-      .execute();
-    const members = [];
-    for (const r of rows) {
-      const access = await this.invitations.accessOf(this.db, r.id);
-      const accepted = r.accepted_at !== null || r.status === 'active';
-      members.push({
-        // Until the invitee accepts, the name the owner typed: the account's own name would say the address already had one.
-        membership_id: r.id, name: accepted ? r.name : (r.invited_name ?? r.name), email: r.email, profile: access.profile, project_ids: access.project_ids, status: r.status,
-        invitation: (accepted ? 'accepted' : r.link_open ? 'pending' : 'expired') as 'accepted' | 'pending' | 'expired',
-      });
-    }
+    // The owner's view leaves out the account id and who disabled a member.
+    const members = (await this.invitations.membersOf(this.db, clientId)).map(({ administrator_id: _a, disabled_by_client: _d, ...m }) => m);
     return { members };
   }
 

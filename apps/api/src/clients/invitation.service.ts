@@ -221,6 +221,31 @@ export class InvitationService {
     return { membership_id: m.id, status: next };
   }
 
+  /** The members of a client with their access and invitation state, in the order they joined. Callers choose what each audience sees of it. */
+  async membersOf(exec: Executor, clientId: string) {
+    const rows = await exec
+      .selectFrom('client_membership as m')
+      .innerJoin('administrator as a', 'a.id', 'm.administrator_id')
+      .select(['m.id', 'm.administrator_id', 'a.name', 'm.invited_name', 'a.email', 'm.status', 'm.disabled_by_client', 'm.accepted_at'])
+      .select(sql<boolean>`exists (select 1 from invitation i where i.membership_id = m.id and i.used_at is null and i.expires_at > now())`.as('link_open'))
+      .where('m.client_id', '=', clientId)
+      .orderBy('m.created_at')
+      .orderBy('m.id')
+      .execute();
+    const members = [];
+    for (const r of rows) {
+      const access = await this.accessOf(exec, r.id);
+      const accepted = r.accepted_at !== null || r.status === 'active';
+      members.push({
+        // Until the invitee accepts, the name the inviter typed: the account's own name would say the address already had one.
+        membership_id: r.id, administrator_id: r.administrator_id, name: accepted ? r.name : (r.invited_name ?? r.name), email: r.email, profile: access.profile, project_ids: access.project_ids,
+        status: r.status, disabled_by_client: r.disabled_by_client,
+        invitation: (accepted ? 'accepted' : r.link_open ? 'pending' : 'expired') as 'accepted' | 'pending' | 'expired',
+      });
+    }
+    return members;
+  }
+
   /** The profile and project list of a membership's assignment. */
   async accessOf(exec: Executor, membershipId: string): Promise<{ profile: ClientProfile | null; project_ids: string[] }> {
     const rows = await exec

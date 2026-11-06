@@ -17,11 +17,13 @@ import { HomeService } from './home.service';
 import { ClientProjectsService } from './client-projects.service';
 import { TeamController } from './team.controller';
 import { InvitationController } from './invitation.controller';
-import { InvitationService } from '../clients/invitation.service';
+import { ClientsModule } from '../clients/clients.module';
+import { ClientsController } from './clients.controller';
 
 /** The console's server side: a separate interface project credentials never reach (spec 7). */
 @Module({
-  controllers: [ConsoleAuthController, HomeController, ConsoleTransactionsController, ConsoleProjectsController, ConfigurationController, TreasuryController, ReconciliationController, OversightController, TeamController, InvitationController],
-  providers: [SessionGuard, ApprovalService, RoleService, EntitlementService, RouteService, ExportService, HomeService, ClientProjectsService, InvitationService],
+  imports: [ClientsModule],
+  controllers: [ConsoleAuthController, HomeController, ConsoleTransactionsController, ConsoleProjectsController, ConfigurationController, TreasuryController, ReconciliationController, OversightController, TeamController, InvitationController, ClientsController],
+  providers: [SessionGuard, ApprovalService, RoleService, EntitlementService, RouteService, ExportService, HomeService, ClientProjectsService],
 })
 export class ConsoleApiModule {}

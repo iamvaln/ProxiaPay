@@ -71,6 +71,7 @@ export class ClientProjectsService {
     if (project.client_id) throw new PlatformError('RULE_VIOLATION', 'That project already belongs to a client.');
     const client = await tx.selectFrom('client').select(['id', 'status']).where('id', '=', clientId).executeTakeFirst();
     if (!client) throw new PlatformError('NOT_FOUND', 'No such client.');
+    if (client.status === 'disabled') throw new PlatformError('FIELD_INVALID', 'That client is disabled.', { field: 'client_id' });
     await tx.updateTable('project').set({ client_id: clientId }).where('id', '=', projectId).execute();
     const accounts = await this.platformAccountsReaching(tx, projectId);
     await this.audit.record(tx, { actorId, action: 'project.attach_client', subjectType: 'project', subjectId: projectId, prior: { client_id: null }, next: { client_id: clientId, platform_accounts_still_reaching: accounts }, confirmationId });

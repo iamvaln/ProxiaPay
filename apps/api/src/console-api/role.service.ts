@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { PlatformError } from '../common/errors';
-import { DB_TOKEN, type Db, type Tx } from '../db/database';
+import { DB_TOKEN, type Db, type Executor, type Tx } from '../db/database';
 import { ALL_PERMISSIONS, SENSITIVE_PERMISSIONS, type Permission } from '../permissions/permissions';
 import { AuditService } from '../audit/audit.service';
 import { AlertService } from '../alerts/alert.service';
@@ -59,6 +59,7 @@ export class RoleService {
       const a = await this.db.selectFrom('role_assignment').select('administrator_id').where('id', '=', change.assignment_id).executeTakeFirst();
       if (a?.administrator_id === actor.id) throw new PlatformError('PERMISSION_DENIED', 'An administrator cannot alter their own roles or scope.');
     }
+    await this.assertKinds(this.db, change);
     let sensitive = false;
     if (change.kind === 'role_permissions' && change.role_id) {
       const current = (await this.db.selectFrom('role_permission').select('permission_key').where('role_id', '=', change.role_id).execute()).map((p) => p.permission_key as Permission);
@@ -82,7 +83,26 @@ export class RoleService {
     });
   }
 
+  /**
+   * Client roles are fixed, and client assignments are made only by the invitation and team endpoints: a client
+   * account holds no role from this page, and a platform account none of the client roles. Checked again on
+   * apply, since a change can wait for approval.
+   */
+  private async assertKinds(exec: Executor, change: RoleChange): Promise<void> {
+    if (change.kind === 'role_permissions' && change.role_id) {
+      const role = await exec.selectFrom('role').select('kind').where('id', '=', change.role_id).executeTakeFirst();
+      if (role?.kind === 'client') throw new PlatformError('PERMISSION_DENIED', 'Client roles are fixed.');
+    }
+    if (change.kind === 'assignment_add' && change.administrator_id && change.role_id) {
+      const admin = await exec.selectFrom('administrator').select('kind').where('id', '=', change.administrator_id).executeTakeFirst();
+      const role = await exec.selectFrom('role').select('kind').where('id', '=', change.role_id).executeTakeFirst();
+      if (admin?.kind === 'client') throw new PlatformError('PERMISSION_DENIED', 'A client account\'s access comes from its client\'s team.');
+      if (role?.kind === 'client') throw new PlatformError('PERMISSION_DENIED', 'Client roles are given through the client\'s team.');
+    }
+  }
+
   async applyChange(tx: Tx, change: RoleChange, actorId: string, approverId: string | null, confirmationId?: string): Promise<void> {
+    await this.assertKinds(tx, change);
     if (change.kind === 'role_permissions') {
       let roleId = change.role_id;
       let prior: unknown = null;
