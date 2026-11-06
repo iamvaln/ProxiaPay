@@ -215,6 +215,7 @@ export interface ClientMembership {
   disabled_by_client: Generated<boolean>;
   id: Generated<string>;
   invited_by: string | null;
+  invited_name: string | null;
   status: string;
 }
 

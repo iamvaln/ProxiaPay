@@ -22,6 +22,8 @@ CREATE TABLE client_membership (
   status             text NOT NULL CHECK (status IN ('pending', 'active', 'disabled')),
   disabled_by_client boolean NOT NULL DEFAULT false,
   invited_by         uuid REFERENCES administrator(id),
+  -- The name the inviter typed, shown while pending: an existing account's own name would tell the inviter it exists.
+  invited_name       text,
   created_at         timestamptz NOT NULL DEFAULT now(),
   accepted_at        timestamptz,
   UNIQUE (client_id, administrator_id)

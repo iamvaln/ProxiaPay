@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sql } from 'kysely';
 import { createTestContext, type TestContext } from '../test/context';
 import { AdminAuthService } from '../admin-auth/admin-auth.service';
 import { AuthorisationService } from '../admin-auth/authorisation.service';
@@ -41,8 +42,13 @@ async function clientPerson(clientId: string, roleName = 'Client owner') {
   await t.db.insertInto('role_assignment').values({ administrator_id: a.id, role_id: role.id, scope_type: 'client', membership_id: m.id }).execute();
   return { ...a, membershipId: m.id };
 }
-const invite = (input: { clientId: string; email: string; profile?: 'owner' | 'developer' | 'finance'; projectIds?: string[]; language?: 'en' | 'fr' }, actorId: string, svc = service()) =>
-  t.db.transaction().execute((tx) => svc.invite(tx, { name: 'Ama Mensah', language: 'en', profile: 'developer', projectIds: [], ...input }, actorId));
+type InviteArgs = { clientId: string; email: string; name?: string; profile?: 'owner' | 'developer' | 'finance'; projectIds?: string[]; language?: 'en' | 'fr' };
+/** As the team controller does it: the transaction commits, then the mail goes. */
+async function invite(input: InviteArgs, actorId: string, svc = service()) {
+  const invited = await t.db.transaction().execute((tx) => svc.invite(tx, { name: 'Ama Mensah', language: 'en', profile: 'developer', projectIds: [], ...input }, actorId));
+  await invited.deliver();
+  return { status: invited.status };
+}
 
 describe('invitations', () => {
   it('new email: account without password, pending membership, one mail with a 72-hour link', async () => {
@@ -194,6 +200,101 @@ describe('invitations', () => {
     expect('sessionToken' in signed).toBe(true);
     const audit = await t.db.selectFrom('audit_record').select(['actor_id', 'action', 'subject_id']).where('action', '=', 'invitation.accept').execute();
     expect(audit).toEqual([{ actor_id: admin.id, action: 'invitation.accept', subject_id: m.id }]);
+  });
+
+  it('a mail that cannot be sent changes nothing in the answer: rows committed, failure logged', async () => {
+    const acme = await newClient('Acme');
+    const owner = await clientPerson(acme.id);
+    const refusing = { send: async () => { throw new Error('resend: 503 unavailable'); } } as unknown as Mailer;
+    const svc = new InvitationService(t.db, { PUBLIC_BASE_URL: BASE, PROXIAPAY_ENV: 'sandbox' }, refusing, get(AlertService), get(AuditService));
+    const warn = vi.spyOn((svc as unknown as { logger: { warn: (...a: unknown[]) => void } }).logger, 'warn');
+    expect(await invite({ clientId: acme.id, email: 'ama@example.test' }, owner.id, svc)).toEqual({ status: 'invitation_sent' });
+    const m = await t.db.selectFrom('client_membership as m').innerJoin('administrator as a', 'a.id', 'm.administrator_id').select(['m.id', 'm.status']).where('a.email', '=', 'ama@example.test').executeTakeFirstOrThrow();
+    expect(m.status).toBe('pending');
+    expect(await t.db.selectFrom('invitation').select('id').where('membership_id', '=', m.id).execute()).toHaveLength(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(warn.mock.calls[0])).toContain('resend: 503 unavailable');
+    // The owner can send it again once mail works.
+    const resent = await t.db.transaction().execute((tx) => service().resend(tx, m.id, owner.id));
+    await resent.deliver();
+    expect(mailsTo('ama@example.test')).toHaveLength(1);
+  });
+
+  it('nothing is mailed before the transaction commits, and a rolled-back invitation mails nothing', async () => {
+    const acme = await newClient('Acme');
+    const owner = await clientPerson(acme.id);
+    await expect(t.db.transaction().execute(async (tx) => {
+      await service().invite(tx, { clientId: acme.id, name: 'Ama', email: 'ama@example.test', language: 'en', profile: 'developer', projectIds: [] }, owner.id);
+      expect(get(Mailer).sent).toEqual([]);
+      throw new Error('caller failed later');
+    })).rejects.toThrow('caller failed later');
+    expect(await t.db.selectFrom('administrator').select('id').where('email', '=', 'ama@example.test').execute()).toEqual([]);
+    expect(get(Mailer).sent).toEqual([]);
+  });
+
+  it('two simultaneous invitations of one new address both answer invitation_sent, and one mail goes', async () => {
+    const acme = await newClient('Acme');
+    const owner = await clientPerson(acme.id);
+    const args = { clientId: acme.id, name: 'Ama', email: 'ama@example.test', language: 'en' as const, profile: 'developer' as const, projectIds: [] };
+    let written!: () => void;
+    let commit!: () => void;
+    const firstWritten = new Promise<void>((r) => { written = r; });
+    const mayCommit = new Promise<void>((r) => { commit = r; });
+    // The first holds its uncommitted account row while the second, having seen no account, tries to insert the same address.
+    const first = t.db.transaction().execute(async (tx) => {
+      const invited = await service().invite(tx, args, owner.id);
+      written();
+      await mayCommit;
+      return invited;
+    });
+    await firstWritten;
+    const second = t.db.transaction().execute((tx) => service().invite(tx, args, owner.id));
+    for (let i = 0; i < 100; i++) {
+      const { rows } = await sql<{ n: number }>`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`.execute(t.db);
+      if (rows[0]!.n > 0) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    commit();
+    const results = await Promise.all([first, second]);
+    for (const r of results) await r.deliver();
+    expect(results.map((r) => r.status)).toEqual(['invitation_sent', 'invitation_sent']);
+    expect(await t.db.selectFrom('administrator').select('id').where('email', '=', 'ama@example.test').execute()).toHaveLength(1);
+    expect(await t.db.selectFrom('client_membership').select('id').where('client_id', '=', acme.id).execute()).toHaveLength(2);
+    expect(mailsTo('ama@example.test')).toHaveLength(1);
+  });
+
+  it('an existing account without a password chooses one; a link never changes a password already set', async () => {
+    const acme = await newClient('Acme');
+    const beta = await newClient('Beta');
+    const ownerA = await clientPerson(acme.id);
+    const ownerB = await clientPerson(beta.id);
+    await invite({ clientId: acme.id, email: 'ama@example.test' }, ownerA.id);
+    // Invited again elsewhere before choosing a password: the account is existing, but this link still sets the password.
+    await invite({ clientId: beta.id, email: 'ama@example.test', profile: 'finance' }, ownerB.id);
+    const [toAcme, toBeta] = mailsTo('ama@example.test');
+    expect(toBeta!.subject).toBe('Your access to the ProxiaPay console');
+    const betaInvitation = await t.db.selectFrom('invitation as i').innerJoin('client_membership as m', 'm.id', 'i.membership_id').select('i.sets_password').where('m.client_id', '=', beta.id).executeTakeFirstOrThrow();
+    expect(betaInvitation.sets_password).toBe(true);
+    expect(await service().preview(tokenIn(toBeta!.text)!)).toEqual({ client_name: 'Beta', sets_password: true });
+
+    await service().accept(tokenIn(toAcme!.text)!, { password: 'the-first-password' });
+    const before = await t.db.selectFrom('administrator').select('password_hash').where('email', '=', 'ama@example.test').executeTakeFirstOrThrow();
+    // Once a password exists, the Beta link only accepts: whatever password comes with it is not applied.
+    expect(await service().preview(tokenIn(toBeta!.text)!)).toEqual({ client_name: 'Beta', sets_password: false });
+    expect(await service().accept(tokenIn(toBeta!.text)!, { password: 'an-attackers-password' })).toEqual({ ok: true });
+    const after = await t.db.selectFrom('administrator').select('password_hash').where('email', '=', 'ama@example.test').executeTakeFirstOrThrow();
+    expect(after.password_hash).toBe(before.password_hash);
+    expect(await CryptoService.verifySecret(after.password_hash!, 'the-first-password')).toBe(true);
+
+    // An account with a password invited to a third client: sets_password is false from the start, and accepting leaves the hash alone.
+    const gamma = await newClient('Gamma');
+    const ownerG = await clientPerson(gamma.id);
+    const person = await clientPerson(acme.id, 'Client developer');
+    const hash = (await t.db.selectFrom('administrator').select('password_hash').where('id', '=', person.id).executeTakeFirstOrThrow()).password_hash;
+    await invite({ clientId: gamma.id, email: person.email }, ownerG.id);
+    const link = tokenIn(mailsTo(person.email)[0]!.text)!;
+    await service().accept(link, { password: 'another-password-here' });
+    expect((await t.db.selectFrom('administrator').select('password_hash').where('id', '=', person.id).executeTakeFirstOrThrow()).password_hash).toBe(hash);
   });
 
   it('answers the invitation endpoints without a session', () => {

@@ -8,6 +8,7 @@ import { PlatformError } from '../common/errors';
 import { CONFIG, type AppConfig } from '../config/config';
 import { CryptoService } from '../crypto/crypto.service';
 import { DB_TOKEN, type Db, type Executor, type Tx } from '../db/database';
+import { log } from '../logging/logger';
 import { CLIENT_ROLES } from '../permissions/permissions';
 
 export type ClientProfile = 'owner' | 'developer' | 'finance';
@@ -23,7 +24,21 @@ export interface InviteInput {
   projectIds: string[];
 }
 
-const SENT = { status: 'invitation_sent' } as const;
+/** What an invitation answers, whatever the address, and the mail to send once the caller's transaction has committed. */
+export interface Invited {
+  status: 'invitation_sent';
+  deliver(): Promise<void>;
+}
+
+/**
+ * `protectOwners`: the writer is a client owner, who cannot touch an owner's membership. Checked under the
+ * membership's row lock, which every access change takes first, so a concurrent change cannot make it stale.
+ */
+export interface MembershipWriteOptions { auditAction?: string; protectOwners?: boolean }
+
+/** Unique constraints a concurrent invitation of the same address runs into. */
+const RACED_CONSTRAINTS = ['administrator_email_key', 'client_membership_client_id_administrator_id_key'];
+const OWNER_PROTECTED = 'An owner\'s access is changed by ProxiaPay.';
 const VALIDITY_HOURS = 72;
 const NO_LONGER_VALID = 'This invitation link is no longer valid. Ask for a new one.';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -36,6 +51,7 @@ export const isUuid = (s: string) => UUID.test(s);
  */
 @Injectable()
 export class InvitationService {
+  private readonly logger = log('invitations');
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
     @Inject(CONFIG) private readonly config: Pick<AppConfig, 'PUBLIC_BASE_URL' | 'PROXIAPAY_ENV'>,
@@ -44,11 +60,32 @@ export class InvitationService {
     private readonly audit: AuditService,
   ) {}
 
-  /** Runs in the caller's transaction, the mail last, so a refused mail leaves no invitation behind. Platform side passes its own audit action. */
-  async invite(tx: Tx, input: InviteInput, actorId: string, opts: { auditAction?: string } = {}): Promise<{ status: 'invitation_sent' }> {
+  /**
+   * Writes the invitation in the caller's transaction and hands back the mail to send once it has
+   * committed: a mail is never sent for rows that roll back, and a refused mail changes nothing the
+   * inviter sees. Platform side passes its own audit action.
+   */
+  async invite(tx: Tx, input: InviteInput, actorId: string, opts: { auditAction?: string } = {}): Promise<Invited> {
     // Checked before the address is looked at: a configuration gap must not answer differently by address.
     const base = this.baseUrl();
+    // A savepoint, so a concurrent invitation of the same address can be answered like any other without aborting the caller's transaction.
+    await sql`savepoint invitation_write`.execute(tx);
+    try {
+      const mail = await this.write(tx, base, input, actorId, opts.auditAction ?? 'team.invite');
+      await sql`release savepoint invitation_write`.execute(tx);
+      return this.invited(mail);
+    } catch (e) {
+      const constraint = (e as { code?: string; constraint?: string }).code === '23505' ? (e as { constraint?: string }).constraint : undefined;
+      if (!constraint || !RACED_CONSTRAINTS.includes(constraint)) throw e;
+      // The other invitation won the race and sends its own mail.
+      await sql`rollback to savepoint invitation_write`.execute(tx);
+      return this.invited(null);
+    }
+  }
+
+  private async write(tx: Tx, base: string, input: InviteInput, actorId: string, auditAction: string): Promise<Mail | null> {
     const email = input.email.trim().toLowerCase();
+    const name = input.name.trim();
     const client = await tx.selectFrom('client').select(['id', 'name']).where('id', '=', input.clientId).executeTakeFirst();
     if (!client) throw new PlatformError('NOT_FOUND', 'No such client.');
     const projectIds = input.profile === 'owner' ? [] : await this.assertProjects(tx, client.id, input.projectIds);
@@ -60,30 +97,29 @@ export class InvitationService {
         category: 'security', severity: 'informational', subjectType: 'client', subjectReference: client.name,
         fingerprint: `invite_platform:${email}`, title: 'Invitation to a platform account', detail: { client_id: client.id, invited_by: actorId }, actionReference: '/oversight/administrators',
       }, tx);
-      return SENT;
+      return null;
     }
     let invitee: { id: string; name: string; language: 'en' | 'fr'; setsPassword: boolean };
     if (existing) {
       const member = await tx.selectFrom('client_membership').select('id').where('client_id', '=', client.id).where('administrator_id', '=', existing.id).executeTakeFirst();
-      if (member) return SENT;
-      // An account invited elsewhere that never chose a password chooses it here.
+      if (member) return null;
+      // The mail goes to the account holder, so it greets them by their own name. An account invited elsewhere that never chose a password chooses it here.
       invitee = { id: existing.id, name: existing.name, language: existing.language as 'en' | 'fr', setsPassword: existing.password_hash === null };
     } else {
-      const created = await tx.insertInto('administrator').values({ name: input.name.trim(), email, kind: 'client', password_hash: null, language: input.language }).returning('id').executeTakeFirstOrThrow();
-      invitee = { id: created.id, name: input.name.trim(), language: input.language, setsPassword: true };
+      const created = await tx.insertInto('administrator').values({ name, email, kind: 'client', password_hash: null, language: input.language }).returning('id').executeTakeFirstOrThrow();
+      invitee = { id: created.id, name, language: input.language, setsPassword: true };
     }
-    const membership = await tx.insertInto('client_membership').values({ client_id: client.id, administrator_id: invitee.id, status: 'pending', invited_by: actorId }).returning('id').executeTakeFirstOrThrow();
+    const membership = await tx.insertInto('client_membership').values({ client_id: client.id, administrator_id: invitee.id, status: 'pending', invited_by: actorId, invited_name: name }).returning('id').executeTakeFirstOrThrow();
     await this.writeAssignment(tx, invitee.id, membership.id, input.profile, projectIds, actorId);
     await this.audit.record(tx, {
-      actorId, action: opts.auditAction ?? 'team.invite', subjectType: 'client_membership', subjectId: membership.id,
+      actorId, action: auditAction, subjectType: 'client_membership', subjectId: membership.id,
       next: { client_id: client.id, email, profile: input.profile, project_ids: projectIds, new_account: !existing },
     });
-    await this.issue(tx, base, membership.id, { email, ...invitee }, client.name);
-    return SENT;
+    return this.issue(tx, base, membership.id, { email, ...invitee }, client.name);
   }
 
-  /** A fresh link for a membership not yet accepted; every earlier link stops working. */
-  async resend(tx: Tx, membershipId: string, actorId: string, opts: { auditAction?: string } = {}): Promise<{ status: 'invitation_sent' }> {
+  /** A fresh link for a membership not yet accepted; every earlier link stops working. The mail is sent by `deliver`, after the commit. */
+  async resend(tx: Tx, membershipId: string, actorId: string, opts: { auditAction?: string } = {}): Promise<Invited> {
     const base = this.baseUrl();
     const m = await tx
       .selectFrom('client_membership as m')
@@ -97,8 +133,22 @@ export class InvitationService {
     if (m.status !== 'pending') throw new PlatformError('RULE_VIOLATION', 'Only an invitation that is not yet accepted can be sent again.');
     await tx.updateTable('invitation').set({ expires_at: sql`now()` }).where('membership_id', '=', m.id).where('used_at', 'is', null).where('expires_at', '>', sql<Date>`now()`).execute();
     await this.audit.record(tx, { actorId, action: opts.auditAction ?? 'team.resend', subjectType: 'client_membership', subjectId: m.id });
-    await this.issue(tx, base, m.id, { email: m.email, name: m.name, language: m.language as 'en' | 'fr', setsPassword: m.password_hash === null }, m.client_name);
-    return SENT;
+    return this.invited(await this.issue(tx, base, m.id, { email: m.email, name: m.name, language: m.language as 'en' | 'fr', setsPassword: m.password_hash === null }, m.client_name));
+  }
+
+  /** The answer, identical on every path, and the mail if there is one. A failed send is logged; the membership stays pending and can be resent. */
+  private invited(mail: Mail | null): Invited {
+    return {
+      status: 'invitation_sent',
+      deliver: async () => {
+        if (!mail) return;
+        try {
+          await this.mailer.send(mail);
+        } catch (e) {
+          this.logger.warn({ err: (e as Error).message }, 'invitation mail not sent; it can be sent again from the team');
+        }
+      },
+    };
   }
 
   /** What the invitation page shows before accepting. Unknown, expired and used links answer alike. */
@@ -145,10 +195,11 @@ export class InvitationService {
   }
 
   /** Replaces a membership's assignment in one go and ends the member's sessions in that client, so the new access applies at once. */
-  async replaceAccess(tx: Tx, membershipId: string, profile: ClientProfile, projectIds: string[], actorId: string, opts: { auditAction?: string } = {}) {
+  async replaceAccess(tx: Tx, membershipId: string, profile: ClientProfile, projectIds: string[], actorId: string, opts: MembershipWriteOptions = {}) {
     const m = await tx.selectFrom('client_membership').select(['id', 'client_id', 'administrator_id']).where('id', '=', membershipId).forUpdate().executeTakeFirstOrThrow();
-    const scoped = profile === 'owner' ? [] : await this.assertProjects(tx, m.client_id, projectIds);
     const prior = await this.accessOf(tx, m.id);
+    if (opts.protectOwners && prior.profile === 'owner') throw new PlatformError('PERMISSION_DENIED', OWNER_PROTECTED);
+    const scoped = profile === 'owner' ? [] : await this.assertProjects(tx, m.client_id, projectIds);
     await tx.deleteFrom('role_assignment').where('membership_id', '=', m.id).execute();
     await this.writeAssignment(tx, m.administrator_id, m.id, profile, scoped, actorId);
     await this.revokeSessionsIn(tx, m.administrator_id, m.client_id, actorId);
@@ -160,8 +211,9 @@ export class InvitationService {
    * Disables a membership, ending its sessions in that client, or enables it again. A membership never
    * accepted goes back to pending, never to active: enabling must not stand in for the invitee's acceptance.
    */
-  async setStatus(tx: Tx, membershipId: string, status: 'active' | 'disabled', actorId: string, opts: { auditAction?: string } = {}) {
+  async setStatus(tx: Tx, membershipId: string, status: 'active' | 'disabled', actorId: string, opts: MembershipWriteOptions = {}) {
     const m = await tx.selectFrom('client_membership').select(['id', 'client_id', 'administrator_id', 'status', 'accepted_at']).where('id', '=', membershipId).forUpdate().executeTakeFirstOrThrow();
+    if (opts.protectOwners && (await this.accessOf(tx, m.id)).profile === 'owner') throw new PlatformError('PERMISSION_DENIED', OWNER_PROTECTED);
     const next = status === 'disabled' ? 'disabled' : (m.accepted_at ? 'active' : 'pending');
     await tx.updateTable('client_membership').set({ status: next, disabled_by_client: false }).where('id', '=', m.id).execute();
     if (next === 'disabled') await this.revokeSessionsIn(tx, m.administrator_id, m.client_id, actorId);
@@ -217,14 +269,14 @@ export class InvitationService {
       .where('administrator_id', '=', administratorId).where('active_client_id', '=', clientId).where('revoked_at', 'is', null).execute();
   }
 
-  /** One link per call: 32 random bytes, kept only as a hash, valid 72 hours. */
-  private async issue(tx: Tx, base: string, membershipId: string, invitee: { email: string; name: string; language: 'en' | 'fr'; setsPassword: boolean }, clientName: string): Promise<void> {
+  /** One link per call: 32 random bytes, kept only as a hash, valid 72 hours. Returns the mail carrying it, for `deliver`. */
+  private async issue(tx: Tx, base: string, membershipId: string, invitee: { email: string; name: string; language: 'en' | 'fr'; setsPassword: boolean }, clientName: string): Promise<Mail> {
     const token = CryptoService.randomToken(32);
     await tx.insertInto('invitation').values({
       membership_id: membershipId, token_hash: CryptoService.tokenHash(token), sets_password: invitee.setsPassword,
       expires_at: sql`now() + make_interval(hours => ${VALIDITY_HOURS})`,
     }).execute();
-    await this.mailer.send(this.mail(invitee, clientName, `${base}/console/invitation/${token}`));
+    return this.mail(invitee, clientName, `${base}/console/invitation/${token}`);
   }
 
   /**

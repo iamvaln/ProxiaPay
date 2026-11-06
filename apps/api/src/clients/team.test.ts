@@ -71,6 +71,20 @@ describe('the owner\'s team', () => {
     expect((await team().list(req)).members.find((m) => m.membership_id === member.id)!.invitation).toBe('expired');
   });
 
+  it('lists an existing account under the name the owner typed until it accepts', async () => {
+    const { acme, req } = await acmeTeam();
+    const other = await newClient('Other');
+    const elsewhere = await clientPerson(other.id, 'Client developer');
+    await t.db.updateTable('administrator').set({ name: 'Kwame Mensah' }).where('id', '=', elsewhere.id).execute();
+    await team().invite({ name: 'Test', email: elsewhere.email, profile: 'finance', project_ids: [] }, req);
+    const m = await t.db.selectFrom('client_membership').select('id').where('client_id', '=', acme.id).where('administrator_id', '=', elsewhere.id).executeTakeFirstOrThrow();
+    const listed = async () => (await team().list(req)).members.find((x) => x.membership_id === m.id)!;
+    expect(await listed()).toMatchObject({ name: 'Test', email: elsewhere.email, status: 'pending' });
+    expect(JSON.stringify(await team().list(req))).not.toContain('Kwame');
+    await invitations().acceptMembership(elsewhere.id, m.id);
+    expect(await listed()).toMatchObject({ name: 'Kwame Mensah', status: 'active', invitation: 'accepted' });
+  });
+
   it('an owner cannot add a project of another client', async () => {
     const { req, member } = await acmeTeam();
     const other = await newClient('Other');
@@ -113,8 +127,11 @@ describe('the owner\'s team', () => {
   it('an owner cannot change another owner', async () => {
     const { acme, req } = await acmeTeam();
     const second = await clientPerson(acme.id, 'Client owner');
-    await expect(team().status(second.membershipId, { status: 'disabled' }, req)).rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
-    await expect(team().access(second.membershipId, { profile: 'finance', project_ids: [] }, req)).rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
+    const owners = { code: 'PERMISSION_DENIED', message: 'An owner\'s access is changed by ProxiaPay.' };
+    await expect(team().status(second.membershipId, { status: 'disabled' }, req)).rejects.toMatchObject(owners);
+    await expect(team().access(second.membershipId, { profile: 'finance', project_ids: [] }, req)).rejects.toMatchObject(owners);
+    expect((await membershipOf(second.email)).status).toBe('active');
+    expect(await t.db.selectFrom('audit_record').select('id').where('action', 'in', ['team.status', 'team.access']).execute()).toEqual([]);
   });
 
   it('inviting the same address twice sends once', async () => {
