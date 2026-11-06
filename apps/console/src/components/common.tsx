@@ -149,7 +149,7 @@ export function ConfirmedAction({ operationType, values, path, method = 'POST', 
       {stage === 'code' && (
         <div className="row">
           <span className="small">{t('common.code_prompt')}</span>
-          <input autoFocus inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} style={{ width: 90 }} />
+          <input aria-label={t('common.code')} autoFocus inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} style={{ width: 90 }} />
           <button className="primary" disabled={code.length !== 6} onClick={commit}>{t('common.confirm')}</button>
           <button onClick={() => { setStage('idle'); setCode(''); }}>{t('common.cancel')}</button>
         </div>

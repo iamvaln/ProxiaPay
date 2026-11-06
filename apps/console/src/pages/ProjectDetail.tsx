@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { del, get, post, put } from '../lib/api';
+import { del, get, post, put, type ApiError } from '../lib/api';
 import { useSession, useT } from '../lib/session';
-import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
+import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, SubmitForm, Tag, When, useLoad } from '../components/common';
+import { SecretOnce } from '../components/SecretOnce';
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type RowAction } from '../components/table/DataTable';
-import { chip, fetchPage, periodFilter, useReload, yesNo } from './list-support';
+import { chip, fetchPage, periodFilter, useReload, useTab, yesNo } from './list-support';
 import { TransactionTable } from './Transactions';
 
 type Row = Record<string, any>;
@@ -99,110 +100,199 @@ export function originList({ t, has, reload, id }: { t: Tr; has: (p: string) => 
   };
 }
 
-/** Project detail (console spec 6.2): credentials as a rotation sequence, origins with refusals, entitlements with overrides beside the route's own, notification endpoint. */
-export function ProjectDetailPage() {
-  const { id } = useParams();
+const TABS = ['overview', 'keys', 'origins', 'routes', 'deliveries', 'activity'] as const;
+type Secret = { label: string; value: string }[];
+type Project = Record<string, any>;
+
+/** Status, code, creation and balances. */
+function OverviewTab({ data }: { data: Project }) {
+  const t = useT();
+  const p = data.project;
+  return (
+    <div className="card" id="overview">
+      <dl className="kv">
+        <dt>{t('col.status')}</dt><dd><Pill value={p.status} /></dd>
+        <dt>{t('col.code')}</dt><dd className="mono">{p.code}</dd>
+        <dt>{t('pd.created')}</dt><dd><When value={p.created_at} /></dd>
+        <dt>{t('l.balances')}</dt><dd>{data.balances.length ? data.balances.map((b: Row) => <div key={b.currency}><Amount minor={b.available} currency={b.currency} /> {t('pd.available')} · <Amount minor={b.reserved} currency={b.currency} /> {t('l.reserved')}</div>) : '—'}</dd>
+      </dl>
+    </div>
+  );
+}
+
+/** Credentials as a rotation sequence, and the notification endpoint; each shows its own secret, once. */
+function KeysTab({ data, id, reload, credentialSecret, setCredentialSecret, signingSecret, setSigningSecret }: {
+  data: Project; id: string; reload: () => void; credentialSecret: Secret | null; setCredentialSecret: (s: Secret | null) => void; signingSecret: Secret | null; setSigningSecret: (s: Secret | null) => void;
+}) {
   const { has } = useSession();
   const t = useT();
-  const [deliveriesRev, reloadDeliveries] = useReload();
-  const { data, error, reload } = useLoad(() => get<any>(`/projects/${id}`), [id]);
-  const [origin, setOrigin] = useState({ cidr: '', description: '' });
   const [url, setUrl] = useState('');
-  const [secretShown, setSecretShown] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [grant, setGrant] = useState<any>({ route_id: '', count_24h: 5000, value_24h: 20000000, count_30d: 100000, value_30d: 400000000, note: '', accept_shortfall: false });
-  const routes = useLoad(() => get<{ routes: any[] }>('/configuration/routes'), []);
-  if (error) return <ErrorLine error={error} />;
-  if (!data) return null;
   const p = data.project;
-  const active = data.credentials.filter((c: any) => c.status === 'active');
-  const primary = active.find((c: any) => c.role === 'primary');
-  const secondary = active.find((c: any) => c.role === 'secondary');
+  const active = data.credentials.filter((c: Row) => c.status === 'active');
+  const primary = active.find((c: Row) => c.role === 'primary');
+  const secondary = active.find((c: Row) => c.role === 'secondary');
   const stage = !primary ? 'none' : secondary ? 'both' : 'primary';
+  const signing = (r: { signing_secret: string }) => setSigningSecret([{ label: t('secret.signing'), value: r.signing_secret }]);
+  return (
+    <div className="grid2">
+      <div className="card" id="credentials">
+        <h2>{t('pd.credentials')}</h2>
+        <p className="small muted">{t('pd.rotation')} <b className={stage === 'none' ? 'negative' : ''}>{t(`pd.rotation_${stage}`)}</b></p>
+        <DataTable<Row> bare rows={data.credentials} rowKey={(c) => c.id} defaultSort="issued" empty={{ none: t('l.credential_none'), why: t('l.credential_why') }} columns={[
+          { key: 'key', label: t('col.key'), render: (c) => <span className="small"><span className="mono">{c.key}</span><br /><span className="muted">{c.scopes.join(', ')}</span></span> },
+          { key: 'role', label: t('col.role'), render: (c) => <Pill value={c.role} /> },
+          { key: 'status', label: t('col.status'), render: (c) => <Pill value={c.status} /> },
+          { key: 'issued', label: t('col.issued'), render: (c) => <When value={c.issued_at} /> },
+          // The rotation actions are code-confirmed components, so they sit in a cell of their own under the table's header.
+          { key: 'actions', label: t('table.actions'), render: (c) => c.status === 'active' && has('projects.credentials') ? <div className="row">
+            {c.role === 'secondary' && <ConfirmedAction operationType="credential.promote" values={{ credential_id: c.id }} path={`/projects/${id}/credentials/${c.id}/promote`} label={t('pd.promote')} onDone={reload} />}
+            {c.role === 'secondary' && active.length > 1 && <ConfirmedAction operationType="credential.delete" values={{ credential_id: c.id }} path={`/projects/${id}/credentials/${c.id}`} method="DELETE" label={t('pd.delete')} onDone={reload} />}
+            {c.role === 'primary' && <button disabled title={t('pd.delete_primary')}>{t('pd.delete')}</button>}
+            {active.length === 1 && c.role === 'secondary' && <button disabled title={t('pd.delete_last')}>{t('pd.delete')}</button>}
+            <ConfirmedAction operationType="credential.revoke" values={{ credential_id: c.id, reason: 'revoked from console' }} path={`/projects/${id}/credentials/${c.id}/revoke`} label={t('pd.revoke')} onDone={reload} />
+          </div> : null },
+        ]} />
+        {has('projects.credentials') ? (active.length < 2 && <ConfirmedAction operationType="credential.issue" values={{ project_id: id, scopes: ['collection', 'disbursement', 'read'] }} path={`/projects/${id}/credentials`} label={primary ? t('pd.issue_secondary') : t('pd.issue')} onDone={(r: any) => { setCredentialSecret([{ label: t('secret.key'), value: r.key }, { label: t('secret.secret'), value: r.secret }]); reload(); }} />) : <NeedsPermission permission="projects.credentials" />}
+        {credentialSecret && <SecretOnce items={credentialSecret} onDismiss={() => setCredentialSecret(null)} />}
+      </div>
+      <div className="card" id="notifications">
+        <h2>{t('pd.endpoint')}</h2>
+        {data.notification_endpoint ? <p>{data.notification_endpoint.url} <Tag family="confirmed">{t('pd.secret_set')}</Tag></p> : <Empty text={t('pd.endpoint_none')} />}
+        {has('projects.notifications') && <>
+          <SubmitForm className="row" submitLabel={t('pd.set_address')} onSubmit={async () => { signing(await put<{ signing_secret: string }>(`/projects/${id}/notification-endpoint`, { url })); setUrl(''); reload(); return t('pd.endpoint_set'); }}>
+            <input aria-label={t('field.url')} placeholder="https://…" value={url} onChange={(e) => setUrl(e.target.value)} style={{ width: 320 }} required />
+          </SubmitForm>
+          {data.notification_endpoint && <ConfirmedAction operationType="notification_endpoint.regenerate" values={{ project_id: id }} path={`/projects/${id}/notification-endpoint/regenerate-secret`} label={t('pd.regenerate')} summary={<p className="small warnbox">{t('pd.regenerate_warning', { name: p.name })}</p>} onDone={(r: any) => signing(r)} />}
+        </>}
+        {signingSecret && <SecretOnce items={signingSecret} onDismiss={() => setSigningSecret(null)} />}
+      </div>
+    </div>
+  );
+}
+
+/** Declared origins, and the requests refused for coming from elsewhere. */
+function OriginsTab({ data, id, reload }: { data: Project; id: string; reload: () => void }) {
+  const { has } = useSession();
+  const t = useT();
+  const [origin, setOrigin] = useState({ cidr: '', description: '' });
   return (
     <>
-      <h1>{p.name} <Pill value={p.status} /></h1>
-      <div className="grid2">
-        <div className="card">
-          <dl className="kv"><dt>Code</dt><dd>{p.code}</dd><dt>Created</dt><dd><When value={p.created_at} /></dd><dt>Balances</dt><dd>{data.balances.length ? data.balances.map((b: any) => <div key={b.currency}><Amount minor={b.available} currency={b.currency} /> available · <Amount minor={b.reserved} currency={b.currency} /> reserved</div>) : '—'}</dd></dl>
-        </div>
-        <div className="card" id="credentials">
-          <h2>Credentials</h2>
-          <p className="small muted">Rotation: <b className={stage === 'none' ? 'negative' : ''}>{stage === 'none' ? 'no working credential' : stage === 'primary' ? 'one primary; issue a secondary to begin a rotation' : 'primary and secondary both authenticate; promote the secondary, then delete the retired one'}</b></p>
-          <DataTable<Row> bare rows={data.credentials} rowKey={(c) => c.id} defaultSort="issued" empty={{ none: t('l.credential_none'), why: t('l.credential_why') }} columns={[
-            { key: 'key', label: t('col.key'), render: (c) => <span className="small"><span className="mono">{c.key}</span><br /><span className="muted">{c.scopes.join(', ')}</span></span> },
-            { key: 'role', label: t('col.role'), render: (c) => <Pill value={c.role} /> },
-            { key: 'status', label: t('col.status'), render: (c) => <Pill value={c.status} /> },
-            { key: 'issued', label: t('col.issued'), render: (c) => <When value={c.issued_at} /> },
-            // The rotation actions are code-confirmed components, so they sit in a cell of their own under the table's header.
-            { key: 'actions', label: t('table.actions'), render: (c) => c.status === 'active' && has('projects.credentials') ? <div className="row">
-              {c.role === 'secondary' && <ConfirmedAction operationType="credential.promote" values={{ credential_id: c.id }} path={`/projects/${id}/credentials/${c.id}/promote`} label="Promote" onDone={reload} />}
-              {c.role === 'secondary' && active.length > 1 && <ConfirmedAction operationType="credential.delete" values={{ credential_id: c.id }} path={`/projects/${id}/credentials/${c.id}`} method="DELETE" label="Delete" onDone={reload} />}
-              {c.role === 'primary' && <button disabled title="The primary credential cannot be deleted; promote the secondary first.">Delete</button>}
-              {active.length === 1 && c.role === 'secondary' && <button disabled title="A project keeps at least one credential.">Delete</button>}
-              <ConfirmedAction operationType="credential.revoke" values={{ credential_id: c.id, reason: 'revoked from console' }} path={`/projects/${id}/credentials/${c.id}/revoke`} label="Revoke" onDone={reload} />
-            </div> : null },
-          ]} />
-          {has('projects.credentials') ? (active.length < 2 && <ConfirmedAction operationType="credential.issue" values={{ project_id: id, scopes: ['collection', 'disbursement', 'read'] }} path={`/projects/${id}/credentials`} label={primary ? 'Issue secondary credential' : 'Issue credential'} onDone={(r: any) => { setSecretShown(`${r.key}\n${r.secret}`); reload(); }} />) : <NeedsPermission permission="projects.credentials" />}
-          {secretShown && <div className="warnbox">The secret appears once, now. Copy it.<pre>{secretShown}</pre></div>}
-        </div>
-      </div>
-      <div className="grid2">
-        <div className="card" id="origins">
-          <h2>Declared origins</h2>
-          <DataTable<Row> prefix="org_" search={false} rows={data.origins} {...originList({ t, has, reload, id: id! })} />
-          {has('projects.origins') && <form className="row" onSubmit={async (e) => { e.preventDefault(); setErr(null); try { await post(`/projects/${id}/origins`, origin); setOrigin({ cidr: '', description: '' }); reload(); } catch (x) { setErr((x as Error).message); } }}>
-            <input placeholder="10.0.0.0/8" value={origin.cidr} onChange={(e) => setOrigin({ ...origin, cidr: e.target.value })} required /><input placeholder="Description" value={origin.description} onChange={(e) => setOrigin({ ...origin, description: e.target.value })} /><button>Add</button>
-          </form>}
-          <ErrorLine error={err} />
-        </div>
-        <div className="card" id="notifications">
-          <h2>Notification endpoint</h2>
-          {data.notification_endpoint ? <p>{data.notification_endpoint.url} <Tag family="confirmed">secret set</Tag></p> : <Empty text="No endpoint registered; the project receives no events until one is set." />}
-          {has('projects.notifications') && <>
-            <form className="row" onSubmit={async (e) => { e.preventDefault(); const r = await put<{ signing_secret: string }>(`/projects/${id}/notification-endpoint`, { url }); setSecretShown(r.signing_secret); reload(); }}><input placeholder="https://…" value={url} onChange={(e) => setUrl(e.target.value)} style={{ width: 320 }} required /><button>Set address</button></form>
-            {data.notification_endpoint && <ConfirmedAction operationType="notification_endpoint.regenerate" values={{ project_id: id }} path={`/projects/${id}/notification-endpoint/regenerate-secret`} label="Regenerate secret" summary={<p className="small warnbox">Regenerating replaces the secret for <b>{p.name}</b>; its signature checks fail until it deploys the new value.</p>} onDone={(r: any) => setSecretShown(r.signing_secret)} />}
-          </>}
-        </div>
-      </div>
-      <div className="card" id="entitlements">
-        <h2>Entitlements</h2>
-        <DataTable<Row> prefix="ent_" rows={data.entitlements} {...entitlementList({ t, has, reload, id: id! })} />
-        {has('projects.entitlements') && routes.data && (
-          <form className="stack" style={{ marginTop: 12 }} onSubmit={async (e) => { e.preventDefault(); setErr(null); try { const body = { ...grant, processing_fee_bps: grant.processing_fee_bps === '' || grant.processing_fee_bps == null ? null : Number(grant.processing_fee_bps), platform_fee_bps: grant.platform_fee_bps === '' || grant.platform_fee_bps == null ? null : Number(grant.platform_fee_bps), processing_fee_bearer: grant.processing_fee_bearer || null, platform_fee_bearer: grant.platform_fee_bearer || null }; await post(`/projects/${id}/entitlements`, body); reload(); } catch (x: any) { setErr(x.details?.warning ? `${x.message} Shortfall per 10,000: ${x.details.warning.shortfall_per_10000} (${x.details.warning.binding_provider} expects ${x.details.warning.expected_fee_bps / 100}%). Tick "accept shortfall" to proceed deliberately.` : x.message); } }}>
-            <h3>Grant or amend a route</h3>
-            <label>Route<select value={grant.route_id} onChange={(e) => setGrant({ ...grant, route_id: e.target.value })} required><option value="">—</option>{routes.data.routes.map((r) => <option key={r.id} value={r.id}>{r.country_code} · {r.payment_method_code} · {r.direction} · {r.currency_code}</option>)}</select></label>
-            <div className="row">
-              <label>Count 24h<input type="number" value={grant.count_24h} onChange={(e) => setGrant({ ...grant, count_24h: Number(e.target.value) })} /></label>
-              <label>Value 24h<input type="number" value={grant.value_24h} onChange={(e) => setGrant({ ...grant, value_24h: Number(e.target.value) })} /></label>
-              <label>Count 30d<input type="number" value={grant.count_30d} onChange={(e) => setGrant({ ...grant, count_30d: Number(e.target.value) })} /></label>
-              <label>Value 30d<input type="number" value={grant.value_30d} onChange={(e) => setGrant({ ...grant, value_30d: Number(e.target.value) })} /></label>
-            </div>
-            <div className="row">
-              <label>Processing bps override<input type="number" placeholder="inherit" value={grant.processing_fee_bps ?? ''} onChange={(e) => setGrant({ ...grant, processing_fee_bps: e.target.value })} /></label>
-              <label>Platform bps override<input type="number" placeholder="inherit" value={grant.platform_fee_bps ?? ''} onChange={(e) => setGrant({ ...grant, platform_fee_bps: e.target.value })} /></label>
-              <label>Processing bearer<select value={grant.processing_fee_bearer ?? ''} onChange={(e) => setGrant({ ...grant, processing_fee_bearer: e.target.value })}><option value="">inherit</option><option value="counterparty">counterparty</option><option value="project">project</option></select></label>
-              <label>Platform bearer<select value={grant.platform_fee_bearer ?? ''} onChange={(e) => setGrant({ ...grant, platform_fee_bearer: e.target.value })}><option value="">inherit</option><option value="counterparty">counterparty</option><option value="project">project</option></select></label>
-            </div>
-            <label>Note<input value={grant.note} onChange={(e) => setGrant({ ...grant, note: e.target.value })} required /></label>
-            <label className="row"><input type="checkbox" checked={grant.accept_shortfall} onChange={(e) => setGrant({ ...grant, accept_shortfall: e.target.checked })} /> Accept a processing rate below the expected provider fee</label>
-            <ErrorLine error={err} />
-            <button className="primary">Commit new version</button>
-          </form>
+      <div className="card" id="origins">
+        <h2>{t('pd.origins')}</h2>
+        <DataTable<Row> prefix="org_" search={false} rows={data.origins} {...originList({ t, has, reload, id })} />
+        {has('projects.origins') && (
+          <SubmitForm className="row" submitLabel={t('pd.add')} onSubmit={async () => { await post(`/projects/${id}/origins`, origin); const cidr = origin.cidr; setOrigin({ cidr: '', description: '' }); reload(); return t('pd.origin_added', { cidr }); }}>
+            <input aria-label={t('field.cidr')} placeholder="10.0.0.0/8" value={origin.cidr} onChange={(e) => setOrigin({ ...origin, cidr: e.target.value })} required />
+            <input aria-label={t('field.description')} placeholder={t('field.description')} value={origin.description} onChange={(e) => setOrigin({ ...origin, description: e.target.value })} />
+          </SubmitForm>
         )}
       </div>
       <div className="card" id="refusals">
         <h2>{t('l.refusals')}</h2>
         <DataTable<Row> prefix="ref_" search={false} {...refusalList({ t })} fetch={fetchPage<Row>(`/projects/${id}/origin-refusals`, { period: 'after' })} />
       </div>
-      <div className="card" id="deliveries">
-        <h2>{t('l.deliveries')}</h2>
-        <DataTable<Row> key={deliveriesRev} prefix="del_" search={false} {...deliveryList({ t, has, reload: reloadDeliveries })} fetch={fetchPage<Row>(`/projects/${id}/deliveries`)} />
-      </div>
-      <div className="card" id="activity">
-        <h2>{t('l.activity')}</h2>
-        <ProjectActivity id={id!} />
-      </div>
+    </>
+  );
+}
+
+const EMPTY_GRANT = { route_id: '', count_24h: '', value_24h: '', count_30d: '', value_30d: '', processing_fee_bps: '', platform_fee_bps: '', processing_fee_bearer: '', platform_fee_bearer: '', note: '', accept_shortfall: false };
+const BEARERS = ['counterparty', 'project'] as const;
+
+/**
+ * Grants a route or amends its grant with a new version. The limits start empty, since any figure here would be
+ * someone else's; an empty override inherits the route's own value, shown as the placeholder.
+ */
+function GrantForm({ id, routes, reload }: { id: string; routes: Row[]; reload: () => void }) {
+  const t = useT();
+  const { lang } = useSession();
+  const [grant, setGrant] = useState(EMPTY_GRANT);
+  const set = (patch: Partial<typeof EMPTY_GRANT>) => setGrant((g) => ({ ...g, ...patch }));
+  const route = routes.find((r) => r.id === grant.route_id);
+  const percent = (bps: number) => (bps / 100).toLocaleString(lang === 'fr' ? 'fr-FR' : 'en-US', { maximumFractionDigits: 2 });
+  const inheritBps = (bps: number | null | undefined) => (route && bps != null ? t('grant.inherit_bps', { bps, pct: percent(bps) }) : t('grant.inherit'));
+  const inheritBearer = (b: string | null | undefined) => (route && b ? t('grant.inherit_bearer', { bearer: t(`grant.bearer_${b}`) }) : t('grant.inherit'));
+  const orNull = (v: string) => (v === '' ? null : Number(v));
+  const submit = async () => {
+    const body = {
+      ...grant, count_24h: Number(grant.count_24h), value_24h: Number(grant.value_24h), count_30d: Number(grant.count_30d), value_30d: Number(grant.value_30d),
+      processing_fee_bps: orNull(grant.processing_fee_bps), platform_fee_bps: orNull(grant.platform_fee_bps),
+      processing_fee_bearer: grant.processing_fee_bearer || null, platform_fee_bearer: grant.platform_fee_bearer || null,
+    };
+    try {
+      const r = await post<{ sequence: number }>(`/projects/${id}/entitlements`, body);
+      setGrant(EMPTY_GRANT); reload();
+      return t('grant.committed', { sequence: r.sequence });
+    } catch (x) {
+      const w = (x as ApiError).details?.warning as Row | undefined;
+      if (w) throw new Error(t('grant.shortfall', { provider: w.binding_provider, pct: percent(w.expected_fee_bps), shortfall: w.shortfall_per_10000 }));
+      throw x;
+    }
+  };
+  const limit = (key: 'count_24h' | 'value_24h' | 'count_30d' | 'value_30d') => (
+    <label>{t(`field.${key}`)}<input type="number" min={0} step={1} value={grant[key]} onChange={(e) => set({ [key]: e.target.value })} required /></label>
+  );
+  const bearer = (key: 'processing_fee_bearer' | 'platform_fee_bearer') => (
+    <label>{t(`field.${key}`)}<select value={grant[key]} onChange={(e) => set({ [key]: e.target.value })}><option value="">{inheritBearer(route?.[key])}</option>{BEARERS.map((b) => <option key={b} value={b}>{t(`grant.bearer_${b}`)}</option>)}</select></label>
+  );
+  return (
+    <div style={{ marginTop: 12 }}>
+      <h3>{t('grant.title')}</h3>
+      <SubmitForm submitLabel={t('grant.submit')} onSubmit={submit}>
+        <label>{t('field.route_id')}<select value={grant.route_id} onChange={(e) => set({ route_id: e.target.value })} required><option value="">—</option>{routes.map((r) => <option key={r.id} value={r.id}>{r.country_code} · {r.payment_method_code} · {r.direction} · {r.currency_code}</option>)}</select></label>
+        <div className="row">{limit('count_24h')}{limit('value_24h')}{limit('count_30d')}{limit('value_30d')}</div>
+        <div className="row">
+          <label>{t('field.processing_fee_bps')}<input type="number" min={0} step={1} placeholder={inheritBps(route?.processing_fee_bps)} value={grant.processing_fee_bps} onChange={(e) => set({ processing_fee_bps: e.target.value })} /></label>
+          <label>{t('field.platform_fee_bps')}<input type="number" min={0} step={1} placeholder={inheritBps(route?.platform_fee_bps)} value={grant.platform_fee_bps} onChange={(e) => set({ platform_fee_bps: e.target.value })} /></label>
+          {bearer('processing_fee_bearer')}{bearer('platform_fee_bearer')}
+        </div>
+        <label>{t('field.note')}<input value={grant.note} onChange={(e) => set({ note: e.target.value })} required /></label>
+        <label className="row"><input type="checkbox" checked={grant.accept_shortfall} onChange={(e) => set({ accept_shortfall: e.target.checked })} /> {t('grant.accept_shortfall')}</label>
+      </SubmitForm>
+    </div>
+  );
+}
+
+/** Project detail (console spec 6.2), one tab per concern; the tab lives in the URL beside the tables' state. */
+export function ProjectDetailPage() {
+  const { id } = useParams();
+  const { has } = useSession();
+  const t = useT();
+  const [tab, setTab] = useTab(TABS, 'overview');
+  const [deliveriesRev, reloadDeliveries] = useReload();
+  const { data, error, reload } = useLoad(() => get<any>(`/projects/${id}`), [id]);
+  const routes = useLoad(() => get<{ routes: any[] }>('/configuration/routes'), []);
+  // Two secrets, two states: the signing secret and a new credential never share, so neither replaces the other.
+  const [credentialSecret, setCredentialSecret] = useState<Secret | null>(null);
+  const [signingSecret, setSigningSecret] = useState<Secret | null>(null);
+  if (error) return <ErrorLine error={error} />;
+  if (!data) return null;
+  const p = data.project;
+  return (
+    <>
+      <h1>{p.name} <Pill value={p.status} /></h1>
+      <div className="tabs">{TABS.map((k) => <a key={k} href="#" className={tab === k ? 'active' : ''} aria-current={tab === k ? 'page' : undefined} onClick={(e) => { e.preventDefault(); setTab(k); }}>{t(`l.tab_${k}`)}</a>)}</div>
+      {tab === 'overview' && <OverviewTab data={data} />}
+      {tab === 'keys' && <KeysTab data={data} id={id!} reload={reload} credentialSecret={credentialSecret} setCredentialSecret={setCredentialSecret} signingSecret={signingSecret} setSigningSecret={setSigningSecret} />}
+      {tab === 'origins' && <OriginsTab data={data} id={id!} reload={reload} />}
+      {tab === 'routes' && (
+        <div className="card" id="entitlements">
+          <h2>{t('pd.entitlements')}</h2>
+          <DataTable<Row> prefix="ent_" rows={data.entitlements} {...entitlementList({ t, has, reload, id: id! })} />
+          {has('projects.entitlements') && routes.data && <GrantForm id={id!} routes={routes.data.routes} reload={reload} />}
+        </div>
+      )}
+      {tab === 'deliveries' && (
+        <div className="card" id="deliveries">
+          <h2>{t('l.deliveries')}</h2>
+          <DataTable<Row> key={deliveriesRev} prefix="del_" search={false} {...deliveryList({ t, has, reload: reloadDeliveries })} fetch={fetchPage<Row>(`/projects/${id}/deliveries`)} />
+        </div>
+      )}
+      {tab === 'activity' && (
+        <div className="card" id="activity">
+          <h2>{t('l.activity')}</h2>
+          <ProjectActivity id={id!} />
+        </div>
+      )}
     </>
   );
 }
