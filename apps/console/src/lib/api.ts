@@ -37,3 +37,21 @@ export const del = <T,>(path: string, body?: unknown) => api<T>(path, { method: 
 export async function requestConfirmation(operationType: string, values: unknown, subjectReference?: string): Promise<{ confirmation_id: string; expires_at: string }> {
   return post('/auth/confirmations', { operation_type: operationType, values, subject_reference: subjectReference });
 }
+
+/** The fields a console form sends, named in words, with what a valid value looks like (i18n `field.*` and `expect.*`). */
+const FIELDS: Record<string, string> = {
+  processing_fee_bps: 'bps', platform_fee_bps: 'bps', count_24h: 'count', count_30d: 'count', value_24h: 'minor', value_30d: 'minor',
+  processing_fee_bearer: 'bearer', platform_fee_bearer: 'bearer', route_id: 'route', note: 'note', code: 'code', name: 'name',
+  cidr: 'cidr', description: 'description', url: 'url',
+};
+
+/**
+ * What an administrator reads when a request fails. A validation error the console knows the field of becomes a
+ * sentence naming the field and what it expects; anything else keeps the server's message.
+ */
+export function readableError(err: unknown, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  if (err instanceof ApiError && err.code === 'FIELD_INVALID' && err.field && FIELDS[err.field]) {
+    return t('err.field', { field: t(`field.${err.field}`), expect: t(`expect.${FIELDS[err.field]}`) });
+  }
+  return err instanceof Error ? err.message : String(err);
+}

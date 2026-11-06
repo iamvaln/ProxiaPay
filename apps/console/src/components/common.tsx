@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, post, requestConfirmation } from '../lib/api';
+import { ApiError, api, readableError, requestConfirmation } from '../lib/api';
 import { useSession, useT } from '../lib/session';
 import { moneyParts, utc, when } from '../lib/format';
 import { STATE_SYMBOL, stateFamily, type StateFamily } from '../lib/states';
@@ -78,6 +78,35 @@ export function NeedsPermission({ permission }: { permission: string }) {
   return <span className="small muted">{t('common.permission_needed', { permission })}</span>;
 }
 
+/**
+ * A form that writes: while `onSubmit` runs its button is disabled and says so, so a second submit cannot start a
+ * second write. Success reads `✓` and the message `onSubmit` returns (or "Done."); a failure reads in words.
+ */
+export function SubmitForm({ onSubmit, children, submitLabel, className = 'stack' }: { onSubmit: () => Promise<string | void>; children: React.ReactNode; submitLabel: string; className?: string }) {
+  const t = useT();
+  const running = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    // The ref, not the state: a second submit can arrive before React re-renders the disabled button.
+    if (running.current) return;
+    running.current = true; setBusy(true); setError(null); setDone(null);
+    try { setDone((await onSubmit()) || t('common.done')); } catch (x) { setError(readableError(x, t)); } finally { running.current = false; setBusy(false); }
+  };
+  return (
+    <>
+      <form className={className} onSubmit={submit} aria-busy={busy}>
+        {children}
+        <button type="submit" className="primary" disabled={busy}>{busy ? t('common.working') : submitLabel}</button>
+      </form>
+      <ErrorLine error={error} />
+      {done && <p className="ok" role="status">✓ {done}</p>}
+    </>
+  );
+}
+
 /** What the administrator reads once an operation commits: sent for approval, or done. */
 export function committedMessage(result: unknown, t: (key: string) => string): string {
   return (result as { status?: string } | null)?.status === 'pending_approval' ? t('common.sent_for_approval') : t('common.done');
@@ -99,20 +128,19 @@ export function ConfirmedAction({ operationType, values, path, method = 'POST', 
   const [committed, setCommitted] = useState<string | null>(null);
   const begin = async () => {
     setError(null); setCommitted(null); setStage('busy');
-    try { const c = await requestConfirmation(operationType, values, subject); setConfirmationId(c.confirmation_id); setStage('code'); } catch (e) { setError((e as Error).message); setStage('idle'); }
+    try { const c = await requestConfirmation(operationType, values, subject); setConfirmationId(c.confirmation_id); setStage('code'); } catch (e) { setError(readableError(e, t)); setStage('idle'); }
   };
   const commit = async () => {
     setError(null); setStage('busy');
     try {
-      const r = await post(path.replace(/^\/console/, ''), { ...values, confirmation: { id: confirmationId, code } });
+      const r = await api(path.replace(/^\/console/, ''), { method, body: { ...values, confirmation: { id: confirmationId, code } } });
       setCommitted(done?.(r) ?? committedMessage(r, t)); setStage('idle'); setCode(''); onDone?.(r);
     } catch (e) {
       const err = e as ApiError;
-      setError(err.details?.attempts_remaining !== undefined ? `${err.message} (${err.details.attempts_remaining} attempts left)` : err.message);
+      setError(err.details?.attempts_remaining !== undefined ? `${readableError(err, t)} (${err.details.attempts_remaining} attempts left)` : readableError(err, t));
       setStage(err.code === 'CONFIRMATION_INVALID' && !err.details?.exhausted ? 'code' : 'idle');
     }
   };
-  void method;
   return (
     <div>
       {summary}
@@ -121,7 +149,7 @@ export function ConfirmedAction({ operationType, values, path, method = 'POST', 
       {stage === 'code' && (
         <div className="row">
           <span className="small">{t('common.code_prompt')}</span>
-          <input autoFocus inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} style={{ width: 90 }} />
+          <input aria-label={t('common.code')} autoFocus inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} style={{ width: 90 }} />
           <button className="primary" disabled={code.length !== 6} onClick={commit}>{t('common.confirm')}</button>
           <button onClick={() => { setStage('idle'); setCode(''); }}>{t('common.cancel')}</button>
         </div>

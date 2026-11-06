@@ -128,6 +128,7 @@ form.stack label { display: grid; gap: 4px; font-size: 12px; font-weight: 600; c
 details summary { cursor: pointer; font-weight: 600; }
 pre { background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius-control); padding: 10px; overflow: auto; font-size: 12px; }
 .warnbox { background: var(--state-checking-bg); color: var(--ink); border: 1px solid var(--state-checking-line); padding: 10px 14px; border-radius: var(--radius-control); margin: 8px 0; }
+.secret-once .secret-value { word-break: break-all; user-select: all; }
 
 /* The shared table (DataTable): toolbar, chips, sortable headers, summary row, actions, pager. */
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
