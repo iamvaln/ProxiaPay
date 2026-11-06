@@ -120,8 +120,8 @@ describe('the client wall', () => {
       const guard = guardFor(principalOf('client'), permissions);
       for (const route of guarded) {
         const result = await outcome(guard, route);
-        if (CLIENT_ACCESSIBLE_ROUTES.includes(route.key)) expect(result, route.key).not.toBe('NOT_FOUND: Not found.');
-        else expect(result, route.key).toBe('NOT_FOUND: Not found.');
+        if (CLIENT_ACCESSIBLE_ROUTES.includes(route.key)) expect(result, route.key).not.toBe('NOT_FOUND: No such resource.');
+        else expect(result, route.key).toBe('NOT_FOUND: No such resource.');
       }
     }
   });
@@ -129,7 +129,7 @@ describe('the client wall', () => {
   it('refuses a client before the second factor too, without naming the second factor', async () => {
     const guard = guardFor(principalOf('client', false), ALL_PERMISSIONS as Permission[]);
     const closed = consoleRoutes().find((r) => r.key === 'GET console/approvals')!;
-    expect(await outcome(guard, closed)).toBe('NOT_FOUND: Not found.');
+    expect(await outcome(guard, closed)).toBe('NOT_FOUND: No such resource.');
   });
 
   it('lets platform staff through unchanged', async () => {

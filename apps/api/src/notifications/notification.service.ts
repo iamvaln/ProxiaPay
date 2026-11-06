@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'kysely';
+import { PlatformError } from '../common/errors';
 import { CryptoService } from '../crypto/crypto.service';
 import { newEventReference } from '../crypto/references';
 import { DB_TOKEN, type Db, type Executor, type Tx } from '../db/database';
@@ -114,9 +115,11 @@ export class NotificationService {
   }
 
   /** An administrator replays a delivery: a fresh delivery of the same payload, attributed to them. */
-  async replay(deliveryId: string, administratorId: string): Promise<string> {
+  async replay(transactionId: string, deliveryId: string, administratorId: string): Promise<string> {
     return this.db.transaction().execute(async (tx) => {
-      const d = await tx.selectFrom('notification_delivery').selectAll().where('id', '=', deliveryId).executeTakeFirstOrThrow();
+      // Bound to the transaction the caller reached, so a delivery id of another project's transaction answers as missing.
+      const d = await tx.selectFrom('notification_delivery').selectAll().where('id', '=', deliveryId).where('transaction_id', '=', transactionId).executeTakeFirst();
+      if (!d) throw new PlatformError('NOT_FOUND', 'No such delivery.');
       const row = await tx
         .insertInto('notification_delivery')
         .values({ event_id: d.event_id, transaction_id: d.transaction_id, endpoint_id: d.endpoint_id, event_type: d.event_type, payload: JSON.stringify(d.payload), max_attempts: d.max_attempts, replayed_from: d.id, replayed_by: administratorId })

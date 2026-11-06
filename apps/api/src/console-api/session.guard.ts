@@ -53,8 +53,9 @@ export class SessionGuard implements CanActivate {
     const principal = token ? await this.sessions.resolveSession(token) : undefined;
     if (!principal) throw new PlatformError('UNAUTHENTICATED', 'Sign in to continue.');
     // The wall: a client account reaches only handlers opened to it, and learns nothing of the
-    // others, so this comes before the second factor and the permission and answers as a missing route.
-    if (principal.kind === 'client' && !this.reflector.get<boolean>(CLIENT_ACCESSIBLE, ctx.getHandler())) throw new PlatformError('NOT_FOUND', 'Not found.');
+    // others, so this comes before the second factor and the permission and answers exactly as a route
+    // that does not exist (the exception filter's body for an unknown path).
+    if (principal.kind === 'client' && !this.reflector.get<boolean>(CLIENT_ACCESSIBLE, ctx.getHandler())) throw new PlatformError('NOT_FOUND', 'No such resource.');
     const partialAllowed = this.reflector.getAllAndOverride<boolean>(ALLOW_PARTIAL, [ctx.getHandler(), ctx.getClass()]);
     if (!principal.secondFactorComplete && !partialAllowed) throw new PlatformError('SECOND_FACTOR_REQUIRED', 'Complete the second factor to continue.');
     req.principal = principal;

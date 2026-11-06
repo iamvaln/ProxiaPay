@@ -231,6 +231,8 @@ export class ConsoleTransactionsController {
   @HttpCode(202)
   @RequirePermission('transactions.recheck')
   async recheck(@Param('reference') reference: string, @Req() req: ConsoleRequest) {
+    const txn = await this.db.selectFrom('transaction').select('project_id').where('reference', '=', reference).executeTakeFirst();
+    if (!txn || !req.auth.canReachProject('transactions.recheck', txn.project_id)) throw new PlatformError('NOT_FOUND', 'No such transaction.');
     await this.transactions.forceRecheck(reference, req.principal.administratorId);
     return { queued: true };
   }
@@ -238,8 +240,10 @@ export class ConsoleTransactionsController {
   @Post('transactions/:reference/notifications/:deliveryId/replay')
   @HttpCode(202)
   @RequirePermission('transactions.replay_notification')
-  async replay(@Param('deliveryId') deliveryId: string, @Req() req: ConsoleRequest) {
-    return { delivery_id: await this.notifications.replay(deliveryId, req.principal.administratorId) };
+  async replay(@Param('reference') reference: string, @Param('deliveryId') deliveryId: string, @Req() req: ConsoleRequest) {
+    const txn = await this.db.selectFrom('transaction').select(['id', 'project_id']).where('reference', '=', reference).executeTakeFirst();
+    if (!txn || !req.auth.canReachProject('transactions.replay_notification', txn.project_id)) throw new PlatformError('NOT_FOUND', 'No such transaction.');
+    return { delivery_id: await this.notifications.replay(txn.id, deliveryId, req.principal.administratorId) };
   }
 
   @Get('previews')

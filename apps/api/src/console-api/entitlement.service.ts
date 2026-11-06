@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { PlatformError } from '../common/errors';
-import { DB_TOKEN, type Db } from '../db/database';
+import { DB_TOKEN, type Db, type Tx } from '../db/database';
 import { AuditService } from '../audit/audit.service';
 import { computeFee, subtract } from '../money/money';
 
@@ -76,8 +76,15 @@ export class EntitlementService {
     });
   }
 
-  async deactivate(entitlementId: string, note: string, actorId: string) {
+  /** An entitlement is reached through its own project only; another project's id answers as missing. */
+  private async owned(exec: Db | Tx, projectId: string, entitlementId: string) {
+    const found = await exec.selectFrom('entitlement').select('id').where('id', '=', entitlementId).where('project_id', '=', projectId).executeTakeFirst();
+    if (!found) throw new PlatformError('NOT_FOUND', 'No such entitlement.');
+  }
+
+  async deactivate(projectId: string, entitlementId: string, note: string, actorId: string) {
     await this.db.transaction().execute(async (tx) => {
+      await this.owned(tx, projectId, entitlementId);
       const current = await tx.selectFrom('entitlement_version').selectAll().where('entitlement_id', '=', entitlementId).where('valid_to', 'is', null).forUpdate().executeTakeFirst();
       if (!current) throw new PlatformError('NOT_FOUND', 'No open entitlement version.');
       await tx.updateTable('entitlement_version').set({ valid_to: sql`now()` }).where('id', '=', current.id).execute();
@@ -89,7 +96,8 @@ export class EntitlementService {
   }
 
   /** Transactions currently in flight under a grant complete under the terms they began with (console spec 6.2). */
-  async inFlight(entitlementId: string) {
+  async inFlight(projectId: string, entitlementId: string) {
+    await this.owned(this.db, projectId, entitlementId);
     return this.db.selectFrom('transaction as t').innerJoin('entitlement_version as v', 'v.id', 't.entitlement_version_id').select(['t.reference', 't.state', 't.requested_amount', 't.currency_code', 't.created_at']).where('v.entitlement_id', '=', entitlementId).where('t.state', 'in', ['created', 'submitted', 'processing', 'action_required', 'undetermined']).execute();
   }
 }

@@ -14,6 +14,7 @@ import { pageQuerySchema, paginate } from './pagination';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
 import { ClientAccessible } from './client-access';
+import type { Permission } from '../permissions/permissions';
 
 const projectSchema = z.object({ code: z.string().regex(/^[a-z0-9][a-z0-9-]{1,31}$/), name: nonEmpty(128) });
 const credentialSchema = z.object({ scopes: z.array(z.enum(CREDENTIAL_SCOPES)).min(1), confirmation: confirmationSchema.optional() });
@@ -38,7 +39,8 @@ export class ConsoleProjectsController {
     private readonly audit: AuditService,
   ) {}
 
-  private reach(req: ConsoleRequest, projectId: string, permission: 'projects.read' | 'projects.manage' = 'projects.read') {
+  /** Reach is checked with the permission the handler declares, so a grant scoped to one sub-resource does not need `projects.manage`. */
+  private reach(req: ConsoleRequest, projectId: string, permission: Permission = 'projects.read') {
     if (!req.auth.canReachProject(permission, projectId)) throw new PlatformError('NOT_FOUND', 'No such project.');
   }
 
@@ -124,7 +126,7 @@ export class ConsoleProjectsController {
   @HttpCode(201)
   @RequirePermission('projects.credentials')
   async issue(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.credentials');
     const { scopes, confirmation } = parseBody(credentialSchema, body);
     return withConfirmation(this.db, this.confirmations, req.principal, 'credential.issue', { project_id: id, scopes }, confirmation, (tx, cid) => this.credentials.issue(tx, id, scopes, req.principal.administratorId, cid));
   }
@@ -134,9 +136,9 @@ export class ConsoleProjectsController {
   @HttpCode(200)
   @RequirePermission('projects.credentials')
   async promote(@Param('id') id: string, @Param('cid') cid: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.credentials');
     const { confirmation } = parseBody(confirmOnly, body);
-    await withConfirmation(this.db, this.confirmations, req.principal, 'credential.promote', { credential_id: cid }, confirmation, (tx, c) => this.credentials.promote(tx, cid, req.principal.administratorId, c));
+    await withConfirmation(this.db, this.confirmations, req.principal, 'credential.promote', { credential_id: cid }, confirmation, (tx, c) => this.credentials.promote(tx, id, cid, req.principal.administratorId, c));
     return { ok: true };
   }
 
@@ -145,9 +147,9 @@ export class ConsoleProjectsController {
   @HttpCode(200)
   @RequirePermission('projects.credentials')
   async remove(@Param('id') id: string, @Param('cid') cid: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.credentials');
     const { confirmation } = parseBody(confirmOnly, body);
-    await withConfirmation(this.db, this.confirmations, req.principal, 'credential.delete', { credential_id: cid }, confirmation, (tx, c) => this.credentials.delete(tx, cid, req.principal.administratorId, c));
+    await withConfirmation(this.db, this.confirmations, req.principal, 'credential.delete', { credential_id: cid }, confirmation, (tx, c) => this.credentials.delete(tx, id, cid, req.principal.administratorId, c));
     return { ok: true };
   }
 
@@ -156,9 +158,9 @@ export class ConsoleProjectsController {
   @HttpCode(200)
   @RequirePermission('projects.credentials')
   async revoke(@Param('id') id: string, @Param('cid') cid: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.credentials');
     const { confirmation, reason } = parseBody(confirmOnly, body);
-    await withConfirmation(this.db, this.confirmations, req.principal, 'credential.revoke', { credential_id: cid, reason: reason ?? '' }, confirmation, (tx, c) => this.credentials.revoke(tx, cid, req.principal.administratorId, reason ?? 'revoked', c));
+    await withConfirmation(this.db, this.confirmations, req.principal, 'credential.revoke', { credential_id: cid, reason: reason ?? '' }, confirmation, (tx, c) => this.credentials.revoke(tx, id, cid, req.principal.administratorId, reason ?? 'revoked', c));
     return { ok: true };
   }
 
@@ -167,7 +169,7 @@ export class ConsoleProjectsController {
   @HttpCode(201)
   @RequirePermission('projects.origins')
   async addOrigin(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.origins');
     const input = parseBody(originSchema, body);
     return this.db.transaction().execute(async (tx) => {
       const row = await tx.insertInto('project_origin').values({ project_id: id, cidr: input.cidr, description: input.description, created_by: req.principal.administratorId }).returning(['id', 'cidr', 'description']).executeTakeFirstOrThrow();
@@ -181,7 +183,7 @@ export class ConsoleProjectsController {
   @HttpCode(200)
   @RequirePermission('projects.origins')
   async removeOrigin(@Param('id') id: string, @Param('oid') oid: string, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.origins');
     await this.db.transaction().execute(async (tx) => {
       const prior = await tx.selectFrom('project_origin').selectAll().where('id', '=', oid).where('project_id', '=', id).executeTakeFirst();
       if (!prior) throw new PlatformError('NOT_FOUND', 'No such origin.');
@@ -195,7 +197,7 @@ export class ConsoleProjectsController {
   @HttpCode(201)
   @RequirePermission('projects.entitlements')
   async grant(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.entitlements');
     const input = parseBody(entitlementInputSchema, body);
     return this.entitlements.grantOrAmend(id, input, req.principal.administratorId);
   }
@@ -204,16 +206,16 @@ export class ConsoleProjectsController {
   @RequirePermission('projects.read')
   async inFlight(@Param('id') id: string, @Param('eid') eid: string, @Req() req: ConsoleRequest) {
     this.reach(req, id);
-    return { transactions: await this.entitlements.inFlight(eid) };
+    return { transactions: await this.entitlements.inFlight(id, eid) };
   }
 
   @Post(':id/entitlements/:eid/deactivate')
   @HttpCode(200)
   @RequirePermission('projects.entitlements')
   async deactivate(@Param('id') id: string, @Param('eid') eid: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.entitlements');
     const { note } = parseBody(z.object({ note: nonEmpty(512) }), body);
-    await this.entitlements.deactivate(eid, note, req.principal.administratorId);
+    await this.entitlements.deactivate(id, eid, note, req.principal.administratorId);
     return { ok: true };
   }
 
@@ -222,7 +224,7 @@ export class ConsoleProjectsController {
   @HttpCode(200)
   @RequirePermission('projects.notifications')
   async setEndpoint(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.notifications');
     const { url } = parseBody(endpointSchema, body);
     const { secret } = await this.db.transaction().execute((tx) => this.notifications.setEndpoint(tx, id, url, req.principal.administratorId));
     return { url, signing_secret: secret, note: 'The secret is shown once; store it now.' };
@@ -233,7 +235,7 @@ export class ConsoleProjectsController {
   @HttpCode(200)
   @RequirePermission('projects.notifications')
   async regenerate(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.notifications');
     const { confirmation } = parseBody(confirmOnly, body);
     const { secret } = await withConfirmation(this.db, this.confirmations, req.principal, 'notification_endpoint.regenerate', { project_id: id }, confirmation, (tx, c) => this.notifications.regenerateSecret(tx, id, req.principal.administratorId, c));
     return { signing_secret: secret, note: 'Signature checks fail until the project deploys this value.' };

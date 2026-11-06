@@ -39,8 +39,8 @@ export class CredentialService {
     return { id: row.id, key, secret, role };
   }
 
-  async promote(tx: Tx, credentialId: string, actorId: string, confirmationId?: string): Promise<void> {
-    const cred = await this.active(tx, credentialId);
+  async promote(tx: Tx, projectId: string, credentialId: string, actorId: string, confirmationId?: string): Promise<void> {
+    const cred = await this.active(tx, projectId, credentialId);
     if (cred.role === 'primary') throw new PlatformError('CONFLICT', 'The credential is already primary.');
     await sql`select pg_advisory_xact_lock(hashtext('project_credential'), hashtext(${cred.project_id}))`.execute(tx);
     const primary = await tx.selectFrom('project_credential').select('id').where('project_id', '=', cred.project_id).where('status', '=', 'active').where('role', '=', 'primary').executeTakeFirst();
@@ -52,8 +52,8 @@ export class CredentialService {
   }
 
   /** Deleting the only credential, or the primary, is refused so a rotation cannot end with nothing that works. */
-  async delete(tx: Tx, credentialId: string, actorId: string, confirmationId?: string): Promise<void> {
-    const cred = await this.active(tx, credentialId);
+  async delete(tx: Tx, projectId: string, credentialId: string, actorId: string, confirmationId?: string): Promise<void> {
+    const cred = await this.active(tx, projectId, credentialId);
     await sql`select pg_advisory_xact_lock(hashtext('project_credential'), hashtext(${cred.project_id}))`.execute(tx);
     if (cred.role === 'primary') throw new PlatformError('RULE_VIOLATION', 'The primary credential cannot be deleted; promote the secondary first.');
     const others = await tx.selectFrom('project_credential').select('id').where('project_id', '=', cred.project_id).where('status', '=', 'active').where('id', '<>', cred.id).execute();
@@ -64,15 +64,16 @@ export class CredentialService {
   }
 
   /** Revocation stands apart from rotation: immediate, whatever the role, and every token under it dies with it. */
-  async revoke(tx: Tx, credentialId: string, actorId: string, reason: string, confirmationId?: string): Promise<void> {
-    const cred = await this.active(tx, credentialId);
+  async revoke(tx: Tx, projectId: string, credentialId: string, actorId: string, reason: string, confirmationId?: string): Promise<void> {
+    const cred = await this.active(tx, projectId, credentialId);
     await tx.updateTable('project_credential').set({ status: 'revoked', revoked_at: sql`now()`, revoked_by: actorId, revoked_reason: reason }).where('id', '=', cred.id).execute();
     await tx.updateTable('project_token').set({ revoked_at: sql`now()` }).where('credential_id', '=', cred.id).where('revoked_at', 'is', null).execute();
     await this.audit.record(tx, { actorId, action: 'credential.revoke', subjectType: 'project_credential', subjectId: cred.id, prior: { role: cred.role, status: 'active' }, next: { status: 'revoked', reason }, confirmationId });
   }
 
-  private async active(tx: Tx, id: string) {
-    const cred = await tx.selectFrom('project_credential').selectAll().where('id', '=', id).forUpdate().executeTakeFirst();
+  /** The credential is looked up under the project of the URL, so another project's id answers as missing. */
+  private async active(tx: Tx, projectId: string, id: string) {
+    const cred = await tx.selectFrom('project_credential').selectAll().where('id', '=', id).where('project_id', '=', projectId).forUpdate().executeTakeFirst();
     if (!cred) throw new PlatformError('NOT_FOUND', 'No such credential.');
     if (cred.status !== 'active') throw new PlatformError('CONFLICT', `The credential is ${cred.status}.`);
     return cred;
