@@ -53,20 +53,28 @@ export const PERMISSIONS = {
   'admin.administrators': 'Manage administrators',
   'admin.roles': 'Manage roles',
   'admin.sessions': 'Revoke sessions',
+  'admin.clients': 'Manage clients and their owners',
+  // Client accounts: held only by roles of kind 'client'
+  'projects.create_own': 'Create projects for one\'s own client',
+  'client.members': 'Manage one\'s own client team',
 } as const;
 
 export type Permission = keyof typeof PERMISSIONS;
 export const ALL_PERMISSIONS = Object.keys(PERMISSIONS) as Permission[];
 
+/** Permissions that only make sense inside a client: platform roles, Owner included, never hold them. */
+export const CLIENT_ONLY_PERMISSIONS: Permission[] = ['projects.create_own', 'client.members'];
+export const PLATFORM_PERMISSIONS = ALL_PERMISSIONS.filter((p) => !CLIENT_ONLY_PERMISSIONS.includes(p));
+
 /** Permissions whose presence on a role makes changes to that role require a second approver (spec 8.4). */
 export const SENSITIVE_PERMISSIONS: Permission[] = [
   'treasury.transfer', 'treasury.cashout.initiate', 'treasury.cashout.approve', 'treasury.funding',
-  'treasury.adjustment.post', 'treasury.adjustment.approve', 'admin.administrators', 'admin.roles', 'admin.sessions',
+  'treasury.adjustment.post', 'treasury.adjustment.approve', 'admin.administrators', 'admin.roles', 'admin.sessions', 'admin.clients',
 ];
 
 /** Seeded roles of spec 8.3, each free to be rewritten in the console. */
 export const SEEDED_ROLES: { name: string; description: string; permissions: Permission[] }[] = [
-  { name: 'Owner', description: 'Every permission. Held by the platform owners.', permissions: ALL_PERMISSIONS },
+  { name: 'Owner', description: 'Every permission. Held by the platform owners.', permissions: PLATFORM_PERMISSIONS },
   {
     name: 'Configuration',
     description: 'Reference data, routes, providers and projects.',
@@ -99,5 +107,28 @@ export const SEEDED_ROLES: { name: string; description: string; permissions: Per
     name: 'Audit',
     description: 'Read-only oversight, including export verification.',
     permissions: ['oversight.audit', 'oversight.auth_history', 'oversight.verify_export', 'oversight.reports', 'transactions.read', 'reconciliation.read', 'routes.read', 'projects.read', 'providers.read', 'reference.read', 'treasury.read_balances', 'treasury.read_float'],
+  },
+];
+
+/** Roles of client accounts; `profile` is the key the client team API uses. Never assignable to platform administrators. */
+export const CLIENT_ROLES: { name: string; description: string; profile: 'owner' | 'developer' | 'finance'; permissions: Permission[] }[] = [
+  {
+    name: 'Client owner',
+    description: 'Runs a client: its projects, credentials and team.',
+    profile: 'owner',
+    permissions: ['transactions.read', 'projects.read', 'projects.create_own', 'projects.credentials', 'projects.origins', 'projects.notifications',
+      'treasury.read_balances', 'oversight.export', 'client.members'],
+  },
+  {
+    name: 'Client developer',
+    description: 'Integrates a client\'s projects: credentials, origins and notifications.',
+    profile: 'developer',
+    permissions: ['transactions.read', 'projects.read', 'projects.credentials', 'projects.origins', 'projects.notifications', 'treasury.read_balances'],
+  },
+  {
+    name: 'Client finance',
+    description: 'Reads a client\'s payments and balances, and exports them.',
+    profile: 'finance',
+    permissions: ['transactions.read', 'projects.read', 'treasury.read_balances', 'oversight.export'],
   },
 ];

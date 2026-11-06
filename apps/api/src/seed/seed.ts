@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import type { Executor } from '../db/database';
-import { SEEDED_ROLES } from '../permissions/permissions';
+import { CLIENT_ROLES, SEEDED_ROLES } from '../permissions/permissions';
 import {
   COUNTRIES, CURRENCIES, DEFAULT_SETTINGS, INDICATIVE_PLATFORM_BPS, INDICATIVE_PROCESSING_BPS, INDICATIVE_PROVIDER_BPS,
   PAYMENT_METHODS, ROUTE_CATALOGUE, ROUTE_LIMITS,
@@ -38,8 +38,8 @@ export async function seedReferenceData(db: Executor, opts: SeedOptions = {}): P
     await db.insertInto('platform_setting').values({ key, value: JSON.stringify(value) }).onConflict((oc) => oc.doNothing()).execute();
   }
 
-  for (const role of SEEDED_ROLES) {
-    await db.insertInto('role').values({ name: role.name, description: role.description, seeded: true }).onConflict((oc) => oc.doNothing()).execute();
+  for (const role of [...SEEDED_ROLES.map((r) => ({ ...r, kind: 'platform' as const })), ...CLIENT_ROLES.map((r) => ({ ...r, kind: 'client' as const }))]) {
+    await db.insertInto('role').values({ name: role.name, description: role.description, seeded: true, kind: role.kind }).onConflict((oc) => oc.doNothing()).execute();
     const r = await db.selectFrom('role').select('id').where('name', '=', role.name).executeTakeFirstOrThrow();
     await db.insertInto('role_permission').values(role.permissions.map((p) => ({ role_id: r.id, permission_key: p }))).onConflict((oc) => oc.doNothing()).execute();
   }

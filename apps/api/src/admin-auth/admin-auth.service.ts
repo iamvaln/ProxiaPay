@@ -60,7 +60,8 @@ export class AdminAuthService {
       return { locked_until: admin.locked_until };
     }
     // Verify against a real hash even when no administrator matches, so timing does not reveal which addresses exist.
-    const ok = admin ? await CryptoService.verifySecret(admin.password_hash, password) : await CryptoService.verifySecret(DUMMY_HASH, password).then(() => false);
+    // An invited administrator without a password yet has no hash: same dummy check, never a match.
+    const ok = admin?.password_hash ? await CryptoService.verifySecret(admin.password_hash, password) : await CryptoService.verifySecret(DUMMY_HASH, password).then(() => false);
     if (!admin || admin.status !== 'active' || !ok) {
       await this.recordAuthEvent({ email: normalised, administratorId: admin?.id ?? null, outcome: 'failure', reason: admin ? (admin.status !== 'active' ? 'disabled' : 'password mismatch') : 'unknown address', client });
       if (admin) await this.maybeLock(admin.id, normalised, client);
@@ -166,7 +167,7 @@ export class AdminAuthService {
 
   async changePassword(administratorId: string, current: string, next: string): Promise<void> {
     const admin = await this.db.selectFrom('administrator').select('password_hash').where('id', '=', administratorId).executeTakeFirstOrThrow();
-    if (!(await CryptoService.verifySecret(admin.password_hash, current))) throw new PlatformError('CREDENTIALS_INVALID', 'The current password did not match.');
+    if (!admin.password_hash || !(await CryptoService.verifySecret(admin.password_hash, current))) throw new PlatformError('CREDENTIALS_INVALID', 'The current password did not match.');
     assertPasswordStrength(next);
     await this.db.updateTable('administrator').set({ password_hash: await CryptoService.hashSecret(next) }).where('id', '=', administratorId).execute();
   }

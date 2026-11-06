@@ -32,11 +32,13 @@ export interface Administrator {
   created_at: Generated<Timestamp>;
   email: string;
   id: Generated<string>;
+  kind: Generated<string>;
   language: Generated<string>;
+  last_client_id: string | null;
   last_sign_in_at: Timestamp | null;
   locked_until: Timestamp | null;
   name: string;
-  password_hash: string;
+  password_hash: string | null;
   status: Generated<string>;
   timezone: Generated<string>;
   totp_enrolled_at: Timestamp | null;
@@ -45,6 +47,7 @@ export interface Administrator {
 }
 
 export interface AdminSession {
+  active_client_id: string | null;
   administrator_id: string;
   client_description: Generated<string>;
   expires_at: Timestamp;
@@ -195,6 +198,26 @@ export interface CircuitBreaker {
   window_started_at: Timestamp | null;
 }
 
+export interface Client {
+  created_at: Generated<Timestamp>;
+  created_by: string | null;
+  id: Generated<string>;
+  name: string;
+  status: Generated<string>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface ClientMembership {
+  accepted_at: Timestamp | null;
+  administrator_id: string;
+  client_id: string;
+  created_at: Generated<Timestamp>;
+  disabled_by_client: Generated<boolean>;
+  id: Generated<string>;
+  invited_by: string | null;
+  status: string;
+}
+
 export interface Country {
   active: Generated<boolean>;
   code: string;
@@ -332,6 +355,16 @@ export interface FloatTransfer {
   provider_reference: string | null;
   source_account_id: string;
   status: Generated<string>;
+}
+
+export interface Invitation {
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  id: Generated<string>;
+  membership_id: string;
+  sets_password: boolean;
+  token_hash: Buffer;
+  used_at: Timestamp | null;
 }
 
 export interface Job {
@@ -492,6 +525,7 @@ export interface Preview {
 }
 
 export interface Project {
+  client_id: string | null;
   code: string;
   created_at: Generated<Timestamp>;
   created_by: string | null;
@@ -638,6 +672,7 @@ export interface Role {
   created_at: Generated<Timestamp>;
   description: Generated<string>;
   id: Generated<string>;
+  kind: Generated<string>;
   name: string;
   seeded: Generated<boolean>;
 }
@@ -647,6 +682,7 @@ export interface RoleAssignment {
   created_at: Generated<Timestamp>;
   granted_by: string | null;
   id: Generated<string>;
+  membership_id: string | null;
   role_id: string;
   scope_type: string;
 }
@@ -843,6 +879,8 @@ export interface DB {
   authentication_event: AuthenticationEvent;
   cashout: Cashout;
   circuit_breaker: CircuitBreaker;
+  client: Client;
+  client_membership: ClientMembership;
   country: Country;
   country_currency: CountryCurrency;
   currency: Currency;
@@ -854,6 +892,7 @@ export interface DB {
   export_record: ExportRecord;
   float_threshold: FloatThreshold;
   float_transfer: FloatTransfer;
+  invitation: Invitation;
   job: Job;
   ledger_account: LedgerAccount;
   ledger_checkpoint: LedgerCheckpoint;
