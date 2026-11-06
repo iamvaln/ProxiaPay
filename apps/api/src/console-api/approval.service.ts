@@ -26,6 +26,7 @@ export class ApprovalService {
     private readonly alerts: AlertService,
   ) {}
 
+  /** Pending requests the administrator can decide or initiated; the rest of the queue is not theirs to see. */
   async pending(administratorId: string, permissions: string[]) {
     const rows = await this.db
       .selectFrom('approval_request as r')
@@ -35,7 +36,16 @@ export class ApprovalService {
       .where('r.status', '=', 'pending')
       .orderBy('r.created_at')
       .execute();
-    return rows.map((r) => ({ ...r, own: r.initiated_by === administratorId, can_act: r.initiated_by !== administratorId && permissions.includes(APPROVE_PERMISSION[r.type] ?? '') }));
+    return rows
+      .filter((r) => reaches(r, administratorId, permissions))
+      .map((r) => ({ ...r, own: r.initiated_by === administratorId, can_act: r.initiated_by !== administratorId && approves(r.type, permissions) }));
+  }
+
+  /** One request, decided or not, under the same reach as the queue: any other answers as missing. */
+  async find(id: string, administratorId: string, permissions: string[]) {
+    const r = await this.db.selectFrom('approval_request as r').innerJoin('administrator as a', 'a.id', 'r.initiated_by').selectAll('r').select('a.name as initiator_name').where('r.id', '=', id).executeTakeFirst();
+    if (!r || !reaches(r, administratorId, permissions)) throw new PlatformError('NOT_FOUND', 'No such approval request.');
+    return r;
   }
 
   async decide(id: string, approverId: string, decision: 'approve' | 'decline', reason: string, permissions: string[], confirmationId?: string): Promise<void> {
@@ -44,7 +54,7 @@ export class ApprovalService {
       if (r.status !== 'pending') throw new PlatformError('CONFLICT', 'The request was already decided.');
       if (r.initiated_by === approverId) throw new PlatformError('PERMISSION_DENIED', 'The approver is a different person from the initiator.');
       const needed = APPROVE_PERMISSION[r.type];
-      if (!needed || !permissions.includes(needed)) throw new PlatformError('PERMISSION_DENIED', `This approval requires the permission "${needed}".`, { details: { permission: needed } });
+      if (!approves(r.type, permissions)) throw new PlatformError('PERMISSION_DENIED', `This approval requires the permission "${needed}".`, { details: { permission: needed } });
       if (decision === 'approve') await this.execute(tx, r.type, r.subject as Record<string, unknown>, r.initiated_by, approverId);
       else if (!reason.trim()) throw new PlatformError('FIELD_INVALID', 'Declining requires a reason.', { field: 'reason' });
       await tx.updateTable('approval_request').set({ status: decision === 'approve' ? 'approved' : 'declined', decided_by: approverId, decision_reason: reason, decided_at: sql`now()` }).where('id', '=', id).execute();
@@ -83,3 +93,14 @@ const APPROVE_PERMISSION: Record<string, string> = {
   discrepancy_resolution: 'reconciliation.approve_adjustment',
   role_change: 'admin.roles',
 };
+
+/** The permission half of who may decide a request; `decide` adds that the approver is not the initiator. */
+function approves(type: string, permissions: string[]): boolean {
+  const needed = APPROVE_PERMISSION[type];
+  return !!needed && permissions.includes(needed);
+}
+
+/** Who may see a request: whoever could decide it, and its initiator. */
+function reaches(r: { type: string; initiated_by: string }, administratorId: string, permissions: string[]): boolean {
+  return r.initiated_by === administratorId || approves(r.type, permissions);
+}

@@ -9,6 +9,7 @@ import { clientAddress } from '../http/client-address';
 import { nonEmpty, parseBody } from '../http/validation';
 import { SettingsService } from '../settings/settings.service';
 import { AllowPartialSession, clearSessionCookie, SessionGuard, setSessionCookie, type ConsoleRequest } from './session.guard';
+import { ClientAccessible } from './client-access';
 import { PERMISSIONS } from '../permissions/permissions';
 
 const signInSchema = z.object({ email: z.string().trim().email().max(254), password: z.string().min(1).max(256), language: z.enum(['en', 'fr']).optional() });
@@ -52,6 +53,7 @@ export class ConsoleAuthController {
   }
 
   @Post('second-factor/enrol')
+  @ClientAccessible()
   @HttpCode(200)
   @UseGuards(SessionGuard)
   @AllowPartialSession()
@@ -60,6 +62,7 @@ export class ConsoleAuthController {
   }
 
   @Post('second-factor')
+  @ClientAccessible()
   @HttpCode(200)
   @UseGuards(SessionGuard)
   @AllowPartialSession()
@@ -70,6 +73,7 @@ export class ConsoleAuthController {
   }
 
   @Post('sign-out')
+  @ClientAccessible()
   @HttpCode(200)
   @UseGuards(SessionGuard)
   @AllowPartialSession()
@@ -80,6 +84,7 @@ export class ConsoleAuthController {
   }
 
   @Get('me')
+  @ClientAccessible()
   @UseGuards(SessionGuard)
   @AllowPartialSession()
   async me(@Req() req: ConsoleRequest) {
@@ -98,6 +103,7 @@ export class ConsoleAuthController {
   }
 
   @Post('active-client')
+  @ClientAccessible()
   @HttpCode(200)
   @UseGuards(SessionGuard)
   async switchClient(@Body() body: unknown, @Req() req: ConsoleRequest) {
@@ -107,6 +113,7 @@ export class ConsoleAuthController {
   }
 
   @Patch('preferences')
+  @ClientAccessible()
   @UseGuards(SessionGuard)
   async preferences(@Body() body: unknown, @Req() req: ConsoleRequest) {
     const prefs = parseBody(preferencesSchema, body);
@@ -115,6 +122,7 @@ export class ConsoleAuthController {
   }
 
   @Post('password')
+  @ClientAccessible()
   @HttpCode(200)
   @UseGuards(SessionGuard)
   async password(@Body() body: unknown, @Req() req: ConsoleRequest) {
@@ -124,6 +132,7 @@ export class ConsoleAuthController {
   }
 
   @Get('sessions')
+  @ClientAccessible()
   @UseGuards(SessionGuard)
   async sessions(@Req() req: ConsoleRequest) {
     return { sessions: await this.auth.listSessions(req.principal.administratorId), current: req.principal.sessionId };
@@ -131,6 +140,7 @@ export class ConsoleAuthController {
 
   /** Requests a one-time code for an operation and the exact values about to be submitted (console spec 11.1). */
   @Post('confirmations')
+  @ClientAccessible()
   @HttpCode(201)
   @UseGuards(SessionGuard)
   async requestConfirmation(@Body() body: unknown, @Req() req: ConsoleRequest) {

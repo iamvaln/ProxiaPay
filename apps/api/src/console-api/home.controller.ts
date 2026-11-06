@@ -64,8 +64,8 @@ export class HomeController {
   }
 
   @Get('approvals/:id')
-  async approval(@Param('id') id: string) {
-    return this.db.selectFrom('approval_request as r').innerJoin('administrator as a', 'a.id', 'r.initiated_by').selectAll('r').select('a.name as initiator_name').where('r.id', '=', id).executeTakeFirstOrThrow();
+  async approval(@Param('id') id: string, @Req() req: ConsoleRequest) {
+    return this.approvals.find(id, req.principal.administratorId, req.auth.permissions());
   }
 
   @Post('approvals/:id/decision')

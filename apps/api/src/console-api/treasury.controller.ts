@@ -13,6 +13,7 @@ import { ReconciliationService } from '../reconciliation/reconciliation.service'
 import { pageQuerySchema, paginate } from './pagination';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
+import { ClientAccessible } from './client-access';
 
 const transferSchema = z.object({ source_account_id: z.string().uuid(), destination_account_id: z.string().uuid(), amount: z.number().int().positive(), provider_fee: z.number().int().min(0).default(0), provider_reference: z.string().max(128).optional(), note: z.string().max(512).optional(), confirmation: confirmationSchema.optional() });
 const cashoutSchema = z.object({ float_account_id: z.string().uuid(), destination: nonEmpty(128), amount: z.number().int().positive(), supporting_document: nonEmpty(512), justification: nonEmpty(1000), confirmation: confirmationSchema.optional() });
@@ -40,6 +41,7 @@ export class TreasuryController {
   ) {}
 
   @Get('balances')
+  @ClientAccessible()
   @RequirePermission('treasury.read_balances')
   async balances(@Req() req: ConsoleRequest) {
     const scope = req.auth.projectScope('treasury.read_balances');
@@ -73,6 +75,7 @@ export class TreasuryController {
   }
 
   @Get('project/:projectId/accounts')
+  @ClientAccessible()
   @RequirePermission('treasury.read_balances')
   async projectAccounts(@Param('projectId') projectId: string, @Req() req: ConsoleRequest) {
     if (!req.auth.canReachProject('treasury.read_balances', projectId)) throw new PlatformError('NOT_FOUND', 'No such project.');

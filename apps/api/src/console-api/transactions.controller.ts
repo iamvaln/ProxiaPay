@@ -12,6 +12,7 @@ import { TransactionReader } from '../transactions/transaction-reader';
 import { TransactionService } from '../transactions/transaction.service';
 import { AuditService } from '../audit/audit.service';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
+import { ClientAccessible } from './client-access';
 import { ExportService } from './export.service';
 import { containsPattern, FRAGMENT_MIN, pageQuerySchema, paginate, prefixPattern } from './pagination';
 
@@ -102,6 +103,7 @@ export class ConsoleTransactionsController {
   }
 
   @Get('transactions')
+  @ClientAccessible()
   @RequirePermission('transactions.read')
   async search(@Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
     const q = parseBody(searchSchema, query);
@@ -111,6 +113,7 @@ export class ConsoleTransactionsController {
   }
 
   @Get('transactions/export')
+  @ClientAccessible()
   @RequirePermission('oversight.export')
   async export(@Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
     req.auth.require('transactions.read');
@@ -126,6 +129,7 @@ export class ConsoleTransactionsController {
    * Not paged: it stops at its caps (50 transactions, 20 previews by reference, 50 of each by number) and says so with `capped`.
    */
   @Get('search')
+  @ClientAccessible()
   @RequirePermission('transactions.read')
   async globalSearch(@Query('q') raw: string | undefined, @Req() req: ConsoleRequest) {
     const q = (raw ?? '').trim();
@@ -165,6 +169,7 @@ export class ConsoleTransactionsController {
   }
 
   @Get('transactions/:reference')
+  @ClientAccessible()
   @RequirePermission('transactions.read')
   async detail(@Param('reference') reference: string, @Req() req: ConsoleRequest) {
     const found = await this.db.selectFrom('transaction').select(['id', 'project_id']).where('reference', '=', reference).executeTakeFirst();
@@ -238,6 +243,7 @@ export class ConsoleTransactionsController {
   }
 
   @Get('previews')
+  @ClientAccessible()
   @RequirePermission('transactions.read')
   async previews(@Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
     const q = parseBody(previewsSchema, query);

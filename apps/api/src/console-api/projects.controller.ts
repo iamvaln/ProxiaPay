@@ -13,6 +13,7 @@ import { EntitlementService, entitlementInputSchema } from './entitlement.servic
 import { pageQuerySchema, paginate } from './pagination';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
+import { ClientAccessible } from './client-access';
 
 const projectSchema = z.object({ code: z.string().regex(/^[a-z0-9][a-z0-9-]{1,31}$/), name: nonEmpty(128) });
 const credentialSchema = z.object({ scopes: z.array(z.enum(CREDENTIAL_SCOPES)).min(1), confirmation: confirmationSchema.optional() });
@@ -42,6 +43,7 @@ export class ConsoleProjectsController {
   }
 
   @Get()
+  @ClientAccessible()
   @RequirePermission('projects.read')
   async list(@Req() req: ConsoleRequest) {
     const scope = req.auth.projectScope('projects.read');
@@ -61,6 +63,7 @@ export class ConsoleProjectsController {
   }
 
   @Post()
+  @ClientAccessible()
   @HttpCode(201)
   @RequirePermission('projects.manage')
   async create(@Body() body: unknown, @Req() req: ConsoleRequest) {
@@ -76,6 +79,7 @@ export class ConsoleProjectsController {
   }
 
   @Get(':id')
+  @ClientAccessible()
   @RequirePermission('projects.read')
   async detail(@Param('id') id: string, @Req() req: ConsoleRequest) {
     this.reach(req, id);
@@ -91,6 +95,7 @@ export class ConsoleProjectsController {
   }
 
   @Get(':id/origin-refusals')
+  @ClientAccessible()
   @RequirePermission('projects.read')
   async originRefusals(@Param('id') id: string, @Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
     this.reach(req, id);
@@ -102,6 +107,7 @@ export class ConsoleProjectsController {
   }
 
   @Get(':id/deliveries')
+  @ClientAccessible()
   @RequirePermission('projects.read')
   async deliveries(@Param('id') id: string, @Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
     this.reach(req, id);
@@ -114,6 +120,7 @@ export class ConsoleProjectsController {
   }
 
   @Post(':id/credentials')
+  @ClientAccessible()
   @HttpCode(201)
   @RequirePermission('projects.credentials')
   async issue(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
@@ -123,6 +130,7 @@ export class ConsoleProjectsController {
   }
 
   @Post(':id/credentials/:cid/promote')
+  @ClientAccessible()
   @HttpCode(200)
   @RequirePermission('projects.credentials')
   async promote(@Param('id') id: string, @Param('cid') cid: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
@@ -133,6 +141,7 @@ export class ConsoleProjectsController {
   }
 
   @Delete(':id/credentials/:cid')
+  @ClientAccessible()
   @HttpCode(200)
   @RequirePermission('projects.credentials')
   async remove(@Param('id') id: string, @Param('cid') cid: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
@@ -143,6 +152,7 @@ export class ConsoleProjectsController {
   }
 
   @Post(':id/credentials/:cid/revoke')
+  @ClientAccessible()
   @HttpCode(200)
   @RequirePermission('projects.credentials')
   async revoke(@Param('id') id: string, @Param('cid') cid: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
@@ -153,6 +163,7 @@ export class ConsoleProjectsController {
   }
 
   @Post(':id/origins')
+  @ClientAccessible()
   @HttpCode(201)
   @RequirePermission('projects.origins')
   async addOrigin(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
@@ -166,6 +177,7 @@ export class ConsoleProjectsController {
   }
 
   @Delete(':id/origins/:oid')
+  @ClientAccessible()
   @HttpCode(200)
   @RequirePermission('projects.origins')
   async removeOrigin(@Param('id') id: string, @Param('oid') oid: string, @Req() req: ConsoleRequest) {
@@ -206,6 +218,7 @@ export class ConsoleProjectsController {
   }
 
   @Put(':id/notification-endpoint')
+  @ClientAccessible()
   @HttpCode(200)
   @RequirePermission('projects.notifications')
   async setEndpoint(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
@@ -216,6 +229,7 @@ export class ConsoleProjectsController {
   }
 
   @Post(':id/notification-endpoint/regenerate-secret')
+  @ClientAccessible()
   @HttpCode(200)
   @RequirePermission('projects.notifications')
   async regenerate(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
