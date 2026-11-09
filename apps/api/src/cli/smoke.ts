@@ -7,7 +7,11 @@
  * (default ada@example.com / correct-horse-battery-staple) who has not yet enrolled an
  * authenticator, the API and worker running without SMTP so codes appear in the API log.
  *
- *   npm run smoke -w apps/api -- --base http://127.0.0.1:3000 --api-log /path/to/api.log
+ *   npm run smoke -w apps/api -- --base http://127.0.0.1:3000 --api-log /path/to/api.log [--hook-url https://…]
+ *
+ * `--hook-url` is the notification address the smoke project sets (default https://example.com/proxiapay-smoke-hook).
+ * It must be reachable from the internet and resolve: the API refuses an internal or unresolvable address, so a local
+ * receiver needs a public tunnel URL.
  */
 import { readFileSync } from 'node:fs';
 import { totp } from '../crypto/totp';
@@ -17,6 +21,7 @@ const BASE = args.base ?? 'http://127.0.0.1:3000';
 const EMAIL = args.email ?? 'ada@example.com';
 const PASSWORD = args.password ?? 'correct-horse-battery-staple';
 const API_LOG = args['api-log'] ?? process.env.API_LOG ?? '';
+const HOOK_URL = args['hook-url'] || 'https://example.com/proxiapay-smoke-hook';
 async function main() {
 
 let cookie = '';
@@ -74,7 +79,7 @@ const route = r.body.routes.find((x: any) => x.country_code === 'CM' && x.paymen
 check('routes listed with the CM MOMO collection route', Boolean(route), `${r.body.routes.length} routes`);
 r = await j(`/console/projects/${projectId}/entitlements`, { method: 'POST', body: { route_id: route.id, count_24h: 100, value_24h: 10000000, count_30d: 1000, value_30d: 100000000, note: 'pilot' } });
 check('entitlement granted', r.status === 201, JSON.stringify(r.body));
-r = await j(`/console/projects/${projectId}/notification-endpoint`, { method: 'PUT', body: { url: 'https://example.com/proxiapay-smoke-hook' } });
+r = await j(`/console/projects/${projectId}/notification-endpoint`, { method: 'PUT', body: { url: HOOK_URL } });
 check('notification endpoint set; secret shown once', r.status === 200 && r.body.signing_secret.startsWith('whsec_'));
 
 // Project API
