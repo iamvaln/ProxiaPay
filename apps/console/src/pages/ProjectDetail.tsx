@@ -101,6 +101,8 @@ export function originList({ t, has, reload, id }: { t: Tr; has: (p: string) => 
 }
 
 const TABS = ['overview', 'keys', 'origins', 'routes', 'deliveries', 'activity'] as const;
+/** A client has no activity tab: the transactions list is where it reads its payments. */
+const CLIENT_TABS = TABS.filter((k) => k !== 'activity');
 type Secret = { label: string; value: string }[];
 type Project = Record<string, any>;
 
@@ -289,13 +291,51 @@ export function ProjectDetailPage() {
   return <ProjectDetail key={id} id={id!} />;
 }
 
-function ProjectDetail({ id }: { id: string }) {
+/** A client's routes, read-only: its own fees and limits, named in plain text since a route's page is the platform's. */
+function ClientRoutes({ routes, waiting }: { routes: Row[]; waiting: boolean }) {
+  const t = useT();
+  const { lang } = useSession();
+  const percent = (bps: number) => `${(bps / 100).toLocaleString(lang === 'fr' ? 'fr-FR' : 'en-US', { maximumFractionDigits: 2 })}%`;
+  const bearer = (b: string) => t(`grant.bearer_${b}`);
+  const name = (r: Row) => `${r.country} · ${r.payment_method_name} · ${r.direction} · ${r.currency}`;
+  return (
+    <div className="card" id="entitlements">
+      <h2>{t('cr.title')}</h2>
+      {waiting && <p className="warnbox">{t('cr.waiting')}</p>}
+      <DataTable<Row> prefix="ent_" search={false} rows={routes} rowKey={name} filters={[]} defaultSort="route" empty={{ none: t('l.entitlement_none'), why: t('l.entitlement_why') }} columns={[
+        { key: 'route', label: t('col.route'), text: name, sortValue: name, render: name },
+        { key: 'active', label: t('col.active'), render: (r) => <Pill value={r.active ? 'active' : 'suspended'} /> },
+        { key: 'processing', label: t('cr.processing'), render: (r) => <>{percent(r.fees.processing_bps)} <span className="small muted">({t('ct.borne_by', { bearer: bearer(r.fees.processing_bearer) })})</span></> },
+        { key: 'platform', label: t('cr.platform'), render: (r) => <>{percent(r.fees.platform_bps)} <span className="small muted">({t('ct.borne_by', { bearer: bearer(r.fees.platform_bearer) })})</span></> },
+        { key: 'limits', label: t('cr.limits'), render: (r) => <><Amount minor={r.limits.minimum_amount} currency={r.currency} />–<Amount minor={r.limits.maximum_amount} currency={r.currency} /></> },
+        { key: 'velocity', label: t('cr.velocity'), render: (r) => `${r.limits.count_24h}/24h · ${r.limits.count_30d}/30d` },
+      ]} />
+    </div>
+  );
+}
+
+/** Platform only: the grants of a project and the form to add one; the route list behind the form is the platform's too. */
+function PlatformRoutes({ data, id, reload }: { data: Project; id: string; reload: () => void }) {
   const { has } = useSession();
   const t = useT();
-  const [tab, setTab] = useTab(TABS, 'overview');
+  const routes = useLoad(() => get<{ routes: any[] }>('/configuration/routes'), []);
+  return (
+    <div className="card" id="entitlements">
+      <h2>{t('pd.entitlements')}</h2>
+      <DataTable<Row> prefix="ent_" rows={data.entitlements} {...entitlementList({ t, has, reload, id })} />
+      {has('projects.entitlements') && routes.data && <GrantForm id={id} routes={routes.data.routes} reload={reload} />}
+    </div>
+  );
+}
+
+function ProjectDetail({ id }: { id: string }) {
+  const { has, me } = useSession();
+  const t = useT();
+  const client = me?.kind === 'client';
+  const tabs = client ? CLIENT_TABS : TABS;
+  const [tab, setTab] = useTab(tabs, 'overview');
   const [deliveriesRev, reloadDeliveries] = useReload();
   const { data, error, reload } = useLoad(() => get<any>(`/projects/${id}`), [id]);
-  const routes = useLoad(() => get<{ routes: any[] }>('/configuration/routes'), []);
   // Two secrets, two states: the signing secret and a new credential never share, so neither replaces the other.
   const [credentialSecret, setCredentialSecret] = useState<Secret | null>(null);
   const [signingSecret, setSigningSecret] = useState<Secret | null>(null);
@@ -305,17 +345,11 @@ function ProjectDetail({ id }: { id: string }) {
   return (
     <>
       <h1>{p.name} <Pill value={p.status} /></h1>
-      <div className="tabs">{TABS.map((k) => <a key={k} href="#" className={tab === k ? 'active' : ''} aria-current={tab === k ? 'page' : undefined} onClick={(e) => { e.preventDefault(); setTab(k); }}>{t(`l.tab_${k}`)}</a>)}</div>
+      <div className="tabs">{tabs.map((k) => <a key={k} href="#" className={tab === k ? 'active' : ''} aria-current={tab === k ? 'page' : undefined} onClick={(e) => { e.preventDefault(); setTab(k); }}>{t(`l.tab_${k}`)}</a>)}</div>
       {tab === 'overview' && <OverviewTab data={data} id={id!} reload={reload} />}
       {tab === 'keys' && <KeysTab data={data} id={id!} reload={reload} credentialSecret={credentialSecret} setCredentialSecret={setCredentialSecret} signingSecret={signingSecret} setSigningSecret={setSigningSecret} />}
       {tab === 'origins' && <OriginsTab data={data} id={id!} reload={reload} />}
-      {tab === 'routes' && (
-        <div className="card" id="entitlements">
-          <h2>{t('pd.entitlements')}</h2>
-          <DataTable<Row> prefix="ent_" rows={data.entitlements} {...entitlementList({ t, has, reload, id: id! })} />
-          {has('projects.entitlements') && routes.data && <GrantForm id={id!} routes={routes.data.routes} reload={reload} />}
-        </div>
-      )}
+      {tab === 'routes' && (client ? <ClientRoutes routes={data.routes} waiting={data.waiting_for_routes} /> : <PlatformRoutes data={data} id={id!} reload={reload} />)}
       {tab === 'deliveries' && (
         <div className="card" id="deliveries">
           <h2>{t('l.deliveries')}</h2>

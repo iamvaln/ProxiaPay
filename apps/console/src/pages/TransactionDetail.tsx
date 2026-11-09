@@ -2,19 +2,73 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { get, post } from '../lib/api';
 import { useSession, useT } from '../lib/session';
+import { DataTable } from '../components/table/DataTable';
 import { Amount, Empty, ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
+
+/** What a client is shown of a payment: what it was charged and how it went, with no provider, margin, ledger or route page. */
+function ClientTransaction({ data: x }: { data: any }) {
+  const t = useT();
+  const bearer = (b: string) => t('ct.borne_by', { bearer: t(`grant.bearer_${b}`) });
+  return (
+    <>
+      <h1><span className="mono">{x.reference}</span> <Pill value={x.state} /></h1>
+      <div className="grid2">
+        <div className="card">
+          <h2>{t('ct.details')}</h2>
+          <dl className="kv">
+            <dt>{t('nav.projects')}</dt><dd><Link to={`/projects/${x.project.id}`}>{x.project.name}</Link> · {x.project_reference}</dd>
+            <dt>{t('ct.direction')}</dt><dd>{x.direction}</dd>
+            <dt>{t('ct.route')}</dt><dd>{x.country} · {x.payment_method_name} · {x.currency}</dd>
+            <dt>{t('l.payer')}</dt><dd>{x.msisdn_masked}</dd>
+            <dt>{t('l.failure_reason')}</dt><dd>{x.failure_reason ?? '—'}</dd>
+            <dt>{t('txn.created')}</dt><dd><When value={x.created_at} /></dd>
+            <dt>{t('txn.terminal')}</dt><dd><When value={x.terminal_at} /></dd>
+          </dl>
+        </div>
+        <div className="card">
+          <h2>{t('ct.amounts')}</h2>
+          <dl className="kv">
+            <dt>{t('ct.requested')}</dt><dd><Amount minor={x.requested_amount} currency={x.currency} /></dd>
+            <dt>{t('ct.charged')}</dt><dd><Amount minor={x.charged_amount} currency={x.currency} /></dd>
+            <dt>{t('l.processing_fee')}</dt><dd><Amount minor={x.processing_fee} currency={x.currency} /> · {bearer(x.processing_fee_bearer)}</dd>
+            <dt>{t('l.platform_fee')}</dt><dd><Amount minor={x.platform_fee} currency={x.currency} /> · {bearer(x.platform_fee_bearer)}</dd>
+          </dl>
+        </div>
+      </div>
+      <div className="card">
+        <h2>{t('ct.attempts')}</h2>
+        <DataTable<any> bare search={false} defaultSort="started" rows={x.attempts} rowKey={(a) => `${a.started_at}`} filters={[]} empty={{ none: t('ct.no_attempt'), why: '' }} columns={[
+          { key: 'started', label: t('col.started'), render: (a) => <When value={a.started_at} /> },
+          { key: 'ended', label: t('ct.ended'), render: (a) => <When value={a.ended_at} /> },
+          { key: 'state', label: t('col.state'), render: (a) => <><Pill value={a.state} />{a.failure_reason && <><br /><span className="small">{a.failure_reason}</span></>}</> },
+          { key: 'operator', label: t('l.operator_reference'), mono: true, render: (a) => a.operator_reference ?? '—' },
+        ]} />
+      </div>
+      <div className="card">
+        <h2>{t('ct.notifications')}</h2>
+        <DataTable<any> bare search={false} defaultSort="event" rows={x.notifications} rowKey={(n) => `${n.event_type}:${n.status}`} filters={[]} empty={{ none: t('ct.no_notification'), why: '' }} columns={[
+          { key: 'event', label: t('col.event'), render: (n) => n.event_type },
+          { key: 'status', label: t('col.status'), render: (n) => <Pill value={n.status} /> },
+          { key: 'attempts', label: t('col.attempts'), align: 'end', render: (n) => n.attempts },
+          { key: 'last', label: t('col.last_attempt'), render: (n) => <When value={n.last_attempt_at} /> },
+        ]} />
+      </div>
+    </>
+  );
+}
 
 /** Transaction detail (console spec 5.2): everything about one payment without navigation. A browser address is absent entirely. */
 export function TransactionDetailPage() {
   const { reference } = useParams();
   const t = useT();
-  const { has } = useSession();
+  const { has, me } = useSession();
   const { data, error, reload } = useLoad(() => get<any>(`/transactions/${reference}`), [reference]);
   const [revealed, setRevealed] = useState<string | null>(null);
   const [exchanges, setExchanges] = useState<any[] | null>(null);
   const [note, setNote] = useState<string | null>(null);
   if (error) return <ErrorLine error={error} />;
   if (!data) return null;
+  if (me?.kind === 'client') return <ClientTransaction data={data} />;
   const x = data.transaction, a = data.amounts, cur = a.currency;
   return (
     <>

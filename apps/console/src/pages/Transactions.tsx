@@ -95,7 +95,7 @@ export function TransactionTable({ fixedProject, prefix = '', range = {}, onClea
 /** Transaction search (console spec 5.1). */
 export function TransactionsPage() {
   const t = useT();
-  const { has } = useSession();
+  const { has, me } = useSession();
   const [params, setParams] = useSearchParams();
   const range = readRange(params);
   const apply = (form: HTMLFormElement) => {
@@ -119,7 +119,7 @@ export function TransactionsPage() {
     <>
       <div className="row" style={{ justifyContent: 'space-between' }}>
         <h1>{t('nav.transactions')}</h1>
-        <div className="row"><Link to="/transactions/previews">{t('txn.previews')}</Link>{has('oversight.export') && <a href="#export" onClick={exportCsv}>{t('txn.export')}</a>}</div>
+        <div className="row">{me?.kind !== 'client' && <Link to="/transactions/previews">{t('txn.previews')}</Link>}{has('oversight.export') && <a href="#export" onClick={exportCsv}>{t('txn.export')}</a>}</div>
       </div>
       <form className="filters" key={JSON.stringify(range)} onSubmit={(e) => { e.preventDefault(); apply(e.currentTarget); }}>
         <label className="small">{t('l.created_after')} <input type="datetime-local" name="created_after" defaultValue={range.created_after ?? ''} /></label>
