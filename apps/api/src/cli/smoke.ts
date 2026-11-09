@@ -74,7 +74,7 @@ const route = r.body.routes.find((x: any) => x.country_code === 'CM' && x.paymen
 check('routes listed with the CM MOMO collection route', Boolean(route), `${r.body.routes.length} routes`);
 r = await j(`/console/projects/${projectId}/entitlements`, { method: 'POST', body: { route_id: route.id, count_24h: 100, value_24h: 10000000, count_30d: 1000, value_30d: 100000000, note: 'pilot' } });
 check('entitlement granted', r.status === 201, JSON.stringify(r.body));
-r = await j(`/console/projects/${projectId}/notification-endpoint`, { method: 'PUT', body: { url: 'http://127.0.0.1:9/hook' } });
+r = await j(`/console/projects/${projectId}/notification-endpoint`, { method: 'PUT', body: { url: 'https://example.com/proxiapay-smoke-hook' } });
 check('notification endpoint set; secret shown once', r.status === 200 && r.body.signing_secret.startsWith('whsec_'));
 
 // Project API

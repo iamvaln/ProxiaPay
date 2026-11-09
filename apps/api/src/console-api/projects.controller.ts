@@ -6,6 +6,7 @@ import { DB_TOKEN, type Db } from '../db/database';
 import { nonEmpty, parseBody } from '../http/validation';
 import { LedgerService } from '../ledger/ledger.service';
 import { NotificationService } from '../notifications/notification.service';
+import { NOT_PUBLIC, vetTarget } from '../notifications/public-address';
 import { CredentialService, CREDENTIAL_SCOPES } from '../project-auth/credential.service';
 import { ConfirmationService } from '../admin-auth/confirmation.service';
 import { AuditService } from '../audit/audit.service';
@@ -134,7 +135,8 @@ export class ConsoleProjectsController {
   async originRefusals(@Param('id') id: string, @Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
     this.reach(req, id);
     const q = parseBody(refusalsSchema, query);
-    let qb = this.db.selectFrom('origin_refusal').selectAll().where('project_id', '=', id);
+    // Named columns: a column added to the table later does not reach a client's page unseen.
+    let qb = this.db.selectFrom('origin_refusal').select(['id', 'credential_key', 'origin_address', 'occurred_at']).where('project_id', '=', id);
     if (q.after) qb = qb.where('occurred_at', '>', new Date(q.after));
     if (q.before) qb = qb.where('occurred_at', '<', new Date(q.before));
     return paginate(qb, q, { sorts: { when: 'occurred_at' }, defaultSort: 'when', id: 'id' });
@@ -258,6 +260,9 @@ export class ConsoleProjectsController {
   async setEndpoint(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
     this.reach(req, id, 'projects.notifications');
     const { url } = parseBody(endpointSchema, body);
+    // For everyone, platform staff included: a project's notifications never go into a network, and the delivery checks again.
+    // A name that does not resolve is refused too: nothing could be delivered to it.
+    if ((await vetTarget(url)).verdict !== 'public') throw new PlatformError('FIELD_INVALID', NOT_PUBLIC, { field: 'url' });
     const { secret } = await this.db.transaction().execute((tx) => this.notifications.setEndpoint(tx, id, url, req.principal.administratorId));
     return { url, signing_secret: secret, note: 'The secret is shown once; store it now.' };
   }

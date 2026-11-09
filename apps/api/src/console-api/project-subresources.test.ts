@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NotFoundException } from '@nestjs/common';
 import { createTestContext, type TestContext } from '../test/context';
 import { Authorisation, type Grant } from '../admin-auth/authorisation.service';
@@ -8,6 +8,7 @@ import type { ConfirmationService } from '../admin-auth/confirmation.service';
 import { AuditService } from '../audit/audit.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { NotificationService } from '../notifications/notification.service';
+import { addressResolver } from '../notifications/public-address';
 import { CredentialService } from '../project-auth/credential.service';
 import { ProjectAuthService } from '../project-auth/project-auth.service';
 import { PreviewService } from '../transactions/preview.service';
@@ -25,7 +26,7 @@ let transactions: ConsoleTransactionsController;
 let adminId: string;
 
 const grant = (permission: Permission, projectIds: string[]): Grant => ({ permission, scopeType: 'projects', projectIds, providerAccountIds: [] });
-const requestOf = (...grants: Grant[]) => ({ principal: { administratorId: adminId }, auth: new Authorisation(adminId, grants) }) as unknown as ConsoleRequest;
+const requestOf = (...grants: Grant[]) => ({ principal: { administratorId: adminId }, auth: new Authorisation(adminId, grants, null, false) }) as unknown as ConsoleRequest;
 const confirmation = { id: '6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f', code: '123456' };
 // The code check is not under test here; the stub consumes any code.
 const confirmations = { consume: async () => undefined, recordFailedAttempt: async () => undefined } as unknown as ConfirmationService;
@@ -37,6 +38,7 @@ beforeAll(async () => {
   transactions = new ConsoleTransactionsController(t.db, get(TransactionReader), get(TransactionService), get(LedgerService), get(NotificationService), get(CryptoService), get(AuditService), null as never);
 });
 afterAll(() => t.close());
+afterEach(() => vi.restoreAllMocks());
 beforeEach(async () => {
   await t.reset();
   adminId = (await t.admin()).id;
@@ -62,6 +64,28 @@ describe('project sub-resources check their own permission', () => {
     const endpoint = await projects.setEndpoint(a.id, { url: 'https://hooks.example.com/pp' }, requestOf(grant('projects.notifications', [a.id])));
     expect(endpoint.url).toBe('https://hooks.example.com/pp');
     await expect(projects.setEndpoint(a.id, { url: 'https://hooks.example.com/pp' }, onlyCredentialsOnA)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('the notification address', () => {
+  const refusal = { code: 'FIELD_INVALID', message: 'That address is not reachable from the internet.', options: { field: 'url' } };
+
+  it.each(['http://127.0.0.1:8080/hook', 'https://169.254.169.254/latest', 'https://10.0.0.5/hook', 'https://100.64.1.1/', 'https://[fd12::1]/', 'https://localhost/hook', 'https://intranet/hook', 'https://vault.internal/hook', 'https://nas.local/hook', 'https://198.18.0.1/', 'https://224.0.0.1/', 'https://255.255.255.255/', 'https://[ff02::1]/', 'https://[64:ff9b::a00:1]/', 'https://[2002:a00:1::]/', 'https://[::ffff:10.0.0.1]/'])('is refused when it points inside a network, to platform staff as well: %s', async (url) => {
+    const a = await t.project('proj-a');
+    await expect(projects.setEndpoint(a.id, { url }, requestOf(grant('projects.notifications', [a.id])))).rejects.toMatchObject(refusal);
+    expect(await t.db.selectFrom('project_notification_endpoint').select('id').where('project_id', '=', a.id).execute()).toEqual([]);
+  });
+
+  it('is refused when its name does not resolve', async () => {
+    const a = await t.project('proj-a');
+    vi.spyOn(addressResolver, 'lookup').mockRejectedValue(Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }));
+    await expect(projects.setEndpoint(a.id, { url: 'https://hooks.example.com/pp' }, requestOf(grant('projects.notifications', [a.id])))).rejects.toMatchObject(refusal);
+  });
+
+  it('is refused when its name resolves to an internal address', async () => {
+    const a = await t.project('proj-a');
+    vi.spyOn(addressResolver, 'lookup').mockResolvedValue(['93.184.215.14', '192.168.0.10']);
+    await expect(projects.setEndpoint(a.id, { url: 'https://hooks.example.com/pp' }, requestOf(grant('projects.notifications', [a.id])))).rejects.toMatchObject(refusal);
   });
 });
 
