@@ -10,12 +10,17 @@ You need the `admin.clients` permission. The sandbox needs `PUBLIC_BASE_URL` and
 
 ## 1. Create the client on the sandbox
 
-1. Console, **Oversight, Clients**. Fill in the client's name and its owner's name
-   and email, then create. It asks for an emailed confirmation code.
+1. Console, **Oversight, Clients**. Fill in **Client**, **Owner name** and
+   **Owner email**, then **Create client**. It asks for an emailed confirmation
+   code.
 2. The owner receives an email with a link,
    `https://sandbox.pay.proxia-digital.com/invitation/<token>`. It is valid for 72
    hours and works once. You never see or choose their password.
 3. If it expires, open the client and use **Resend invitation** on the owner.
+
+"Invitation sent." is not proof that the address exists or that the mail arrived:
+the console answers the same way whatever happens to the address. Check with the
+owner that the email came.
 
 On the sandbox the second factor accepts any six digits and never asks to enrol an
 authenticator. Production needs a real TOTP.
@@ -23,13 +28,17 @@ authenticator. Production needs a real TOTP.
 ## 2. What the owner does
 
 - Opens the link, sets a password, signs in.
-- **Creates projects** (Projects, New project). On the sandbox each new project
+- **Creates projects** (**Projects**, **New project**). On the sandbox each new project
   gets every active route, in both directions, at once: 1000 transactions and
   100 000 000 per 24 hours and per 30 days, fees inherited. Routes opened after
   that are not added to existing projects; grant them from the project page.
 - **Issues credentials** on the project (`pk_test_…` / `sk_test_…`, shown once,
   with an emailed code).
-- **Sets the webhook address**, and keeps the signing secret.
+- **Sets the notification address**, and keeps the signing secret. An address
+  inside a network (localhost, a private or link-local IP, a name that resolves to
+  one, a single-label, `.internal` or `.local` name), or a name that does not
+  resolve, is refused: "That address is not reachable from the internet." Redirects
+  from it are not followed.
 - **Invites the team** (Team): Developer or Finance, with the projects each can
   reach. A member signs in with the same link and password steps.
 - With several clients on one account, switches between them in the console. One
@@ -40,7 +49,8 @@ The client then follows `docs/shop-integration-playbook.md`.
 ## 3. Attach an existing project to a client
 
 For a project that already exists, such as MonJeton's: open the project page, and
-use the client field to attach it. The confirmation names any platform account that
+in the **Attach to a client** card choose the client, then **Attach to client**. The
+confirmation names any platform account that
 still holds a `projects` scope on it, so you see who else reaches it. Routes,
 entitlements, limits and fees stay yours to set from the project page, as before.
 
@@ -52,7 +62,8 @@ Nothing carries over from the sandbox.
    The owner accepts the production link and **enrols an authenticator** at first
    sign-in.
 2. The owner recreates the projects, issues live credentials (`pk_live_…` /
-   `sk_live_…`), sets the webhook, declares the IP addresses and invites the team.
+   `sk_live_…`), sets the notification address, declares the IP addresses and
+   invites the team.
 3. Each new project raises an informational alert, **Project waiting for routes**.
    Open the project and grant its entitlements by hand: routes, limits, fees.
    Until then the owner's project page reads "Waiting for ProxiaPay to open your
@@ -69,7 +80,9 @@ Nothing carries over from the sandbox.
   last active owner of an active client cannot be disabled: invite a successor
   first (**Invite another owner**).
 - **An account** (**Disable account**): the person can no longer sign in anywhere,
-  whatever clients they belong to.
+  whatever clients they belong to. **Enable account** on the same row lets them
+  back in; memberships keep their own status. A client account is managed here
+  only: the administrators page refuses to change its status.
 
 ## 6. What a client never sees
 
