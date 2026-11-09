@@ -11,6 +11,13 @@ let answer: { status: number; headers?: Record<string, string> } = { status: 200
 
 beforeAll(async () => {
   server = createServer((req: IncomingMessage, res) => {
+    // A server that never finishes: one byte every 100 ms (each resets an idle timer), or as much as the socket takes.
+    if (req.url === '/drip' || req.url === '/endless') {
+      res.writeHead(200);
+      const timer = req.url === '/drip' ? setInterval(() => res.write('x'), 100) : setInterval(() => res.write('x'.repeat(16_384)), 5);
+      res.on('close', () => clearInterval(timer));
+      return;
+    }
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => { seen.push({ host: req.headers.host, path: req.url, body }); res.writeHead(answer.status, answer.headers ?? {}); res.end('ok'); });
@@ -18,7 +25,7 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   port = (server.address() as AddressInfo).port;
 });
-afterAll(() => new Promise<void>((r) => server.close(() => r())));
+afterAll(() => new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()); }));
 beforeEach(() => { seen = []; answer = { status: 200 }; });
 
 const loopback = [{ address: '127.0.0.1', family: 4 as const }];
@@ -36,6 +43,20 @@ describe('the delivery transport', () => {
     const res = await deliveryTransport.post(`http://hooks.example.invalid:${port}/pp`, {}, '{}', loopback, 5_000);
     expect(res.status).toBe(302);
     expect(seen.map((s) => s.path)).toEqual(['/pp']);
+  });
+
+  it('gives up after the whole deadline, however steadily a response drips', async () => {
+    const started = Date.now();
+    await expect(deliveryTransport.post(`http://hooks.example.invalid:${port}/drip`, {}, '{}', loopback, 1_000)).rejects.toMatchObject({ name: 'TimeoutError', message: 'timeout' });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(950);
+    expect(Date.now() - started).toBeLessThan(1_800);
+  });
+
+  it('stops reading an endless response after the 1000 characters it keeps', async () => {
+    const started = Date.now();
+    const res = await deliveryTransport.post(`http://hooks.example.invalid:${port}/endless`, {}, '{}', loopback, 5_000);
+    expect(res).toEqual({ status: 200, body: 'x'.repeat(1000) });
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 
   it('answers every lookup with the vetted addresses, by family when one is asked for', () => {

@@ -21,7 +21,7 @@ export interface DeliveryResponse { status: number; body: string }
 
 /**
  * The one network call of a notification: a POST to `url`, connected only to `addresses`, never following a redirect
- * (a 3xx comes back as it is), and given up after `timeoutMs` with an error named `timeout`. An object so tests replace it.
+ * (a 3xx comes back as it is), and given up after `timeoutMs` in all, with an error named `timeout`. An object so tests replace it.
  */
 export const deliveryTransport = {
   post(url: string, headers: Record<string, string>, body: string, addresses: VettedAddress[], timeoutMs: number): Promise<DeliveryResponse> {
@@ -31,16 +31,24 @@ export const deliveryTransport = {
       protocol: target.protocol, hostname: target.hostname.replace(/^\[|\]$/g, ''), port: target.port || undefined, path: `${target.pathname}${target.search}`,
     };
     return new Promise<DeliveryResponse>((resolve, reject) => {
+      let settled = false;
+      const settle = (fn: () => void) => { if (!settled) { settled = true; clearTimeout(deadline); fn(); } };
       // `hostname` stays the URL's: Node takes SNI and the Host header from it, and only the lookup is pinned.
       const req = (target.protocol === 'https:' ? httpsRequest : httpRequest)(options, (res) => {
         let text = '';
+        const done = () => settle(() => resolve({ status: res.statusCode ?? 0, body: text.slice(0, 1000) }));
         res.setEncoding('utf8');
-        res.on('data', (chunk: string) => { if (text.length < 1000) text += chunk; });
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: text.slice(0, 1000) }));
-        res.on('error', reject);
+        res.on('data', (chunk: string) => {
+          text += chunk;
+          // What is kept is read: a response that goes on is cut here rather than holding the worker.
+          if (text.length >= 1000) { done(); req.destroy(); }
+        });
+        res.on('end', done);
+        res.on('error', (e) => settle(() => reject(e)));
       });
-      req.setTimeout(timeoutMs, () => req.destroy(Object.assign(new Error('timeout'), { name: 'TimeoutError' })));
-      req.on('error', reject);
+      // A deadline on the whole exchange, body included: a socket timeout would restart with every byte of a dripping answer.
+      const deadline = setTimeout(() => req.destroy(Object.assign(new Error('timeout'), { name: 'TimeoutError' })), timeoutMs);
+      req.on('error', (e) => settle(() => reject(e)));
       req.end(body);
     });
   },
