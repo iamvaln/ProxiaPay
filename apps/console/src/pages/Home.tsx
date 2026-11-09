@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { get, post } from '../lib/api';
+import { useState } from 'react';
+import { get, post, readableError } from '../lib/api';
 import { useSession, useT } from '../lib/session';
-import { Amount, Empty, ErrorLine, ScopeNote, SubmitForm, useEvery, useLoad } from '../components/common';
+import { Amount, Empty, ErrorLine, ScopeNote, useEvery, useLoad } from '../components/common';
 import { Headline } from '../components/Headline';
 import { RouteChart } from '../components/RouteChart';
 import { Verdict } from '../components/Verdict';
@@ -56,9 +57,21 @@ export function HomeView({ cards, loadedAt }: { cards: HomeCards; loadedAt: Date
   );
 }
 
+function AcceptButton({ membershipId }: { membershipId: string }) {
+  const { refresh } = useSession();
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const accept = async () => {
+    setBusy(true); setError(null);
+    try { await post(`/auth/memberships/${membershipId}/accept`); await refresh(); } catch (e) { setError(readableError(e, t)); setBusy(false); }
+  };
+  return <><button type="button" className="primary" disabled={busy} onClick={() => void accept()}>{busy ? t('common.working') : t('pending.accept')}</button><ErrorLine error={error} /></>;
+}
+
 /** Memberships offered to this account and not yet accepted; accepting one makes the client available to switch to. */
 export function PendingInvitations() {
-  const { me, refresh } = useSession();
+  const { me } = useSession();
   const t = useT();
   if (!me?.pending_clients.length) return null;
   return (
@@ -67,7 +80,7 @@ export function PendingInvitations() {
       {me.pending_clients.map((p) => (
         <div key={p.membership_id}>
           <p>{t('pending.invited', { client: p.client_name })}</p>
-          <SubmitForm className="" submitLabel={t('pending.accept')} onSubmit={async () => { await post(`/auth/memberships/${p.membership_id}/accept`); await refresh(); }}><></></SubmitForm>
+          <AcceptButton membershipId={p.membership_id} />
         </div>
       ))}
     </section>

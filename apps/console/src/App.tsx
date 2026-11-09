@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider, useSession } from './lib/session';
 import { Shell } from './components/Shell';
@@ -26,7 +27,8 @@ function Guarded({ children }: { children: React.ReactNode }) {
   if (loading) return <p className="muted" style={{ padding: 24 }}>…</p>;
   // Sign-in brings the administrator back to the page they were on.
   if (!me || !me.second_factor_complete) return <Navigate to="/sign-in" replace state={{ from: here.pathname + here.search }} />;
-  return <Shell>{children}</Shell>;
+  // Keyed on the active client: after a switch every page remounts and reloads, so nothing of the previous client stays on screen.
+  return <Shell><Fragment key={me.active_client?.id ?? 'platform'}>{children}</Fragment></Shell>;
 }
 
 export function App() {
