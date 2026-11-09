@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { get } from '../lib/api';
+import { useSession } from '../lib/session';
 import type { Filter, TableState } from '../components/table/DataTable';
 
 /** A server page, as every console list endpoint returns it. */
@@ -49,10 +50,14 @@ export type Reference = { projects: { id: string; name: string }[]; providers: {
  */
 export function useReference(): Reference & { ready: boolean } {
   const [ref, setRef] = useState<Reference & { ready: boolean }>({ projects: [], providers: [], countries: [], methods: [], currencies: [], routes: [], ready: false });
+  const { me } = useSession();
+  const client = me?.kind === 'client';
   useEffect(() => {
     let live = true;
     const quiet = <T,>(p: Promise<T>) => p.catch(() => null);
-    void Promise.all([quiet(get<any>('/projects')), quiet(get<any>('/configuration/providers')), quiet(get<any>('/configuration/countries')), quiet(get<any>('/configuration/payment-methods')), quiet(get<any>('/configuration/routes'))]).then(([projects, providers, countries, methods, routes]) => {
+    // The configuration endpoints are the platform's and closed to a client: it gets its project chip and no route, country, method, provider or currency ones.
+    const platform = <T,>(path: string) => (client ? Promise.resolve(null) : quiet(get<T>(path)));
+    void Promise.all([quiet(get<any>('/projects')), platform<any>('/configuration/providers'), platform<any>('/configuration/countries'), platform<any>('/configuration/payment-methods'), platform<any>('/configuration/routes')]).then(([projects, providers, countries, methods, routes]) => {
       if (!live) return;
       setRef({
         projects: (projects?.projects ?? []).map((p: any) => ({ id: p.id, name: p.name })),
@@ -66,7 +71,7 @@ export function useReference(): Reference & { ready: boolean } {
       });
     });
     return () => { live = false; };
-  }, []);
+  }, [client]);
   return ref;
 }
 
