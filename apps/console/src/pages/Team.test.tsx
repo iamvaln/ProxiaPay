@@ -45,14 +45,14 @@ describe('the team page', () => {
   });
 
   it('shows the same confirmation whether or not the address existed', async () => {
-    server();
+    // The two answers differ in their text: what is read on screen must not depend on it.
+    server(() => new Response('{"status":"invitation_sent","note":"known address"}', { status: 201 }));
     page();
     await fill('A', 'known@acme.test');
     fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
     const first = (await screen.findByRole('status')).textContent;
     cleanup();
-    // The second address is refused as already a member by the API's own policy: the console words it the same.
-    server(() => new Response('{"status":"invitation_sent"}', { status: 201 }));
+    server(() => new Response('{"status":"something_else","note":"new address"}', { status: 201 }));
     page();
     await fill('B', 'fresh@acme.test');
     fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));

@@ -34,7 +34,9 @@ export function Clients() {
   const t = useT();
   const { data, error, reload } = useLoad(() => get<{ clients: Row[] }>('/oversight/clients'));
   const [form, setForm] = useState({ name: '', owner_name: '', owner_email: '', language: 'en' });
-  const filled = !!form.name.trim() && !!form.owner_name.trim() && form.owner_email.includes('@');
+  // Trimmed before the code is requested: the API trims too, and the code is bound to the values as it reads them.
+  const values = { name: form.name.trim(), owner_name: form.owner_name.trim(), owner_email: form.owner_email.trim(), language: form.language };
+  const filled = !!values.name && !!values.owner_name && values.owner_email.includes('@');
   return (
     <>
       <ErrorLine error={error} />
@@ -46,7 +48,7 @@ export function Clients() {
           <label>{t('field.owner_name')}<input value={form.owner_name} onChange={(e) => setForm({ ...form, owner_name: e.target.value })} /></label>
           <label>{t('field.owner_email')}<input type="email" value={form.owner_email} onChange={(e) => setForm({ ...form, owner_email: e.target.value })} /></label>
           <LanguageSelect value={form.language} onChange={(language) => setForm({ ...form, language })} />
-          <ConfirmedAction operationType="client.create" values={form} path="/oversight/clients" label={t('cl.create')} disabled={!filled} done={() => t('cl.created')}
+          <ConfirmedAction operationType="client.create" values={values} path="/oversight/clients" label={t('cl.create')} disabled={!filled} done={() => t('cl.created')}
             onDone={() => { setForm({ name: '', owner_name: '', owner_email: '', language: form.language }); reload(); }} />
         </div>
       </div>
@@ -102,7 +104,7 @@ function ClientView({ id }: { id: string }) {
           <label>{t('field.name')}<input value={owner.name} onChange={(e) => setOwner({ ...owner, name: e.target.value })} /></label>
           <label>{t('field.email')}<input type="email" value={owner.email} onChange={(e) => setOwner({ ...owner, email: e.target.value })} /></label>
           <LanguageSelect value={owner.language} onChange={(language) => setOwner({ ...owner, language })} />
-          <ConfirmedAction operationType="client.invite_owner" values={{ client_id: id, ...owner }} path={`${base}/owners`} label={t('cl.invite_owner_submit')} disabled={!owner.name.trim() || !owner.email.includes('@')} done={() => t('cl.invited')}
+          <ConfirmedAction operationType="client.invite_owner" values={{ client_id: id, name: owner.name.trim(), email: owner.email.trim(), language: owner.language }} path={`${base}/owners`} label={t('cl.invite_owner_submit')} disabled={!owner.name.trim() || !owner.email.includes('@')} done={() => t('cl.invited')}
             onDone={() => { setOwner({ name: '', email: '', language: owner.language }); reload(); }} />
         </div>
       </div>
