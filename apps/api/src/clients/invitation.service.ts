@@ -194,7 +194,7 @@ export class InvitationService {
     });
   }
 
-  /** Replaces a membership's assignment in one go and ends the member's sessions in that client, so the new access applies at once. */
+  /** Replaces a membership's assignment in one go. Sessions stay: authorisation is loaded on every request, so the new access applies from the member's next one. */
   async replaceAccess(tx: Tx, membershipId: string, profile: ClientProfile, projectIds: string[], actorId: string, opts: MembershipWriteOptions = {}) {
     const m = await tx.selectFrom('client_membership').select(['id', 'client_id', 'administrator_id']).where('id', '=', membershipId).forUpdate().executeTakeFirstOrThrow();
     const prior = await this.accessOf(tx, m.id);
@@ -202,7 +202,6 @@ export class InvitationService {
     const scoped = profile === 'owner' ? [] : await this.assertProjects(tx, m.client_id, projectIds);
     await tx.deleteFrom('role_assignment').where('membership_id', '=', m.id).execute();
     await this.writeAssignment(tx, m.administrator_id, m.id, profile, scoped, actorId);
-    await this.revokeSessionsIn(tx, m.administrator_id, m.client_id, actorId);
     await this.audit.record(tx, { actorId, action: opts.auditAction ?? 'team.access', subjectType: 'client_membership', subjectId: m.id, prior, next: { profile, project_ids: scoped } });
     return { membership_id: m.id, profile, project_ids: scoped };
   }

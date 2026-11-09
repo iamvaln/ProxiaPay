@@ -14,6 +14,7 @@ import { ApprovalService } from './approval.service';
 import { HomeController } from './home.controller';
 import { HomeService } from './home.service';
 import { SessionGuard, type ConsoleRequest } from './session.guard';
+import { ClientAccessible } from './client-access';
 
 /**
  * The handlers a client account may reach, as "METHOD path". The test walks every console handler
@@ -115,6 +116,20 @@ describe('the client wall', () => {
     expect(await outcome(guard, closed)).toBe('NOT_FOUND: No such resource.');
   });
 
+  it('asks a client for the second factor on an open data handler, as it asks anyone', async () => {
+    const guard = guardFor(principalOf('client', false), ALL_PERMISSIONS as Permission[]);
+    const open = consoleRoutes().find((r) => r.key === 'GET console/transactions')!;
+    expect(await outcome(guard, open)).toBe('SECOND_FACTOR_REQUIRED: Complete the second factor to continue.');
+  });
+
+  it('ignores @ClientAccessible on a controller: only a handler is opened', async () => {
+    @ClientAccessible()
+    class Marked { closed() { return 'reached'; } }
+    const route = { key: 'GET console/marked', controller: Marked, handler: Marked.prototype.closed, guarded: true, clientAccessible: false } as unknown as Route;
+    expect(await outcome(guardFor(principalOf('client'), ALL_PERMISSIONS as Permission[]), route)).toBe('NOT_FOUND: No such resource.');
+    expect(await outcome(guardFor(principalOf('platform'), ALL_PERMISSIONS as Permission[]), route)).toBe('true');
+  });
+
   it('lets platform staff through unchanged', async () => {
     const guarded = consoleRoutes().filter((r) => r.guarded);
     const all = guardFor(principalOf('platform'), ALL_PERMISSIONS as Permission[]);
@@ -136,7 +151,7 @@ describe('approval reach', () => {
     return new HomeController(t.db, {} as TreasuryService, approvals, {} as ConfirmationService, new HomeService(t.db));
   };
   const requestOf = (administratorId: string, ...permissions: Permission[]) =>
-    ({ principal: { administratorId }, auth: new Authorisation(administratorId, permissions.map((permission) => ({ permission, scopeType: 'all', projectIds: [], providerAccountIds: [] }))) }) as unknown as ConsoleRequest;
+    ({ principal: { administratorId }, auth: new Authorisation(administratorId, permissions.map((permission) => ({ permission, scopeType: 'all', projectIds: [], providerAccountIds: [] })), null, false) }) as unknown as ConsoleRequest;
   const listed = async (req: ConsoleRequest) => (await controller().approvalQueue(req)).requests.map((r) => r.id).sort();
   const detail = async (id: string, req: ConsoleRequest) => {
     try {

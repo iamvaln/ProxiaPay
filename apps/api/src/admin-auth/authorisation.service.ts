@@ -15,12 +15,11 @@ export interface Grant {
  * Scope is enforced where data is read, so callers ask for the reachable set and filter with it.
  */
 export class Authorisation {
-  private readonly clientAccount: boolean;
-
-  /** `clientId` is the active client of a client account; null for platform staff, and for a client account that has none yet. */
-  constructor(readonly administratorId: string, private readonly grants: Grant[], readonly clientId: string | null = null, clientAccount?: boolean) {
-    this.clientAccount = clientAccount ?? clientId !== null;
-  }
+  /**
+   * `clientId` is the active client of a client account; null for platform staff, and for a client account that has none yet.
+   * `clientAccount` is always said: a client account without an active client is still not platform staff.
+   */
+  constructor(readonly administratorId: string, private readonly grants: Grant[], readonly clientId: string | null, private readonly clientAccount: boolean) {}
 
   get isClient(): boolean {
     return this.clientAccount;

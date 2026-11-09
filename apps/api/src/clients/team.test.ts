@@ -144,7 +144,7 @@ describe('the owner\'s team', () => {
     expect(assignment).toEqual([{ name: 'Client developer' }]);
   });
 
-  it('changing access replaces the assignment and ends the member\'s sessions in this client', async () => {
+  it('changing access replaces the assignment and keeps the member signed in: the next request loads the new access', async () => {
     const { acme, req, member, shop } = await acmeTeam();
     const other = await newClient('Other');
     const second = await project(acme.id, 'acme-two');
@@ -160,7 +160,7 @@ describe('the owner\'s team', () => {
     expect(auth.projectScope('transactions.read')!.sort()).toEqual([shop.id, second.id].sort());
     expect(await t.db.selectFrom('role_assignment').select('id').where('membership_id', '=', member.id).execute()).toHaveLength(1);
     const sessions = await t.db.selectFrom('admin_session').select(['id', 'revoked_at']).where('administrator_id', '=', member.admin_id).execute();
-    expect(sessions.find((s) => s.id === here.id)!.revoked_at).not.toBeNull();
+    expect(sessions.find((s) => s.id === here.id)!.revoked_at).toBeNull();
     expect(sessions.find((s) => s.id === there.id)!.revoked_at).toBeNull();
     const audit = await t.db.selectFrom('audit_record').select(['action', 'actor_id', 'subject_id']).where('action', '=', 'team.access').execute();
     expect(audit).toEqual([{ action: 'team.access', actor_id: req.principal.administratorId, subject_id: member.id }]);

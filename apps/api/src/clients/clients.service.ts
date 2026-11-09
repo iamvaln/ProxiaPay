@@ -99,6 +99,17 @@ export class ClientsService {
     return { administrator_id: a.id, status: 'disabled' as const };
   }
 
+  /** Undoes disableAccount. Memberships keep their own status: a membership disabled on its own stays so. Sessions revoked at the disable stay revoked. */
+  async enableAccount(tx: Tx, administratorId: string, actorId: string) {
+    const a = isUuid(administratorId)
+      ? await tx.selectFrom('administrator').select(['id', 'status']).where('id', '=', administratorId).where('kind', '=', 'client').forUpdate().executeTakeFirst()
+      : undefined;
+    if (!a) throw new PlatformError('NOT_FOUND', 'No such account.');
+    await tx.updateTable('administrator').set({ status: 'active' }).where('id', '=', a.id).execute();
+    await this.audit.record(tx, { actorId, action: 'administrator.enable', subjectType: 'administrator', subjectId: a.id, prior: { status: a.status }, next: { status: 'active' } });
+    return { administrator_id: a.id, status: 'active' as const };
+  }
+
   async list(exec: Executor = this.db) {
     const rows = await exec
       .selectFrom('client as c')
@@ -114,8 +125,11 @@ export class ClientsService {
   async detail(clientId: string, exec: Executor = this.db) {
     const client = isUuid(clientId) ? await exec.selectFrom('client').select(['id', 'name', 'status', 'created_at']).where('id', '=', clientId).executeTakeFirst() : undefined;
     if (!client) throw new PlatformError('NOT_FOUND', 'No such client.');
+    // The account's own status beside the membership's: the platform disables and re-enables the person from here.
     const members = await this.invitations.membersOf(exec, client.id);
+    const accounts = members.length ? await exec.selectFrom('administrator').select(['id', 'status']).where('id', 'in', members.map((m) => m.administrator_id)).execute() : [];
+    const withAccounts = members.map((m) => ({ ...m, account_status: accounts.find((a) => a.id === m.administrator_id)!.status }));
     const projects = await exec.selectFrom('project').select(['id', 'code', 'name', 'status']).where('client_id', '=', client.id).orderBy('code').execute();
-    return { ...client, members, projects };
+    return { ...client, members: withAccounts, projects };
   }
 }

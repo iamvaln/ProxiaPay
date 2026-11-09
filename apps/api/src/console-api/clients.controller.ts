@@ -64,6 +64,14 @@ export class ClientsController {
     return withConfirmation(this.db, this.confirmations, req.principal, 'administrator.disable', { administrator_id: aid }, confirmation, (tx) => this.clients.disableAccount(tx, aid, req.principal.administratorId));
   }
 
+  @Post('accounts/:aid/enable')
+  @HttpCode(200)
+  @RequirePermission('admin.clients')
+  async enableAccount(@Param('aid') aid: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
+    const { confirmation } = parseBody(confirmed, body);
+    return withConfirmation(this.db, this.confirmations, req.principal, 'administrator.enable', { administrator_id: aid }, confirmation, (tx) => this.clients.enableAccount(tx, aid, req.principal.administratorId));
+  }
+
   @Get(':id')
   @RequirePermission('admin.clients')
   detail(@Param('id') id: string) {

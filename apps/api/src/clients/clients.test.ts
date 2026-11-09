@@ -5,6 +5,7 @@ import { AlertService } from '../alerts/alert.service';
 import { Mailer } from '../alerts/mailer';
 import { AuditService } from '../audit/audit.service';
 import { ClientsController } from '../console-api/clients.controller';
+import { OversightController } from '../console-api/oversight.controller';
 import { RoleService } from '../console-api/role.service';
 import { ClientProjectsService } from '../console-api/client-projects.service';
 import { EntitlementService } from '../console-api/entitlement.service';
@@ -206,6 +207,32 @@ describe('clients for the platform', () => {
     expect((await t.db.selectFrom('audit_record').select('action').where('action', '=', 'administrator.disable').execute())).toHaveLength(1);
     // A platform account is handled on the administrators page.
     await expect(controller().disableAccount(staff.id, { confirmation }, requestOf(staff.id))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('a client account\'s status', () => {
+  it('is refused on the administrators page, which is for platform accounts', async () => {
+    const staff = await t.admin();
+    const dev = await member((await newClient('Acme')).id, 'Client developer');
+    const oversight = new OversightController(t.db, null as never, null as never, get(AuditService), null as never, null as never, null as never, confirmations);
+    await expect(oversight.patchAdministrator(dev.adminId, { status: 'disabled', confirmation }, requestOf(staff.id))).rejects.toMatchObject({ code: 'PERMISSION_DENIED', message: 'Client accounts are managed from Oversight → Clients.' });
+    expect((await t.db.selectFrom('administrator').select('status').where('id', '=', dev.adminId).executeTakeFirstOrThrow()).status).toBe('active');
+  });
+
+  it('is re-enabled from the client, with a confirmation code', async () => {
+    const staff = await t.admin();
+    const acme = await newClient('Acme');
+    const dev = await member(acme.id, 'Client developer');
+    const req = requestOf(staff.id);
+    await controller().disableAccount(dev.adminId, { confirmation }, req);
+    expect((await controller().detail(acme.id)).members.find((m) => m.administrator_id === dev.adminId)).toMatchObject({ account_status: 'disabled' });
+    await expect(controller().enableAccount(dev.adminId, {}, req)).rejects.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+    expect(await controller().enableAccount(dev.adminId, { confirmation }, req)).toEqual({ administrator_id: dev.adminId, status: 'active' });
+    expect((await t.db.selectFrom('administrator').select('status').where('id', '=', dev.adminId).executeTakeFirstOrThrow()).status).toBe('active');
+    expect((await controller().detail(acme.id)).members.find((m) => m.administrator_id === dev.adminId)).toMatchObject({ account_status: 'active' });
+    expect(await t.db.selectFrom('audit_record').select(['action', 'prior_state', 'new_state']).where('action', '=', 'administrator.enable').execute()).toEqual([{ action: 'administrator.enable', prior_state: { status: 'disabled' }, new_state: { status: 'active' } }]);
+    // A platform account is handled on the administrators page.
+    await expect(controller().enableAccount(staff.id, { confirmation }, req)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
 

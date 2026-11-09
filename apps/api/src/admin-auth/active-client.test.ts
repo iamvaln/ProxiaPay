@@ -1,4 +1,7 @@
+import 'reflect-metadata';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { createTestContext, type TestContext } from '../test/context';
 import { AdminAuthService } from './admin-auth.service';
 import { AuthorisationService } from './authorisation.service';
@@ -7,6 +10,8 @@ import { CryptoService } from '../crypto/crypto.service';
 import { SettingsService } from '../settings/settings.service';
 import { ConfirmationService } from './confirmation.service';
 import { AuditService } from '../audit/audit.service';
+import { SessionGuard, type ConsoleRequest } from '../console-api/session.guard';
+import { consoleRoutes } from '../test/console-routes';
 
 let t: TestContext;
 beforeAll(async () => { t = await createTestContext(); });
@@ -101,6 +106,37 @@ describe('the active client of a session', () => {
     await expect(controller().switchClient({ client_id: stranger.id }, { principal: p } as never)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await t.db.updateTable('client_membership').set({ status: 'disabled' }).where('client_id', '=', a.id).execute();
     await expect(controller().switchClient({ client_id: a.id }, { principal: p } as never)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('refuses to switch to a client whose membership is still pending', async () => {
+    const { person } = await twoClients();
+    const invitedTo = await newClient('Invited');
+    await membership(person.id, invitedTo.id, 'Client owner', { status: 'pending' });
+    const p = await signIn(person.email, person.password);
+    await expect(controller().switchClient({ client_id: invitedTo.id }, { principal: p } as never)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect((await auth().resolveSession(await tokenOf(p.sessionId)))!.activeClientId).not.toBe(invitedTo.id);
+  });
+
+  it('an open session whose membership is disabled loses its grants on its next request', async () => {
+    const c = await newClient('A');
+    const person = await clientPerson();
+    const m = await membership(person.id, c.id, 'Client owner');
+    const p = await signIn(person.email, person.password);
+    await t.db.updateTable('admin_session').set({ second_factor_at: new Date() }).where('id', '=', p.sessionId).execute();
+    const token = await tokenOf(p.sessionId);
+    const guard = new SessionGuard(new Reflector(), auth(), authorisation(), { TRUSTED_PROXY_HOPS: 0 });
+    const route = consoleRoutes().find((r) => r.key === 'GET console/transactions')!;
+    const request = async () => {
+      const req = { method: 'GET', headers: { cookie: `pp_session=${token}` }, socket: { remoteAddress: '10.0.0.1' } } as unknown as ConsoleRequest;
+      const ctx = { switchToHttp: () => ({ getRequest: () => req }), getHandler: () => route.handler, getClass: () => route.controller } as unknown as ExecutionContext;
+      await guard.canActivate(ctx);
+      return req;
+    };
+    expect((await request()).auth.has('transactions.read')).toBe(true);
+    // Disabled behind the session's back: nothing revokes it, and the session still resolves.
+    await t.db.updateTable('client_membership').set({ status: 'disabled' }).where('id', '=', m.id).execute();
+    expect(await auth().resolveSession(token)).toBeTruthy();
+    await expect(request()).rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
   });
 
   it('refuses sign-in for an invited account without a password, with the wrong-password message, and counts it', async () => {
