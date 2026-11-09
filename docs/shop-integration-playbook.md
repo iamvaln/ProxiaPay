@@ -16,19 +16,28 @@ provider, and the number you pay chooses what happens (step 11).
 
 ---
 
-## Step 1 — Get onboarded
+## Step 1 — ProxiaPay invites your owner account
 
-ProxiaPay's team creates your project and gives you, in writing:
+ProxiaPay's team creates your client and emails an invitation to your owner. The
+link, `…/invitation/<token>`, is valid for 72 hours; if it expires, ask for a new
+one. Open it, set a password, and sign in. On the sandbox the second factor accepts
+any six digits; in production you enrol an authenticator.
 
-- a **client key** (`pk_test_…`) and **client secret** (`sk_test_…`) — the secret is
-  shown once;
-- the **routes** you may use (country × payment method × collection/payout);
-- the **notification signing secret** (`whsec_…`) for the webhook address you give them.
+Then, in the console, as owner:
 
-You give them:
+- **create your project** (Projects, New project). On the sandbox every active
+  route opens at once; in production ProxiaPay opens your routes after you create
+  it, and the project page says it is waiting until then;
+- **issue a client key** (`pk_test_…`) and **client secret** (`sk_test_…`) on the
+  project — the secret is shown once, and issuing it takes an emailed code;
+- **set the notification address** (HTTPS) and keep the **signing secret**
+  (`whsec_…`);
+- for production, declare every **IP address or range** your servers call from;
+- **invite your team** (Team): Developer for credentials and settings, Finance for
+  transactions, balances and exports, each limited to the projects you choose.
 
-- the **HTTPS address** that will receive payment notifications;
-- for production, every **IP address or range** your servers call from.
+You see the routes you hold with your own fees and limits, never the provider
+behind them.
 
 ✅ *Check:* you hold a key, a secret and a signing secret, all stored in a secret
 manager — never in source or a config file.
@@ -248,5 +257,6 @@ It asks you to confirm, among others:
 - [ ] Every IP address you call from declared — production refuses others with `ORIGIN_NOT_ALLOWED`
 - [ ] Signing secret held in a secret store; `X-Request-Id` in your logs
 
-In production you receive `pk_live_…` / `sk_live_…`, a production signing secret,
-and the routes granted to you. Everything else comes from `/v1/settings`.
+Production is a separate environment: ProxiaPay creates your owner there again, you
+recreate your projects and team, issue `pk_live_…` / `sk_live_…` and a production
+signing secret yourself, and ProxiaPay opens the routes granted to you. Everything else comes from `/v1/settings`.

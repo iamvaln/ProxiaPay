@@ -364,6 +364,27 @@ fresh production database that costs nothing. Remember it for the day a similar
 migration meets a live ledger: such indexes should be built `CONCURRENTLY`
 (outside the migration's transaction) instead.
 
+## Migration 0004 and client accounts
+
+`0004` adds the `client` and `client_membership` tables, `project.client_id`,
+`administrator.kind`, the membership on role assignments, the `client` scope type,
+the session's active client and the invitation tokens. It also creates the roles
+`Client owner`, `Client developer` and `Client finance` and the permissions
+`projects.create_own`, `client.members` and `admin.clients`. Production never
+re-runs `seed`, so the migration is what puts them there. Nothing is backfilled:
+existing accounts and projects stay platform-side. `proxiapay_app` gets its grants
+on the new tables the next time `migrate` runs.
+
+The migration gives `admin.clients` to the `Owner` role, which is who creates
+clients; it is a sensitive permission, so granting it to anyone else needs a second
+approver. Check that `PUBLIC_BASE_URL` is set in `.env.production`:
+invitation links are built from it.
+
+**`SANDBOX_AUTO_ENTITLE` must never be set in production.** The API refuses to
+start with it, like `SANDBOX_ANY_SECOND_FACTOR`. In production a project created by
+a client has no routes; an informational alert says it is waiting, and Valentine
+opens its routes by hand (`docs/client-onboarding.md`).
+
 ## Activating a new country
 
 Production opens with Cameroon only. The seed inserts the whole catalogue and

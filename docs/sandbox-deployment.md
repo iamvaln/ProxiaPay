@@ -168,6 +168,19 @@ authenticator. Each such sign-in is recorded in the authentication history as
 "second factor waived on the sandbox". One-time codes for sensitive operations are
 unaffected. The API refuses to start with the switch set in production.
 
+## Client accounts on the sandbox
+
+Two settings in `.env.sandbox` serve client accounts (`docs/client-onboarding.md`):
+
+- `PUBLIC_BASE_URL=https://sandbox.pay.proxia-digital.com` builds the link in an
+  invitation email, `<PUBLIC_BASE_URL>/invitation/<token>`, valid 72 hours. Without
+  it, creating a client or inviting a member is refused with a configuration error:
+  the platform never sends a relative link.
+- `SANDBOX_AUTO_ENTITLE=true` grants a project created by a client every active
+  route, both directions, at creation (1000 transactions and 100 000 000 per 24
+  hours and per 30 days, fees inherited). Routes opened later are not added to
+  existing projects. The API refuses to start with it in production.
+
 ## Where the keys live, and why that is a deviation
 
 `docs/operations.md` is explicit: `MASTER_KEY_BASE64` and `INDEX_KEY_BASE64`
