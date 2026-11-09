@@ -237,7 +237,7 @@ export class OversightController {
   @Get('administrators')
   @RequirePermission('admin.administrators')
   async administrators() {
-    const admins = await this.db.selectFrom('administrator').select(['id', 'name', 'email', 'status', 'language', 'timezone', 'last_sign_in_at', 'totp_enrolled_at', 'locked_until', 'created_at']).orderBy('name').execute();
+    const admins = await this.db.selectFrom('administrator').select(['id', 'name', 'email', 'kind', 'status', 'language', 'timezone', 'last_sign_in_at', 'totp_enrolled_at', 'locked_until', 'created_at']).orderBy('name').execute();
     const assignments = await this.db.selectFrom('role_assignment as ra').innerJoin('role as r', 'r.id', 'ra.role_id').select(['ra.id', 'ra.administrator_id', 'ra.role_id', 'r.name as role_name', 'ra.scope_type', 'ra.membership_id']).execute();
     const scopes = await this.db.selectFrom('role_assignment_scope').selectAll().execute();
     return { administrators: admins.map((a) => ({ ...a, assignments: assignments.filter((x) => x.administrator_id === a.id).map((x) => ({ ...x, scopes: scopes.filter((s) => s.assignment_id === x.id) })) })) };

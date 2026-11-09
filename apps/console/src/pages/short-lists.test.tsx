@@ -208,6 +208,14 @@ describe('administrators and roles', () => {
     expect(self).not.toContain('×');
     expect(self).toContain('Vous ne pouvez pas modifier');
   });
+  it('offer no status change on a client account, and point to Clients instead', () => {
+    const client = admin('awa', { kind: 'client', assignments: [] });
+    expect(cfg.actions!.filter((x) => x.when!(client))).toEqual([]);
+    expect(cfg.actions!.filter((x) => x.when!({ ...client, status: 'disabled' }))).toEqual([]);
+    const out = wrap(<>{cfg.summary!(client)}</>);
+    expect(out).not.toContain('Désactiver');
+    expect(out).toContain('Géré depuis Supervision → Clients.');
+  });
   it('offer no removal of an assignment that belongs to a client membership', () => {
     const member = admin('ama', { assignments: [{ id: 'as-ama', role_name: 'Client owner', scope_type: 'client', membership_id: 'm1', scopes: [] }] });
     const out = wrap(<>{cfg.summary!(member)}</>);

@@ -184,7 +184,8 @@ export function administratorList({ t, me, reload }: { t: Tr; me?: string; reloa
       { label: t('l.roles_scope'), value: a.assignments.length ? a.assignments.map((x: Row) => <div key={x.id}>{x.role_name} <span className="small muted">{x.scope_type}{x.scopes.length ? `: ${x.scopes.map((s: Row) => (s.project_id ?? s.provider_account_id).slice(0, 8)).join(', ')}` : ''}</span> {a.id !== me && !x.membership_id && <ConfirmedAction operationType="role.change" values={{ kind: 'assignment_remove', assignment_id: x.id }} path="/oversight/roles/changes" label="×" onDone={reload} />}</div>) : '—' },
       { label: t('l.language'), value: a.language },
       { label: t('l.timezone'), value: a.timezone },
-      { label: t('col.status'), value: a.id === me ? <span className="small muted">{t('l.own_status_locked')}</span> : <ConfirmedAction operationType="administrator.amend" values={{ id: a.id, status: a.status === 'active' ? 'disabled' : 'active' }} path={`/oversight/administrators/${a.id}`} method="PATCH" label={a.status === 'active' ? t('l.disable') : t('l.enable')} onDone={reload} /> },
+      // A client account's status keeps its client's owner rule, which only the Clients page applies.
+      { label: t('col.status'), value: a.id === me ? <span className="small muted">{t('l.own_status_locked')}</span> : a.kind === 'client' ? <span className="small muted">{t('l.client_status_elsewhere')}</span> : <ConfirmedAction operationType="administrator.amend" values={{ id: a.id, status: a.status === 'active' ? 'disabled' : 'active' }} path={`/oversight/administrators/${a.id}`} method="PATCH" label={a.status === 'active' ? t('l.disable') : t('l.enable')} onDone={reload} /> },
     ]} />
   );
   return {
@@ -194,8 +195,8 @@ export function administratorList({ t, me, reload }: { t: Tr; me?: string; reloa
       ...chip<Row>('role', t('col.role'), [...new Set(rows.flatMap((a) => a.assignments.map((x: Row) => x.role_name as string)))].sort()).map((f) => ({ ...f, match: (a: Row, v: string) => a.assignments.some((x: Row) => x.role_name === v) })),
     ],
     actions: [
-      { label: t('l.disable'), opens: true, when: (a) => a.id !== me && a.status === 'active' },
-      { label: t('l.enable'), opens: true, when: (a) => a.id !== me && a.status !== 'active' },
+      { label: t('l.disable'), opens: true, when: (a) => a.id !== me && a.kind !== 'client' && a.status === 'active' },
+      { label: t('l.enable'), opens: true, when: (a) => a.id !== me && a.kind !== 'client' && a.status !== 'active' },
     ],
     empty: { none: t('l.admin_none'), why: t('l.admin_why') },
   };

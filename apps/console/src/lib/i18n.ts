@@ -396,6 +396,7 @@ const STRINGS: Record<string, { en: string; fr: string }> = {
   'l.language': { en: 'Language', fr: 'Langue' },
   'l.timezone': { en: 'Time zone', fr: 'Fuseau horaire' },
   'l.own_status_locked': { en: 'You cannot alter your own status or roles.', fr: 'Vous ne pouvez pas modifier votre propre statut ni vos rôles.' },
+  'l.client_status_elsewhere': { en: 'Managed from Oversight → Clients.', fr: 'Géré depuis Supervision → Clients.' },
   'l.disable': { en: 'Disable', fr: 'Désactiver' },
   'l.enable': { en: 'Enable', fr: 'Réactiver' },
   'l.admin_none': { en: 'No administrator.', fr: 'Aucun administrateur.' },
