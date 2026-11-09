@@ -22,7 +22,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     { to: '/configuration', label: t('nav.configuration'), show: !client && (has('reference.read') || has('routes.read') || has('providers.read')) },
     { to: '/treasury', label: t('nav.treasury'), show: !client && (has('treasury.read_balances') || has('treasury.read_float')) },
     { to: '/reconciliation', label: t('nav.reconciliation'), show: !client && has('reconciliation.read') },
-    { to: '/oversight', label: t('nav.oversight'), show: !client && ['oversight.alerts.read', 'oversight.reports', 'oversight.audit', 'oversight.auth_history', 'admin.administrators', 'admin.roles', 'oversight.verify_export'].some(has) },
+    { to: '/oversight', label: t('nav.oversight'), show: !client && ['oversight.alerts.read', 'oversight.reports', 'oversight.audit', 'oversight.auth_history', 'admin.administrators', 'admin.roles', 'admin.clients', 'oversight.verify_export'].some(has) },
     { to: '/team', label: t('nav.team'), show: client && has('client.members') },
     { to: '/account', label: t('nav.account'), show: true },
   ];

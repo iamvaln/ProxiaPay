@@ -104,19 +104,49 @@ const TABS = ['overview', 'keys', 'origins', 'routes', 'deliveries', 'activity']
 type Secret = { label: string; value: string }[];
 type Project = Record<string, any>;
 
-/** Status, code, creation and balances. */
-function OverviewTab({ data }: { data: Project }) {
+/**
+ * Platform only: attaching a project that has no client to one. A project never moves between clients, and the platform
+ * accounts listed here keep reaching it afterwards, so they are shown before the confirmation code is asked for.
+ */
+function AttachClient({ id, reload }: { id: string; reload: () => void }) {
   const t = useT();
+  const clients = useLoad(() => get<{ clients: Row[] }>('/oversight/clients'), []);
+  const reach = useLoad(() => get<{ platform_accounts: { id: string; name: string }[] }>(`/projects/${id}/reach`), [id]);
+  const [clientId, setClientId] = useState('');
+  const open = (clients.data?.clients ?? []).filter((c) => c.status !== 'disabled');
+  return (
+    <div className="card" id="attach">
+      <h2>{t('cl.attach')}</h2>
+      <ErrorLine error={clients.error ?? reach.error} />
+      <label>{t('field.client')}<select value={clientId} onChange={(e) => setClientId(e.target.value)}><option value="">—</option>{open.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+      {clientId && reach.data && (
+        <div className="warnbox">
+          <p className="small">{reach.data.platform_accounts.length ? t('cl.attach_warning') : t('cl.attach_nobody')}</p>
+          <ul>{reach.data.platform_accounts.map((a) => <li key={a.id}>{a.name}</li>)}</ul>
+        </div>
+      )}
+      <ConfirmedAction operationType="project.attach_client" values={{ project_id: id, client_id: clientId }} path={`/projects/${id}/client`} label={t('cl.attach_submit')} disabled={!clientId} done={() => t('cl.attached')} onDone={reload} />
+    </div>
+  );
+}
+
+/** Status, code, creation and balances. */
+function OverviewTab({ data, id, reload }: { data: Project; id: string; reload: () => void }) {
+  const t = useT();
+  const { has } = useSession();
   const p = data.project;
   return (
-    <div className="card" id="overview">
-      <dl className="kv">
-        <dt>{t('col.status')}</dt><dd><Pill value={p.status} /></dd>
-        <dt>{t('col.code')}</dt><dd className="mono">{p.code}</dd>
-        <dt>{t('pd.created')}</dt><dd><When value={p.created_at} /></dd>
-        <dt>{t('l.balances')}</dt><dd>{data.balances.length ? data.balances.map((b: Row) => <div key={b.currency}><Amount minor={b.available} currency={b.currency} /> {t('pd.available')} · <Amount minor={b.reserved} currency={b.currency} /> {t('l.reserved')}</div>) : '—'}</dd>
-      </dl>
-    </div>
+    <>
+      <div className="card" id="overview">
+        <dl className="kv">
+          <dt>{t('col.status')}</dt><dd><Pill value={p.status} /></dd>
+          <dt>{t('col.code')}</dt><dd className="mono">{p.code}</dd>
+          <dt>{t('pd.created')}</dt><dd><When value={p.created_at} /></dd>
+          <dt>{t('l.balances')}</dt><dd>{data.balances.length ? data.balances.map((b: Row) => <div key={b.currency}><Amount minor={b.available} currency={b.currency} /> {t('pd.available')} · <Amount minor={b.reserved} currency={b.currency} /> {t('l.reserved')}</div>) : '—'}</dd>
+        </dl>
+      </div>
+      {has('admin.clients') && !p.client_id && <AttachClient id={id} reload={reload} />}
+    </>
   );
 }
 
@@ -276,7 +306,7 @@ function ProjectDetail({ id }: { id: string }) {
     <>
       <h1>{p.name} <Pill value={p.status} /></h1>
       <div className="tabs">{TABS.map((k) => <a key={k} href="#" className={tab === k ? 'active' : ''} aria-current={tab === k ? 'page' : undefined} onClick={(e) => { e.preventDefault(); setTab(k); }}>{t(`l.tab_${k}`)}</a>)}</div>
-      {tab === 'overview' && <OverviewTab data={data} />}
+      {tab === 'overview' && <OverviewTab data={data} id={id!} reload={reload} />}
       {tab === 'keys' && <KeysTab data={data} id={id!} reload={reload} credentialSecret={credentialSecret} setCredentialSecret={setCredentialSecret} signingSecret={signingSecret} setSigningSecret={setSigningSecret} />}
       {tab === 'origins' && <OriginsTab data={data} id={id!} reload={reload} />}
       {tab === 'routes' && (

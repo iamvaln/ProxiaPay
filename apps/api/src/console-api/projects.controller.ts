@@ -101,6 +101,14 @@ export class ConsoleProjectsController {
     return withConfirmation(this.db, this.confirmations, req.principal, 'project.attach_client', { project_id: id, client_id }, confirmation, (tx, cid) => this.clientProjects.attach(tx, id, client_id, req.principal.administratorId, cid));
   }
 
+  /** Platform only: who keeps reaching the project once it is attached, read before the confirmation code is asked for. */
+  @Get(':id/reach')
+  @RequirePermission('admin.clients')
+  async reachBy(@Param('id') id: string) {
+    if (!(await this.db.selectFrom('project').select('id').where('id', '=', id).executeTakeFirst())) throw new PlatformError('NOT_FOUND', 'No such project.');
+    return { platform_accounts: await this.clientProjects.platformAccountsReaching(this.db, id) };
+  }
+
   @Get(':id')
   @ClientAccessible()
   @RequirePermission('projects.read')

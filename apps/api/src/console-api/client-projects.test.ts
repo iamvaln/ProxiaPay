@@ -135,6 +135,21 @@ describe('attaching a project to a client', () => {
   });
 });
 
+describe('reading who reaches a project', () => {
+  it('names the platform accounts holding a projects scope, before any attachment', async () => {
+    const project = await t.project('legacy');
+    const staff = await t.admin();
+    const scoped = await t.admin();
+    await t.db.deleteFrom('role_assignment').where('administrator_id', '=', scoped.id).execute();
+    const role = await t.db.selectFrom('role').select('id').where('name', '=', 'Owner').executeTakeFirstOrThrow();
+    const a = await t.db.insertInto('role_assignment').values({ administrator_id: scoped.id, role_id: role.id, scope_type: 'projects' }).returning('id').executeTakeFirstOrThrow();
+    await t.db.insertInto('role_assignment_scope').values({ assignment_id: a.id, project_id: project.id }).execute();
+    expect(await controller(false).reachBy(project.id)).toEqual({ platform_accounts: [{ id: scoped.id, name: 'Test Admin' }] });
+    await expect(controller(false).reachBy('00000000-0000-0000-0000-000000000000')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    void staff;
+  });
+});
+
 describe('configuration', () => {
   it('refuses to boot in production with SANDBOX_AUTO_ENTITLE', () => {
     resetConfigForTests();

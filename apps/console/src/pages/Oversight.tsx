@@ -6,22 +6,24 @@ import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, Scope
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type RowAction } from '../components/table/DataTable';
 import { chip, chipBy, distinct, fetchPage, periodFilter, useAdministrators, useReload } from './list-support';
 import { pct } from '../lib/format';
+import { ClientDetail, Clients } from './Clients';
 
 /** Oversight (console spec 10): alerts, health, reporting, export verification, administrators, roles, audit and authentication history. */
 export function OversightPage() {
   const { has } = useSession();
+  const t = useT();
   const tabs = [
     ['alerts', 'Alerts', has('oversight.alerts.read')], ['health', 'Health', has('oversight.reports')], ['reports', 'Reporting', has('oversight.reports')], ['exports', 'Export verification', has('oversight.verify_export')],
-    ['administrators', 'Administrators', has('admin.administrators')], ['roles', 'Roles', has('admin.roles')], ['audit', 'Audit', has('oversight.audit')], ['auth-history', 'Authentication history', has('oversight.auth_history')],
+    ['administrators', 'Administrators', has('admin.administrators')], ['roles', 'Roles', has('admin.roles')], ['clients', t('cl.tab'), has('admin.clients')], ['audit', 'Audit', has('oversight.audit')], ['auth-history', 'Authentication history', has('oversight.auth_history')],
   ] as const;
   return (
     <>
       <h1>Oversight</h1>
-      <div className="tabs">{tabs.filter((t) => t[2]).map(([k, label]) => <NavLink key={k} to={`/oversight/${k}`}>{label}</NavLink>)}</div>
+      <div className="tabs">{tabs.filter((tab) => tab[2]).map(([k, label]) => <NavLink key={k} to={`/oversight/${k}`}>{label}</NavLink>)}</div>
       <Routes>
         <Route path="alerts" element={<Alerts />} /><Route path="alerts/:id" element={<AlertDetail />} /><Route path="health" element={<Health />} /><Route path="reports" element={<Reports />} />
         <Route path="exports" element={<Exports />} /><Route path="administrators" element={<Administrators />} /><Route path="roles" element={<Roles />} /><Route path="roles/:id" element={<Roles />} />
-        <Route path="audit" element={<Audit />} /><Route path="auth-history" element={<AuthHistory />} /><Route path="*" element={<Alerts />} />
+        <Route path="clients" element={<Clients />} /><Route path="clients/:id" element={<ClientDetail />} /><Route path="audit" element={<Audit />} /><Route path="auth-history" element={<AuthHistory />} /><Route path="*" element={<Alerts />} />
       </Routes>
     </>
   );
