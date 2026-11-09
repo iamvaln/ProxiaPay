@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestContext, type TestContext } from '../test/context';
 import { consoleRoutes } from '../test/console-routes';
 import { AdminAuthService } from '../admin-auth/admin-auth.service';
@@ -11,6 +11,7 @@ import { CONFIG, type AppConfig } from '../config/config';
 import { CryptoService } from '../crypto/crypto.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { NotificationService } from '../notifications/notification.service';
+import { deliveryTransport } from '../notifications/delivery-transport';
 import { ALL_PERMISSIONS, type Permission } from '../permissions/permissions';
 import { CredentialService } from '../project-auth/credential.service';
 import { ProjectAuthService } from '../project-auth/project-auth.service';
@@ -51,13 +52,19 @@ beforeAll(async () => {
   SimulatorAdapter.settleAfterMs = 0;
 });
 afterAll(() => t.close());
-beforeEach(() => t.reset());
+beforeEach(async () => {
+  await t.reset();
+  // The project's server refuses the connection: each delivery records an attempt and waits for its retry, and no test reaches the network.
+  vi.spyOn(deliveryTransport, 'post').mockRejectedValue(new Error('connect ECONNREFUSED'));
+});
+afterEach(() => vi.restoreAllMocks());
 
 /** The internals of the brief: a client response carries none of these, at any depth. */
 const FORBIDDEN = ['provider_account', 'actual_provider_fee', 'margin', 'expected_fee_bps', 'terms', 'route_version', 'entitlement_version', 'postings', 'account_id', 'created_by', 'note'];
 /** And the platform's other names for the same internals, as the platform responses spell them. */
 const ALSO_FORBIDDEN = ['provider_account_id', 'provider_account_name', 'provider_reference', 'expected_provider_fee', 'binding_snapshot', 'terms_snapshot', 'limits_snapshot', 'platform_revenue',
-  'coverage', 'ledger_entries', 'configuration', 'issued_by', 'revoked_by', 'deleted_by', 'author', 'actor', 'history', 'route_processing_fee_bps', 'route_platform_fee_bps'];
+  'coverage', 'ledger_entries', 'configuration', 'issued_by', 'revoked_by', 'deleted_by', 'author', 'actor', 'history', 'route_processing_fee_bps', 'route_platform_fee_bps',
+  'provider_error_code', 'provider_fee_differs', 'binding_provider', 'expected_fee_fixed', 'route_version_id', 'entitlement_version_id'];
 
 /** Every key of a response, at any depth, as it would be serialised. */
 function keysOf(value: unknown, into = new Set<string>()): Set<string> {
@@ -98,7 +105,7 @@ async function clientRequest(admin: { id: string; email: string }, activeClientI
 async function clientProject(code: string, clientId: string) {
   const project = await t.project(code, { fundXaf: 50_000 });
   await t.db.updateTable('project').set({ client_id: clientId }).where('id', '=', project.id).execute();
-  await get(NotificationService).setEndpoint(t.db, project.id, 'http://127.0.0.1:1/hook', project.adminId);
+  await get(NotificationService).setEndpoint(t.db, project.id, 'https://hooks.example.com/acme', project.adminId);
   return project;
 }
 
@@ -181,7 +188,7 @@ describe('client views', () => {
     const base = await t.db.selectFrom('route as r').innerJoin('route_version as v', (j) => j.onRef('v.route_id', '=', 'r.id').on('v.valid_to', 'is', null)).selectAll('v')
       .where('r.country_code', '=', inherited.country as string).where('r.payment_method_code', '=', inherited.payment_method as string).where('r.direction', '=', inherited.direction as string).where('r.currency_code', '=', inherited.currency as string).executeTakeFirstOrThrow();
     expect(inherited.fees).toEqual({ processing_bps: base.processing_fee_bps, processing_fixed: base.processing_fee_fixed, processing_bearer: base.processing_fee_bearer, platform_bps: base.platform_fee_bps, platform_fixed: base.platform_fee_fixed, platform_bearer: base.platform_fee_bearer });
-    expect(detail).toMatchObject({ waiting_for_routes: false, project: { id: project.id, code: 'acme-shop', name: 'acme-shop', status: 'active' }, notification_endpoint: { url: 'http://127.0.0.1:1/hook' } });
+    expect(detail).toMatchObject({ waiting_for_routes: false, project: { id: project.id, code: 'acme-shop', name: 'acme-shop', status: 'active' }, notification_endpoint: { url: 'https://hooks.example.com/acme' } });
     expect(leaks(detail)).toEqual([]);
 
     // A project with no open grant is waiting for ProxiaPay.
@@ -207,6 +214,27 @@ describe('client views', () => {
     expect(home).toEqual({ collected_today: [{ currency: 'XAF', today: 1000, last_week: null }], success_rate: { current: 1, baseline: null, sample: 1 }, undetermined: 0 });
     const there = await controllers.home().clientHome(await clientRequest(owner, other.id));
     expect(there).toMatchObject({ collected_today: [{ currency: 'XAF', today: 2000 }], undetermined: 1 });
+  });
+
+  it('a client\'s reference search does not find a transaction by its provider reference', async () => {
+    const acme = await newClient('Acme');
+    const owner = await clientOwner(acme.id);
+    const project = await clientProject('acme-shop', acme.id);
+    const txn = await succeededCollection(project, 'order-1');
+    const { provider_reference } = await t.db.selectFrom('transaction as t').innerJoin('transaction_attempt as a', 'a.id', 't.current_attempt_id').select('a.provider_reference').where('t.id', '=', txn.id).executeTakeFirstOrThrow();
+    const whole = provider_reference!;
+    const platform = await clientRequest(owner, acme.id, new Authorisation(owner.id, ALL_PERMISSIONS.map((permission) => ({ permission: permission as Permission, scopeType: 'all', projectIds: [], providerAccountIds: [] })), null, false));
+    const client = await clientRequest(owner, acme.id);
+    // Whole, as a fragment, and as a prefix shorter than a fragment: the platform finds it each way, so the client's empty answers are not vacuous.
+    for (const q of [whole, whole.slice(-6), whole.slice(0, 3)]) {
+      expect((await controllers.transactions().search({ q }, platform)).data.map((r) => r.reference), q).toContain(txn.reference);
+      expect((await controllers.transactions().search({ q }, client)).data, q).toEqual([]);
+    }
+    expect((await controllers.transactions().globalSearch(whole, platform)).transactions).toHaveLength(1);
+    expect((await controllers.transactions().globalSearch(whole, client)).transactions).toEqual([]);
+    // The client's own references still find it.
+    expect((await controllers.transactions().search({ q: 'order-1' }, client)).data).toHaveLength(1);
+    expect((await controllers.transactions().globalSearch(txn.reference, client)).transactions).toHaveLength(1);
   });
 
   it('no client-accessible read carries ProxiaPay\'s economics', async () => {
@@ -246,9 +274,14 @@ describe('client views', () => {
       for (const [key, call] of Object.entries(calls)) {
         const res = await call();
         expect(leaks(res), key).toEqual([]);
-        // Not vacuous: each list holds the seeded rows.
-        expect(JSON.stringify(res).length, key).toBeGreaterThan(20);
+        // Not vacuous: each page holds the seeded rows, and every other read says something.
+        if (Array.isArray((res as { data?: unknown }).data)) expect((res as { data: unknown[] }).data.length, key).toBeGreaterThan(0);
+        else expect(JSON.stringify(res).length, key).toBeGreaterThan(20);
       }
+      // The project's ledger accounts reach a client as their kind and currency only.
+      const { accounts } = (await calls['GET console/treasury/project/:projectId/accounts']!()) as { accounts: object[] };
+      expect(accounts.length).toBeGreaterThan(0);
+      for (const a of accounts) expect(Object.keys(a).sort()).toEqual(['currency_code', 'type']);
       const csv = ((await calls['GET console/transactions/export']!()) as { csv: string }).csv;
       const [header, row] = csv.split('\n').filter((l) => l && !l.startsWith('# '));
       expect(row, 'export holds the transaction').toContain(txn.reference);

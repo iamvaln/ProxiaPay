@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { sql } from 'kysely';
 import { z } from 'zod';
+import { PlatformError } from '../common/errors';
 import { DB_TOKEN, type Db } from '../db/database';
 import { parseBody } from '../http/validation';
 import { TreasuryService, type FloatAccountView } from '../treasury/treasury.service';
@@ -67,6 +68,8 @@ export class HomeController {
   @ClientAccessible()
   @RequirePermission('transactions.read')
   async clientHome(@Req() req: ConsoleRequest) {
+    // Platform staff have the platform home; an unscoped figure here would be every client's at once.
+    if (!req.auth.isClient) throw new PlatformError('NOT_FOUND', 'No such resource.');
     const scope = req.auth.projectScope('transactions.read');
     return { collected_today: await this.homeService.collectedToday(scope), success_rate: await this.homeService.overallSuccess(scope), undetermined: await this.homeService.undetermined(scope) };
   }

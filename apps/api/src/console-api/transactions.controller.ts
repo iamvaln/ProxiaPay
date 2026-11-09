@@ -41,10 +41,12 @@ const referenceMatch = (eb: ExpressionBuilder<any, any>, columns: string[], q: s
 /**
  * The transactions whose own references, or whose current attempt's, match. One subquery with a branch per table, so that
  * each branch can use its trigram index; an OR across the attempt join would scan both tables. Fragment or whole as above.
+ * `providerReference` false leaves the provider's reference out: a client never sees it, so it must not find by it either.
  */
-export const transactionsMatching = (q: string, fragment: string | null) => {
+export const transactionsMatching = (q: string, fragment: string | null, providerReference = true) => {
   const test = (col: string) => (fragment ? sql`lower(${sql.ref(col)}) like lower(${fragment})` : sql`${sql.ref(col)} = ${q}`);
-  return sql<boolean>`t.id in (select id from transaction where ${test('reference')} or ${test('project_reference')} union all select a2.transaction_id from transaction_attempt a2 join transaction t2 on t2.id = a2.transaction_id and t2.current_attempt_id = a2.id where ${test('a2.provider_reference')} or ${test('a2.operator_reference')})`;
+  const attempt = providerReference ? sql`${test('a2.provider_reference')} or ${test('a2.operator_reference')}` : test('a2.operator_reference');
+  return sql<boolean>`t.id in (select id from transaction where ${test('reference')} or ${test('project_reference')} union all select a2.transaction_id from transaction_attempt a2 join transaction t2 on t2.id = a2.transaction_id and t2.current_attempt_id = a2.id where ${attempt})`;
 };
 
 /** Transaction search, detail, previews and global search (console spec 3.2, 5). Scope is applied in the query, never after. */
@@ -90,10 +92,10 @@ export class ConsoleTransactionsController {
     if (q.q) {
       if (q.q.length >= FRAGMENT_MIN) {
         const fragment = containsPattern(q.q);
-        query = query.where(transactionsMatching(q.q, fragment));
+        query = query.where(transactionsMatching(q.q, fragment, !req.auth.isClient));
       } else {
         const prefix = prefixPattern(q.q);
-        query = query.where((eb) => eb.or([eb('t.reference', 'like', prefix), eb('t.project_reference', 'like', prefix), eb('a.provider_reference', 'like', prefix), eb('a.operator_reference', 'like', prefix)]));
+        query = query.where((eb) => eb.or([eb('t.reference', 'like', prefix), eb('t.project_reference', 'like', prefix), ...(req.auth.isClient ? [] : [eb('a.provider_reference', 'like', prefix)]), eb('a.operator_reference', 'like', prefix)]));
       }
     }
     if (q.failure_reason) query = query.where('t.failure_reason', '=', q.failure_reason);
@@ -163,7 +165,7 @@ export class ConsoleTransactionsController {
     }
     // From FRAGMENT_MIN characters a reference is found by any part of it, whatever the case; below, only whole.
     const fragment = q.length >= FRAGMENT_MIN ? containsPattern(q) : null;
-    let qb = txnBase.where(transactionsMatching(q, fragment)).orderBy('t.created_at', 'desc').orderBy('t.id', 'desc').limit(51);
+    let qb = txnBase.where(transactionsMatching(q, fragment, !req.auth.isClient)).orderBy('t.created_at', 'desc').orderBy('t.id', 'desc').limit(51);
     if (scope) qb = qb.where('t.project_id', 'in', scope);
     let pb = previewBase.where((eb) => referenceMatch(eb, ['reference', 'project_reference'], q, fragment)).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(21);
     if (scope) pb = pb.where('project_id', 'in', scope);

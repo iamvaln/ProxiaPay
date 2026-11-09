@@ -16,7 +16,7 @@ let floatScope: string[] | null | undefined;
 let pending: Record<string, unknown>[] = [];
 
 const grant = (permission: Permission, scope: Partial<Grant> = {}): Grant => ({ permission, scopeType: 'all', projectIds: [], providerAccountIds: [], ...scope });
-const requestOf = (...grants: Grant[]) => ({ principal: { administratorId: adminId }, auth: new Authorisation(adminId, grants) }) as unknown as ConsoleRequest;
+const requestOf = (...grants: Grant[]) => ({ principal: { administratorId: adminId }, auth: new Authorisation(adminId, grants, null, false) }) as unknown as ConsoleRequest;
 
 function controller(): HomeController {
   const treasury = { floatAccounts: async (_db: unknown, scope: string[] | null) => { floatScope = scope; return floats; } } as unknown as TreasuryService;
@@ -121,5 +121,11 @@ describe('GET /console/home', () => {
   it('never emits the removed keys', async () => {
     const cards = await home(...(['oversight.alerts.read', 'providers.read', 'treasury.read_float', 'reconciliation.read', 'oversight.reports'] as Permission[]).map((p) => grant(p)));
     for (const key of removed) expect(cards).not.toHaveProperty(key);
+  });
+});
+
+describe('GET /console/client/home', () => {
+  it('is not there for platform staff, who have their own home', async () => {
+    await expect(controller().clientHome(requestOf(grant('transactions.read')))).rejects.toMatchObject({ code: 'NOT_FOUND', message: 'No such resource.' });
   });
 });
