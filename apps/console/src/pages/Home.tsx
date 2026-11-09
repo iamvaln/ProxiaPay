@@ -120,7 +120,7 @@ export function ClientHomeView({ data }: { data: ClientHomeData }) {
         <Link className="headline-figure" to="/transactions?state=undetermined">
           <span className="headline-label">{t('home.headline.undetermined')}</span>
           <span className="headline-value">{data.undetermined}</span>
-          <span className="headline-detail small muted">{t('home.headline.undetermined_detail')}</span>
+          <span className="headline-detail small muted">{t('home.client.undetermined_detail')}</span>
         </Link>
       </div>
     </>

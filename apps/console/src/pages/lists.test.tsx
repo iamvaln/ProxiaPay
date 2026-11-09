@@ -33,6 +33,14 @@ describe('the transaction list', () => {
     expect(wrap(<>{cfg.summary!(txn)}</>)).toContain('Débité au payeur');
   });
 
+  it('names the provider reference to platform staff, never to a client', () => {
+    expect(wrap(<>{cfg.summary!(txn)}</>)).toContain('Référence fournisseur');
+    const client = wrap(<>{transactionList({ t: fr, has: () => true, ref: noRef, reload: none, client: true }).summary!(txn)}</>);
+    expect(client).not.toContain('Référence fournisseur');
+    expect(client).not.toContain('prov-1');
+    expect(client).toContain('op-1');
+  });
+
   it('offers Revérifier only on a transaction still in flight, and only with the permission', () => {
     const recheck = cfg.actions!.find((a) => a.label === 'Revérifier')!;
     expect(recheck.when!({ ...txn, state: 'undetermined' })).toBe(true);

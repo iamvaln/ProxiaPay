@@ -42,20 +42,39 @@ describe('a client account on the home', () => {
     expect(await screen.findByText('Success rate, last hour')).toBeTruthy();
     expect(screen.getByText('90.0 %')).toBeTruthy();
     expect(screen.getByText('3')).toBeTruthy();
+    // A client has no provider to recheck with: the figure says what it is in the client's terms.
+    expect(screen.getByText('payments whose outcome is not known yet')).toBeTruthy();
+    expect(screen.queryByText(/provider/i)).toBeNull();
     expect(screen.queryByText(/waiting|float|approval/i)).toBeNull();
     expect(document.querySelector('a[href*="/oversight"], a[href*="/treasury"], a[href*="/reconciliation"], a[href="/approvals"]')).toBeNull();
   });
 
-  it('calls no closed endpoint from the transactions page', async () => {
+  /** What a client's transaction pages may ask for: the session, its projects, and the lists themselves. */
+  const CLIENT_READS = ['/auth/me', '/projects', '/transactions', '/previews'];
+  const recordPaths = () => {
     const paths: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       const path = url.replace(/^\/console/, '').split('?')[0]!;
       paths.push(path);
-      return new Response(JSON.stringify(path === '/auth/me' ? { ...base, active_client: ACME, clients: [ACME], pending_clients: [] } : { data: [], total: 0, page: 1, page_size: 25, projects: [] }), { status: 200 });
+      return new Response(JSON.stringify(path === '/auth/me' ? { ...base, active_client: ACME, clients: [ACME], pending_clients: [] } : { data: [], total: 0, page: 1, page_size: 25, projects: [], repeat_unconfirmed: [], repeat_capped: false }), { status: 200 });
     }));
+    return paths;
+  };
+
+  it('calls no closed endpoint from the transactions page', async () => {
+    const paths = recordPaths();
     render(<MemoryRouter initialEntries={['/transactions']}><App /></MemoryRouter>);
     await waitFor(() => expect(paths).toContain('/transactions'));
-    expect(paths.filter((p) => p.startsWith('/configuration'))).toEqual([]);
+    await waitFor(() => expect(paths).toContain('/projects'));
+    expect(paths.filter((p) => !CLIENT_READS.includes(p))).toEqual([]);
+  });
+
+  it('offers the previews to a client, and they call no closed endpoint', async () => {
+    const paths = recordPaths();
+    render(<MemoryRouter initialEntries={['/transactions']}><App /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('link', { name: 'Previews' }));
+    await waitFor(() => expect(paths).toContain('/previews'));
+    expect(paths.filter((p) => !CLIENT_READS.includes(p))).toEqual([]);
   });
 
   it('offers a pending invitation and accepts it', async () => {

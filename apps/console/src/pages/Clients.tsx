@@ -81,7 +81,9 @@ function ClientView({ id }: { id: string }) {
       <div className="row">
         <ConfirmedAction operationType="membership.status" values={{ membership_id: m.membership_id, status: m.status === 'disabled' ? 'active' : 'disabled' }} path={`${base}/memberships/${m.membership_id}/status`} label={m.status === 'disabled' ? t('team.enable') : t('team.disable')} onDone={reload} />
         {m.invitation !== 'accepted' && <ConfirmedAction operationType="membership.resend" values={{ membership_id: m.membership_id }} path={`${base}/memberships/${m.membership_id}/resend`} label={t('team.resend')} onDone={reload} />}
-        <ConfirmedAction operationType="administrator.disable" values={{ administrator_id: m.administrator_id }} path={`${base}/accounts/${m.administrator_id}/disable`} label={t('cl.disable_account')} onDone={reload} />
+        {m.account_status === 'disabled'
+          ? <ConfirmedAction operationType="administrator.enable" values={{ administrator_id: m.administrator_id }} path={`${base}/accounts/${m.administrator_id}/enable`} label={t('cl.enable_account')} onDone={reload} />
+          : <ConfirmedAction operationType="administrator.disable" values={{ administrator_id: m.administrator_id }} path={`${base}/accounts/${m.administrator_id}/disable`} label={t('cl.disable_account')} onDone={reload} />}
       </div>
     ) },
   ];

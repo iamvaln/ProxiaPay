@@ -181,7 +181,7 @@ export function administratorList({ t, me, reload }: { t: Tr; me?: string; reloa
   ];
   const summary = (a: Row) => (
     <SummaryGrid items={[
-      { label: t('l.roles_scope'), value: a.assignments.length ? a.assignments.map((x: Row) => <div key={x.id}>{x.role_name} <span className="small muted">{x.scope_type}{x.scopes.length ? `: ${x.scopes.map((s: Row) => (s.project_id ?? s.provider_account_id).slice(0, 8)).join(', ')}` : ''}</span> {a.id !== me && <ConfirmedAction operationType="role.change" values={{ kind: 'assignment_remove', assignment_id: x.id }} path="/oversight/roles/changes" label="×" onDone={reload} />}</div>) : '—' },
+      { label: t('l.roles_scope'), value: a.assignments.length ? a.assignments.map((x: Row) => <div key={x.id}>{x.role_name} <span className="small muted">{x.scope_type}{x.scopes.length ? `: ${x.scopes.map((s: Row) => (s.project_id ?? s.provider_account_id).slice(0, 8)).join(', ')}` : ''}</span> {a.id !== me && !x.membership_id && <ConfirmedAction operationType="role.change" values={{ kind: 'assignment_remove', assignment_id: x.id }} path="/oversight/roles/changes" label="×" onDone={reload} />}</div>) : '—' },
       { label: t('l.language'), value: a.language },
       { label: t('l.timezone'), value: a.timezone },
       { label: t('col.status'), value: a.id === me ? <span className="small muted">{t('l.own_status_locked')}</span> : <ConfirmedAction operationType="administrator.amend" values={{ id: a.id, status: a.status === 'active' ? 'disabled' : 'active' }} path={`/oversight/administrators/${a.id}`} method="PATCH" label={a.status === 'active' ? t('l.disable') : t('l.enable')} onDone={reload} /> },
@@ -216,7 +216,8 @@ export function roleList({ t, edit }: { t: Tr; edit: (r: Row) => void }): Lists 
   );
   return {
     columns, summary, rowKey: (r) => r.id, defaultSort: 'name', filters: [],
-    actions: [{ label: t('l.modify'), run: edit }],
+    // A client role is fixed in code and changes with a release, never from this page.
+    actions: [{ label: t('l.modify'), when: (r) => r.kind !== 'client', run: edit }],
     empty: { none: t('l.role_none'), why: t('l.role_why') },
   };
 }
@@ -239,7 +240,7 @@ function Administrators() {
       </div>
       <div className="card"><h2>Assign a role</h2>
         <ConfirmedAction operationType="role.change" values={{ kind: 'assignment_add', ...assign }} path="/oversight/roles/changes" label="Assign" disabled={!assign.administrator_id || !assign.role_id} onDone={reload}
-          summary={<div className="row"><select value={assign.administrator_id} onChange={(e) => setAssign({ ...assign, administrator_id: e.target.value })}><option value="">administrator</option>{data.administrators.filter((a: any) => a.id !== me?.administrator.id).map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}</select><select value={assign.role_id} onChange={(e) => setAssign({ ...assign, role_id: e.target.value })}><option value="">role</option>{(roles.data?.roles ?? []).map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}</select><select value={assign.scope_type} onChange={(e) => setAssign({ ...assign, scope_type: e.target.value })}><option value="all">scope: all</option></select></div>} />
+          summary={<div className="row"><select value={assign.administrator_id} onChange={(e) => setAssign({ ...assign, administrator_id: e.target.value })}><option value="">administrator</option>{data.administrators.filter((a: any) => a.id !== me?.administrator.id).map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}</select><select value={assign.role_id} onChange={(e) => setAssign({ ...assign, role_id: e.target.value })}><option value="">role</option>{(roles.data?.roles ?? []).filter((r: any) => r.kind !== 'client').map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}</select><select value={assign.scope_type} onChange={(e) => setAssign({ ...assign, scope_type: e.target.value })}><option value="all">scope: all</option></select></div>} />
         <p className="small muted">Assignments carrying treasury or administration permissions go to a second approver.</p>
       </div>
     </div>
