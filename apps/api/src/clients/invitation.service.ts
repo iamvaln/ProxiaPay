@@ -301,7 +301,7 @@ export class InvitationService {
       membership_id: membershipId, token_hash: CryptoService.tokenHash(token), sets_password: invitee.setsPassword,
       expires_at: sql`now() + make_interval(hours => ${VALIDITY_HOURS})`,
     }).execute();
-    return this.mail(invitee, clientName, `${base}/console/invitation/${token}`);
+    return this.mail(invitee, clientName, `${base}/invitation/${token}`);
   }
 
   /**

@@ -16,7 +16,7 @@ const BASE = 'https://console.sandbox.proxiapay.test';
 const service = (config: { PUBLIC_BASE_URL?: string; PROXIAPAY_ENV?: 'sandbox' | 'production' } = {}) =>
   new InvitationService(t.db, { PUBLIC_BASE_URL: BASE, PROXIAPAY_ENV: 'sandbox', ...config }, get(Mailer), get(AlertService), get(AuditService));
 const mailsTo = (address: string) => get(Mailer).sent.filter((m) => m.to === address);
-const tokenIn = (text: string) => /\/console\/invitation\/([A-Za-z0-9_-]+)/.exec(text)?.[1];
+const tokenIn = (text: string) => /\/invitation\/([A-Za-z0-9_-]+)/.exec(text)?.[1];
 const NEUTRAL = { code: 'FIELD_INVALID', message: 'This invitation link is no longer valid. Ask for a new one.' };
 
 beforeAll(async () => { t = await createTestContext(); });
@@ -70,7 +70,7 @@ describe('invitations', () => {
     const mails = mailsTo('ama@example.test');
     expect(mails).toHaveLength(1);
     expect(mails[0]).toMatchObject({ subject: 'Your access to the ProxiaPay console', sensitive: true });
-    expect(mails[0]!.text).toContain(`${BASE}/console/invitation/`);
+    expect(mails[0]!.text).toContain(`${BASE}/invitation/`);
     expect(mails[0]!.text).toMatch(/sandbox/i);
     expect(mails[0]!.text).toMatch(/any six digits/);
     const token = tokenIn(mails[0]!.text)!;

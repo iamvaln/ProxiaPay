@@ -170,7 +170,7 @@ describe('the owner\'s team', () => {
     const { acme, req, member } = await acmeTeam();
     expect(await team().status(member.id, { status: 'disabled' }, req)).toEqual({ membership_id: member.id, status: 'disabled' });
     // A disabled membership's link no longer opens it.
-    const token = /\/console\/invitation\/([A-Za-z0-9_-]+)/.exec(mailsTo('ama@example.test')[0]!.text)![1]!;
+    const token = /\/invitation\/([A-Za-z0-9_-]+)/.exec(mailsTo('ama@example.test')[0]!.text)![1]!;
     await expect(invitations().preview(token)).rejects.toMatchObject({ code: 'FIELD_INVALID' });
     expect(await team().status(member.id, { status: 'active' }, req)).toEqual({ membership_id: member.id, status: 'pending' });
 
@@ -185,7 +185,7 @@ describe('the owner\'s team', () => {
 
   it('resending replaces the link: the old one stops working, the new one is valid for 72 hours', async () => {
     const { req, member } = await acmeTeam();
-    const tokenOf = (i: number) => /\/console\/invitation\/([A-Za-z0-9_-]+)/.exec(mailsTo('ama@example.test')[i]!.text)![1]!;
+    const tokenOf = (i: number) => /\/invitation\/([A-Za-z0-9_-]+)/.exec(mailsTo('ama@example.test')[i]!.text)![1]!;
     await t.db.updateTable('invitation').set({ expires_at: new Date(Date.now() - 1000) }).execute();
     expect(await team().resend(member.id, req)).toEqual({ status: 'invitation_sent' });
     expect(mailsTo('ama@example.test')).toHaveLength(2);
