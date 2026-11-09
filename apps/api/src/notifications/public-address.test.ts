@@ -31,6 +31,21 @@ describe('a notification address must be reachable from the internet', () => {
     expect(isInternalIp('::ffff:808:808')).toBe(false);
   });
 
+  it.each([
+    '0:0:0:0:0:ffff:7f00:1', '0000:0000:0000:0000:0000:FFFF:0A00:0001', '0:0:0:0:0:ffff:127.0.0.1', '0:0:0:0:0:0:0:1', '0:0:0:0:0:0:0:0',
+    '::7f00:1', '::127.0.0.1', '::808:808', '::ffff:0:7f00:1', '::ffff:0:808:808', '0:0:0:0:ffff:0:a00:1',
+  ])('judges %s internal, however it is spelled (mapped, IPv4-compatible, IPv4-translated)', async (ip) => {
+    expect(isInternalIp(ip)).toBe(true);
+    resolvesTo('93.184.215.14', ip);
+    expect(await vetTarget('https://hooks.example.com/pp')).toEqual({ verdict: 'internal' });
+    expect(await vetTarget(`https://[${ip}]/`)).toEqual({ verdict: 'internal' });
+  });
+
+  it('still accepts a public address mapped in full spelling', () => {
+    expect(isInternalIp('0:0:0:0:0:ffff:808:808')).toBe(false);
+    expect(isInternalIp('0:0:0:0:0:ffff:8.8.8.8')).toBe(false);
+  });
+
   it('accepts a name whose every address is public, and hands back those addresses to connect to', async () => {
     const lookup = resolvesTo('93.184.215.14', '2606:2800:220:1:248:1893:25c8:1946');
     expect(await vetTarget('https://hooks.example.com/pp')).toEqual({ verdict: 'public', host: 'hooks.example.com', addresses: [{ address: '93.184.215.14', family: 4 }, { address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 }] });
