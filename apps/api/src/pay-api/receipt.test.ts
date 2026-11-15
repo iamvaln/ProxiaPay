@@ -192,7 +192,9 @@ describe('the receipt’s words', () => {
   it('groups amounts by language and keeps the currency’s decimals', () => {
     expect(receiptMail(data, 'en').text).toContain('Total paid: 1,253,125 XAF');
     expect(receiptMail(data, 'fr').text).toContain(`Total payé : ${new Intl.NumberFormat('fr-FR').format(1_253_125)} XAF`);
-    expect(receiptMail({ ...data, amount: 1250, fees: 5, total: 1255, exponent: 2, currency: 'USD' }, 'en').text).toContain('Amount: 12.50 USD');
+    expect(receiptMail({ ...data, amount: 123_456_789, fees: 5, total: 1255, exponent: 2, currency: 'USD' }, 'en').text).toContain('Amount: 1,234,567.89 USD');
+    expect(receiptMail({ ...data, amount: 123_456_789, fees: 5, total: 1255, exponent: 2, currency: 'USD' }, 'fr').text).toContain(`Montant : ${new Intl.NumberFormat('fr-FR').format(1_234_567)},89 USD`);
+    expect(receiptMail({ ...data, amount: 1250, fees: 5, total: 1255, exponent: 2, currency: 'USD' }, 'en').text).toContain('Fees borne by you: 0.05 USD');
   });
 
   it('keeps the page’s zones', () => {

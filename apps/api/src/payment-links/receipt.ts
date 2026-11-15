@@ -1,4 +1,5 @@
 import { DISPLAY_NAME_MAX } from '../alerts/mailer';
+import { formatAmount } from '../money/money';
 import type { PayerLanguage } from './failure-text';
 
 /** `aicha@gmail.com` as `a***@gmail.com`: the only form of the address the platform keeps. The first character whole, never half of one. */
@@ -32,9 +33,16 @@ export function receiptDate(at: Date, country: string, language: PayerLanguage):
   return zone ? text : `${text} UTC`;
 }
 
-/** An amount as the page writes it: the currency's decimals, grouping and decimal mark by language. */
+/**
+ * An amount as the page writes it: the currency's decimals, grouping and decimal mark by language. Built from the exact
+ * decimal string, so no floating point touches the figure.
+ */
 function money(minor: number, exponent: number, language: PayerLanguage): string {
-  return new Intl.NumberFormat(locale(language), { minimumFractionDigits: exponent, maximumFractionDigits: exponent }).format(minor / 10 ** exponent);
+  const [whole, fraction] = formatAmount(minor, exponent).split('.');
+  const grouped = new Intl.NumberFormat(locale(language)).format(BigInt(whole!));
+  if (!fraction) return grouped;
+  const mark = new Intl.NumberFormat(locale(language), { minimumFractionDigits: 1 }).formatToParts(0).find((p) => p.type === 'decimal')?.value ?? '.';
+  return `${grouped}${mark}${fraction}`;
 }
 
 export interface ReceiptData {
