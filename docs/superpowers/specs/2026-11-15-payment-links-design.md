@@ -68,13 +68,14 @@ session, and the link reads well in a message.
        creator may set a **minimum**, which defaults to 0. The route's own
        minimum and maximum still apply, so the effective floor is the higher
        of the link's minimum and the route's.
-   - one currency;
-   - **one country** (*my call*). A route is a country, an operator and a
-     currency, so MTN in Cameroon and MTN in Côte d'Ivoire are two routes. One
-     country per link keeps a single phone prefix on the page and makes a
-     method code unambiguous;
-   - the **payment methods it allows**, chosen among the project's active
-     collection routes in that country and currency;
+   - **one currency** (*my call*). The platform never converts currencies,
+     and XAF and XOF are different currencies even at parity;
+   - the **payment methods it allows**, each one a route: a country and an
+     operator (Valentine, 2026-11-15). The creator picks any of the project's
+     active collection routes in the link's currency, across as many countries
+     as they like: MTN and Orange in Cameroon plus Airtel in Gabon, for
+     example. MTN in Cameroon and MTN in Congo are two separate choices,
+     because a route is the unit;
    - an optional expiry date;
    - **reusable** (the default) or **single use**.
 2. **Share it.**
@@ -169,7 +170,7 @@ Reading links falls under `projects.read`.
   - a fixed amount sits within every chosen route's minimum and maximum;
   - a free link's minimum, when set, is not above any chosen route's maximum;
   - each route is an active collection route the project is entitled to, in
-    the link's country and currency;
+    the link's currency;
   - at least one route is chosen.
 - **Audit:** creating and disabling a link are audited.
 
@@ -182,20 +183,23 @@ credential, and nothing else in the API is reachable from the paylink domain.
   - the project's name, the title and the description;
   - the amount type: the amount for a fixed link, or the minimum for a free
     one;
-  - the currency and its exponent, and the country with its dialling prefix;
-  - for each method: its code, its name, its own minimum and maximum, and
-    whether a code or redirect step follows. For a fixed link, each method
+  - the currency and its exponent;
+  - the countries the link covers, each with its name and dialling prefix;
+  - for each method: an opaque **method key** (stable for that link, never a
+    route id), its country, its operator name, its own minimum and maximum,
+    and whether a code or redirect step follows. For a fixed link, each method
     also carries the **charged amount**;
   - a sandbox flag.
 
   A disabled, expired, completed or unknown link answers one neutral "This
   link is no longer available", whatever the cause.
-- **`POST /pay-api/v1/links/:code/quote`** takes `{ payment_method, amount }`
+- **`POST /pay-api/v1/links/:code/quote`** takes `{ method, amount }`
   on a free link. It answers the charged amount and the fees borne by the
   payer, computed as a preview would, without creating anything. The page
   calls it as the payer types. Its rate limit is that of reading a payment.
 - **`POST /pay-api/v1/links/:code/payments`** takes
-  `{ payment_method, msisdn }`, plus `amount` on a free link. A free link
+  `{ method, msisdn }`, plus `amount` on a free link. `method` is the method
+  key; the number is normalised with that method's country. A free link
   refuses an amount below the effective floor or above the route's maximum,
   with a plain message.
   - It creates the preview and confirms it in one step, server side, as the
@@ -274,8 +278,16 @@ credential, and nothing else in the API is reachable from the paylink domain.
   toggle.
 - **Screens.**
   1. **The link:** project, title, the amount (or an amount field with its
-     minimum on a free link), methods with what the payer will be charged,
-     number field with the country prefix.
+     minimum on a free link).
+     - **Country** (Valentine, 2026-11-15). The page preselects the payer's
+       country when it can tell, and the payer can change it from the list of
+       the link's countries. With one country, no selector is shown.
+       Detection runs in the browser from the time zone and the language
+       region, for example `Africa/Douala` → Cameroon (*my call*: no
+       geolocation service, no IP lookup). It falls back to the link's first
+       country.
+     - **Methods** of the chosen country, with what the payer will be charged.
+     - **Number field** with that country's prefix.
   2. **Waiting for the payer to approve on their phone**, or the extra step:
      a code field, or an "Open the operator's page" button.
   3. **Outcome:**
