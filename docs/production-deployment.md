@@ -385,6 +385,43 @@ start with it, like `SANDBOX_ANY_SECOND_FACTOR`. In production a project created
 a client has no routes; an informational alert says it is waiting, and Valentine
 opens its routes by hand (`docs/client-onboarding.md`).
 
+## Migration 0005 and payment links
+
+`0005_payment_links.sql` adds the payment link tables, the brand assets, the
+project's brand and `transaction.payment_link_id`. It is additive. `proxiapay_app`
+gets its grants on the new tables the next time `migrate` runs.
+
+Two settings in `.env.production`: `PAYLINK_DOMAIN=paylink.proxia-digital.com`
+(read by Compose, for the routers) and `PAYLINK_BASE_URL=https://paylink.proxia-digital.com`
+(read by the api: a link's address is `<PAYLINK_BASE_URL>/<code>`; unset, the console
+cannot create links).
+
+**DNS.** `paylink.proxia-digital.com` (production) and `sandbox-paylink.proxia-digital.com`
+(sandbox) are plain A records to the VPS, already created. Like `pay.`, they must stay
+off Cloudflare's proxy while `CERT_RESOLVER=le`; behind it, switch to `le-dns`.
+
+**Routing.** `paylink.proxia-digital.com` is its own host, never the console's:
+
+- `/pay-api` → `api` (router `proxiapay-payapi`, priority 100). `pay.proxia-digital.com`
+  gains no `/pay-api`, and the paylink host reaches no other prefix of the api.
+- everything else → the `console` container's second listener, port 8080 (router
+  `proxiapay-paylink`, priority 1), which serves `pay.html` and the assets, answers 404
+  for `/v1`, `/console`, `/providers`, `/docs` and `/healthz`, and never serves the console.
+  A separate port rather than a header: nothing on the console host can reach it.
+
+That listener sends `Content-Security-Policy: default-src 'self'; img-src 'self' data:;
+style-src 'self'; script-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors
+'none'; base-uri 'none'; form-action 'self'`, `Referrer-Policy: no-referrer` and
+`X-Content-Type-Options: nosniff`. The page has no inline script or style and its fonts
+are self-hosted; keep it so, or the browser blocks it.
+
+**Access logs.** The payer's token travels in URL paths (`/pay-api/v1/payments/<token>/…`),
+and whoever holds it can act on that payment. nginx's access log is off on the paylink
+listener, and the api writes no request-path log (it logs errors and start-up only). This repository configures no
+Traefik access log, but the shared Traefik is not in this repository: if it writes access
+logs, the `proxiapay-payapi` and `proxiapay-paylink` routers (and the sandbox's) must be
+excluded from them or the logged path must be dropped. Check before the first link is shared.
+
 ## Activating a new country
 
 Production opens with Cameroon only. The seed inserts the whole catalogue and

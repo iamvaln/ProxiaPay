@@ -168,6 +168,23 @@ authenticator. Each such sign-in is recorded in the authentication history as
 "second factor waived on the sandbox". One-time codes for sensitive operations are
 unaffected. The API refuses to start with the switch set in production.
 
+## Payment links on the sandbox
+
+Migration `0005_payment_links.sql` runs with the next deploy. Two settings in `.env.sandbox`:
+
+- `PAYLINK_DOMAIN=sandbox-paylink.proxia-digital.com` is read by Compose and gives the
+  two extra routers their host.
+- `PAYLINK_BASE_URL=https://sandbox-paylink.proxia-digital.com` is read by the api; a
+  link's address is `<PAYLINK_BASE_URL>/<code>`.
+
+The DNS record `sandbox-paylink.proxia-digital.com` already exists (a plain A record to
+the VPS, like `sandbox.pay`). That host serves the payment page and `/pay-api` only:
+`proxiapay-sandbox-payapi` sends `/pay-api` to the api, `proxiapay-sandbox-paylink` sends the
+rest to the console container's port 8080, which sends the page's CSP
+(`default-src 'self'; … font-src 'self'; …`, full text in `apps/console/nginx.conf`) and logs no
+access. The console host never serves `/pay-api` nor the page. Tokens travel in `/pay-api`
+paths: see "Access logs" in `docs/production-deployment.md`.
+
 ## Client accounts on the sandbox
 
 Two settings in `.env.sandbox` serve client accounts (`docs/client-onboarding.md`):

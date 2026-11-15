@@ -94,6 +94,16 @@ services:
       - traefik.http.routers.${STACK:-proxiapay}-api.entrypoints=websecure
       - traefik.http.routers.${STACK:-proxiapay}-api.tls.certresolver=${CERT_RESOLVER:-le}
       - traefik.http.services.${STACK:-proxiapay}-api.loadbalancer.server.port=3000
+      # The payment page's API, on the payment page's host ONLY. The router above keeps
+      # Host(APP_DOMAIN) and gains no /pay-api: the console host never reaches it. The paylink
+      # host reaches no other prefix of the api (/v1, /console, /providers, /docs).
+      # THE PATHS HERE CARRY PAYER TOKENS: access logs for this router, on the shared Traefik,
+      # must be off or must drop the path (docs/production-deployment.md).
+      - traefik.http.routers.${STACK:-proxiapay}-payapi.rule=Host(`${PAYLINK_DOMAIN}`) && PathPrefix(`/pay-api`)
+      - traefik.http.routers.${STACK:-proxiapay}-payapi.priority=100
+      - traefik.http.routers.${STACK:-proxiapay}-payapi.entrypoints=websecure
+      - traefik.http.routers.${STACK:-proxiapay}-payapi.tls.certresolver=${CERT_RESOLVER:-le}
+      - traefik.http.routers.${STACK:-proxiapay}-payapi.service=${STACK:-proxiapay}-api
 
   # ── Background work ────────────────────────────────────────────────────────
   # The status sweep every 10 s, preview expiry, notification delivery and its
@@ -139,6 +149,16 @@ services:
       - traefik.http.routers.${STACK:-proxiapay}-console.entrypoints=websecure
       - traefik.http.routers.${STACK:-proxiapay}-console.tls.certresolver=${CERT_RESOLVER:-le}
       - traefik.http.services.${STACK:-proxiapay}-console.loadbalancer.server.port=80
+      # The payment page: the same container, its other listener (8080), which serves pay.html
+      # and nothing else. Explicit service on each router: with two services on one container
+      # Traefik refuses to guess.
+      - traefik.http.routers.${STACK:-proxiapay}-console.service=${STACK:-proxiapay}-console
+      - traefik.http.routers.${STACK:-proxiapay}-paylink.rule=Host(`${PAYLINK_DOMAIN}`)
+      - traefik.http.routers.${STACK:-proxiapay}-paylink.priority=1
+      - traefik.http.routers.${STACK:-proxiapay}-paylink.entrypoints=websecure
+      - traefik.http.routers.${STACK:-proxiapay}-paylink.tls.certresolver=${CERT_RESOLVER:-le}
+      - traefik.http.routers.${STACK:-proxiapay}-paylink.service=${STACK:-proxiapay}-paylink
+      - traefik.http.services.${STACK:-proxiapay}-paylink.loadbalancer.server.port=8080
 
 volumes:
   proxiapay-db:

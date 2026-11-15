@@ -44,6 +44,16 @@ authenticator. Production needs a real TOTP.
 - With several clients on one account, switches between them in the console. One
   is active at a time.
 
+- **Sets the project's brand** (the project page): a logo (PNG, JPEG or WebP, at most
+  200 KB, no SVG), a primary colour and an optional secondary colour. A colour whose
+  contrast with white text is below 4.5:1 is refused. The payment page, the receipt and
+  the receipt email carry this brand; ProxiaPay appears only as "Powered by ProxiaPay".
+- **Creates payment links** (the project's **Payment links** tab): a shareable address,
+  `<PAYLINK_BASE_URL>/<code>`, where a payer pays without a credential. A link starts from
+  the project's brand and can change it at creation. It offers only routes the payer can
+  complete without typing a code. The tab shows each link's count, total collected and
+  last payment; its payments appear in the transaction list, filterable by link.
+
 The client then follows `docs/shop-integration-playbook.md`.
 
 ## 3. Attach an existing project to a client

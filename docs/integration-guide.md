@@ -55,6 +55,19 @@ creates the transaction. `201` means it was created now; `200` means an earlier 
 - `code`: the transaction returns in `action_required` with `action.attempts_remaining`. Collect the code the operator sent and submit it to `POST /v1/transactions/{reference}/code`. A wrong code returns `CODE_INVALID` with the attempts left; exhausting them ends the transaction.
 - `browser`: the transaction returns in `action_required` with `action.url`. Send the payer there. The address authorises the payment for whoever holds it: it goes to the payer and nowhere else, and belongs in no log.
 
+### Payments made through a payment link
+
+A payment a payer made through one of the project's payment links is an ordinary
+transaction, with no credential behind it. It carries an optional field:
+
+```
+"payment_link": { "code": "x7Kp2mQ9aZ" }
+```
+
+It appears in `GET /v1/transactions/{reference}` and in the `transaction` of every
+notification. It is absent (or `null`) on a payment your project made itself, and older
+payloads omit it. The change is additive: ignore it if you do not use links.
+
 ## 5. Notifications
 
 Register an address in the console (an administrator sets it; a credential cannot). Events arrive as `POST` with a JSON body:
