@@ -59,112 +59,7 @@ export class TransactionService {
    */
   async confirm(principal: ProjectPrincipal, previewReference: string, direction: 'collection' | 'disbursement'): Promise<{ transactionId: string; created: boolean }> {
     if (!principal.scopes.includes(direction)) throw new PlatformError('SCOPE_INSUFFICIENT', `The credential lacks the ${direction} scope.`);
-    const result = await this.db.transaction().execute(async (tx) => {
-      const preview = await tx.selectFrom('preview').selectAll().where('reference', '=', previewReference).where('project_id', '=', principal.projectId).forUpdate().executeTakeFirst();
-      if (!preview) throw new PlatformError('PREVIEW_NOT_FOUND', 'The preview reference is unrecognised.');
-      if (preview.direction !== direction) throw new PlatformError('PREVIEW_DIRECTION_MISMATCH', `The preview was raised as a ${preview.direction}.`);
-      if (preview.status === 'confirmed' && preview.transaction_id) return { transactionId: preview.transaction_id, created: false };
-      const now = await dbNow(tx);
-      if (preview.status === 'expired' || preview.expires_at.getTime() <= now.getTime()) {
-        if (preview.status === 'open') await tx.updateTable('preview').set({ status: 'expired' }).where('id', '=', preview.id).execute();
-        throw new PlatformError('PREVIEW_EXPIRED', 'The preview window closed; raise a new preview.');
-      }
-
-      const resolution = await this.resolver.resolve(tx, { projectId: principal.projectId, direction, country: await countryOf(tx, preview.route_id), currency: preview.currency_code, paymentMethod: await methodOf(tx, preview.route_id), amount: preview.requested_amount });
-      // Velocity and the duplicate guard, under the entitlement lock (spec 15.4).
-      await this.resolver.checkVelocity(tx, resolution, preview.requested_amount);
-      const pending = await tx.selectFrom('transaction').select('reference').where('project_id', '=', principal.projectId).where('route_id', '=', preview.route_id)
-        .where('requested_amount', '=', preview.requested_amount).where('msisdn_index', '=', preview.msisdn_index).where('state', 'in', [...OPEN_STATES, 'undetermined']).executeTakeFirst();
-      if (pending) throw new PlatformError('SIMILAR_PAYMENT_PENDING', 'A similar payment is already pending for this counterparty.', { details: { transaction: pending.reference } });
-
-      const bindings = await this.resolver.availableBindings(tx, preview.route_version_id, direction === 'collection' ? preview.charged_amount : preview.settled_amount);
-      if (bindings.length === 0) throw new PlatformError('NO_PROVIDER_AVAILABLE', 'No provider is available for this route at the moment.');
-      // Preferred: the binding the preview quoted; then the rest by priority.
-      const ordered = [...bindings.filter((b) => b.id === preview.binding_id), ...bindings.filter((b) => b.id !== preview.binding_id)];
-      const binding = ordered[0]!;
-      const ceiling = await this.settings.number(direction === 'collection' ? 'sweep.ceiling_collection_seconds' : 'sweep.ceiling_disbursement_seconds');
-      const reference = newTransactionReference();
-      const projectFees = sum(preview.processing_fee_bearer === 'project' ? preview.processing_fee : 0, preview.platform_fee_bearer === 'project' ? preview.platform_fee : 0);
-      const reservedAmount = direction === 'disbursement' ? sum(preview.requested_amount, projectFees) : 0;
-
-      const txn = await tx
-        .insertInto('transaction')
-        .values({
-          reference,
-          preview_id: preview.id,
-          project_id: preview.project_id,
-          route_id: preview.route_id,
-          route_version_id: preview.route_version_id,
-          entitlement_version_id: preview.entitlement_version_id,
-          direction,
-          state: 'created',
-          currency_code: preview.currency_code,
-          requested_amount: preview.requested_amount,
-          charged_amount: preview.charged_amount,
-          expected_settled_amount: preview.settled_amount,
-          processing_fee: preview.processing_fee,
-          platform_fee: preview.platform_fee,
-          processing_fee_bearer: preview.processing_fee_bearer,
-          platform_fee_bearer: preview.platform_fee_bearer,
-          expected_provider_fee: preview.expected_provider_fee,
-          reserved_amount: reservedAmount,
-          msisdn_ciphertext: preview.msisdn_ciphertext,
-          msisdn_index: preview.msisdn_index,
-          msisdn_masked: preview.msisdn_masked,
-          counterparty_name: preview.counterparty_name,
-          counterparty_email: preview.counterparty_email,
-          project_reference: preview.project_reference,
-          metadata: JSON.stringify(preview.metadata),
-          terms_snapshot: JSON.stringify(preview.terms_snapshot),
-          limits_snapshot: JSON.stringify(preview.limits_snapshot),
-          payer_action: preview.payer_action,
-          binding_id: binding.id,
-          selected_provider_account_id: binding.provider_account_id,
-          sweep_ceiling_at: new Date(now.getTime() + ceiling * 1000),
-          correlation_id: preview.correlation_id,
-        })
-        .returning('id')
-        .executeTakeFirstOrThrow();
-      await tx.updateTable('preview').set({ status: 'confirmed', transaction_id: txn.id, confirmed_at: sql`now()` }).where('id', '=', preview.id).execute();
-      await this.event(tx, txn.id, null, 'created', { source: 'system', detail: { preview: preview.reference, binding_id: binding.id } });
-
-      if (direction === 'disbursement') {
-        try {
-          await this.ledger.reserve(tx, { transactionId: txn.id, projectId: preview.project_id, currency: preview.currency_code, amount: reservedAmount });
-        } catch (e) {
-          if (e instanceof InsufficientBalanceError) throw new PlatformError('BALANCE_INSUFFICIENT', "The project's available balance falls short.", { details: { shortfall: e.shortfall, currency: e.currency } });
-          throw e;
-        }
-        // A payout goes to the first provider whose float covers it, not only the first by priority:
-        // when one provider in the country runs dry the next one pays. Decided after the project's
-        // balance is reserved, so a project short of funds hears that and not a liquidity refusal,
-        // and before anything is sent, so it cannot pay twice — unlike fallback after submission,
-        // which stays off for payouts because a provider that timed out may already have paid. Each
-        // float is locked as it is examined, in priority order, so concurrent confirmations cannot
-        // jointly overdraw one.
-        const required = sum(preview.settled_amount, preview.expected_provider_fee);
-        const floatFor = (b: typeof binding) => this.ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId: b.provider_account_id, countryCode: resolution.route.countryCode, currency: preview.currency_code, direction: 'disbursement' });
-        let chosen: typeof binding | undefined;
-        for (const b of ordered) {
-          try {
-            await this.treasury.checkLiquidity(tx, await floatFor(b), required, txn.id);
-            chosen = b;
-            break;
-          } catch (e) {
-            if (!(e instanceof FloatInsufficientError)) throw e;
-          }
-        }
-        // No provider can cover it: the whole transaction rolls back, and the alert names the
-        // provider the preview chose.
-        if (!chosen) throw new FloatShort(await floatFor(binding), required);
-        if (chosen.id !== binding.id) {
-          await tx.updateTable('transaction').set({ binding_id: chosen.id, selected_provider_account_id: chosen.provider_account_id }).where('id', '=', txn.id).execute();
-        }
-      }
-      // Safety net: if the synchronous submission below is interrupted, the worker submits within a minute.
-      await this.queue.enqueue(tx, 'transaction.submit', { transactionId: txn.id }, { runAt: new Date(now.getTime() + 60_000), dedupeKey: `submit:${txn.id}` });
-      return { transactionId: txn.id, created: true };
-    }).catch(async (e) => {
+    const result = await this.db.transaction().execute((tx) => this.confirmWithin(tx, principal, previewReference, direction)).catch(async (e) => {
       if (e instanceof FloatShort) {
         await this.treasury.raiseFloatInsufficient(e.floatAccountId, e.required);
         throw new PlatformError('FLOAT_INSUFFICIENT', 'Platform liquidity on this route is short; retry later.');
@@ -172,6 +67,123 @@ export class TransactionService {
       throw e;
     });
     return result;
+  }
+
+  /**
+   * Confirms a collection inside the caller's transaction, so the transaction it creates commits or rolls back with the
+   * caller's own writes: a payment link holds its lock across this and records the payment on the link before committing.
+   * Collections only: a payout's float shortage raises its alert after the rollback, which only `confirm` arranges.
+   */
+  async confirmCollectionIn(tx: Tx, principal: ProjectPrincipal, previewReference: string): Promise<{ transactionId: string; created: boolean }> {
+    if (!principal.scopes.includes('collection')) throw new PlatformError('SCOPE_INSUFFICIENT', 'The credential lacks the collection scope.');
+    return this.confirmWithin(tx, principal, previewReference, 'collection');
+  }
+
+  private async confirmWithin(tx: Tx, principal: ProjectPrincipal, previewReference: string, direction: 'collection' | 'disbursement'): Promise<{ transactionId: string; created: boolean }> {
+    const preview = await tx.selectFrom('preview').selectAll().where('reference', '=', previewReference).where('project_id', '=', principal.projectId).forUpdate().executeTakeFirst();
+    if (!preview) throw new PlatformError('PREVIEW_NOT_FOUND', 'The preview reference is unrecognised.');
+    if (preview.direction !== direction) throw new PlatformError('PREVIEW_DIRECTION_MISMATCH', `The preview was raised as a ${preview.direction}.`);
+    if (preview.status === 'confirmed' && preview.transaction_id) return { transactionId: preview.transaction_id, created: false };
+    const now = await dbNow(tx);
+    if (preview.status === 'expired' || preview.expires_at.getTime() <= now.getTime()) {
+      if (preview.status === 'open') await tx.updateTable('preview').set({ status: 'expired' }).where('id', '=', preview.id).execute();
+      throw new PlatformError('PREVIEW_EXPIRED', 'The preview window closed; raise a new preview.');
+    }
+
+    const resolution = await this.resolver.resolve(tx, { projectId: principal.projectId, direction, country: await countryOf(tx, preview.route_id), currency: preview.currency_code, paymentMethod: await methodOf(tx, preview.route_id), amount: preview.requested_amount });
+    // Velocity and the duplicate guard, under the entitlement lock (spec 15.4).
+    await this.resolver.checkVelocity(tx, resolution, preview.requested_amount);
+    const pending = await tx.selectFrom('transaction').select('reference').where('project_id', '=', principal.projectId).where('route_id', '=', preview.route_id)
+      .where('requested_amount', '=', preview.requested_amount).where('msisdn_index', '=', preview.msisdn_index).where('state', 'in', [...OPEN_STATES, 'undetermined']).executeTakeFirst();
+    if (pending) throw new PlatformError('SIMILAR_PAYMENT_PENDING', 'A similar payment is already pending for this counterparty.', { details: { transaction: pending.reference } });
+
+    const bindings = await this.resolver.availableBindings(tx, preview.route_version_id, direction === 'collection' ? preview.charged_amount : preview.settled_amount);
+    if (bindings.length === 0) throw new PlatformError('NO_PROVIDER_AVAILABLE', 'No provider is available for this route at the moment.');
+    // Preferred: the binding the preview quoted; then the rest by priority.
+    const ordered = [...bindings.filter((b) => b.id === preview.binding_id), ...bindings.filter((b) => b.id !== preview.binding_id)];
+    const binding = ordered[0]!;
+    const ceiling = await this.settings.number(direction === 'collection' ? 'sweep.ceiling_collection_seconds' : 'sweep.ceiling_disbursement_seconds');
+    const reference = newTransactionReference();
+    const projectFees = sum(preview.processing_fee_bearer === 'project' ? preview.processing_fee : 0, preview.platform_fee_bearer === 'project' ? preview.platform_fee : 0);
+    const reservedAmount = direction === 'disbursement' ? sum(preview.requested_amount, projectFees) : 0;
+
+    const txn = await tx
+      .insertInto('transaction')
+      .values({
+        reference,
+        preview_id: preview.id,
+        project_id: preview.project_id,
+        route_id: preview.route_id,
+        route_version_id: preview.route_version_id,
+        entitlement_version_id: preview.entitlement_version_id,
+        direction,
+        state: 'created',
+        currency_code: preview.currency_code,
+        requested_amount: preview.requested_amount,
+        charged_amount: preview.charged_amount,
+        expected_settled_amount: preview.settled_amount,
+        processing_fee: preview.processing_fee,
+        platform_fee: preview.platform_fee,
+        processing_fee_bearer: preview.processing_fee_bearer,
+        platform_fee_bearer: preview.platform_fee_bearer,
+        expected_provider_fee: preview.expected_provider_fee,
+        reserved_amount: reservedAmount,
+        msisdn_ciphertext: preview.msisdn_ciphertext,
+        msisdn_index: preview.msisdn_index,
+        msisdn_masked: preview.msisdn_masked,
+        counterparty_name: preview.counterparty_name,
+        counterparty_email: preview.counterparty_email,
+        project_reference: preview.project_reference,
+        metadata: JSON.stringify(preview.metadata),
+        terms_snapshot: JSON.stringify(preview.terms_snapshot),
+        limits_snapshot: JSON.stringify(preview.limits_snapshot),
+        payer_action: preview.payer_action,
+        binding_id: binding.id,
+        selected_provider_account_id: binding.provider_account_id,
+        sweep_ceiling_at: new Date(now.getTime() + ceiling * 1000),
+        correlation_id: preview.correlation_id,
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    await tx.updateTable('preview').set({ status: 'confirmed', transaction_id: txn.id, confirmed_at: sql`now()` }).where('id', '=', preview.id).execute();
+    await this.event(tx, txn.id, null, 'created', { source: 'system', detail: { preview: preview.reference, binding_id: binding.id } });
+
+    if (direction === 'disbursement') {
+      try {
+        await this.ledger.reserve(tx, { transactionId: txn.id, projectId: preview.project_id, currency: preview.currency_code, amount: reservedAmount });
+      } catch (e) {
+        if (e instanceof InsufficientBalanceError) throw new PlatformError('BALANCE_INSUFFICIENT', "The project's available balance falls short.", { details: { shortfall: e.shortfall, currency: e.currency } });
+        throw e;
+      }
+      // A payout goes to the first provider whose float covers it, not only the first by priority:
+      // when one provider in the country runs dry the next one pays. Decided after the project's
+      // balance is reserved, so a project short of funds hears that and not a liquidity refusal,
+      // and before anything is sent, so it cannot pay twice — unlike fallback after submission,
+      // which stays off for payouts because a provider that timed out may already have paid. Each
+      // float is locked as it is examined, in priority order, so concurrent confirmations cannot
+      // jointly overdraw one.
+      const required = sum(preview.settled_amount, preview.expected_provider_fee);
+      const floatFor = (b: typeof binding) => this.ledger.getOrCreateAccount(tx, { type: 'float', providerAccountId: b.provider_account_id, countryCode: resolution.route.countryCode, currency: preview.currency_code, direction: 'disbursement' });
+      let chosen: typeof binding | undefined;
+      for (const b of ordered) {
+        try {
+          await this.treasury.checkLiquidity(tx, await floatFor(b), required, txn.id);
+          chosen = b;
+          break;
+        } catch (e) {
+          if (!(e instanceof FloatInsufficientError)) throw e;
+        }
+      }
+      // No provider can cover it: the whole transaction rolls back, and the alert names the
+      // provider the preview chose.
+      if (!chosen) throw new FloatShort(await floatFor(binding), required);
+      if (chosen.id !== binding.id) {
+        await tx.updateTable('transaction').set({ binding_id: chosen.id, selected_provider_account_id: chosen.provider_account_id }).where('id', '=', txn.id).execute();
+      }
+    }
+    // Safety net: if the synchronous submission below is interrupted, the worker submits within a minute.
+    await this.queue.enqueue(tx, 'transaction.submit', { transactionId: txn.id }, { runAt: new Date(now.getTime() + 60_000), dedupeKey: `submit:${txn.id}` });
+    return { transactionId: txn.id, created: true };
   }
 
   /** Records a state change in the append-only event log. */

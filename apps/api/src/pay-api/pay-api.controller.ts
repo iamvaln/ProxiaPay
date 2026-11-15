@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { PlatformError } from '../common/errors';
 import { CONFIG, type AppConfig } from '../config/config';
 import { clientAddress } from '../http/client-address';
+import { enforceLimit, LinkPaymentsService } from '../payment-links/link-payments.service';
 import { PublicLinkService } from '../payment-links/public-view';
 import { RateLimiter } from '../project-auth/rate-limiter';
 
@@ -18,15 +19,13 @@ export class PayApiController {
   constructor(
     @Inject(CONFIG) private readonly config: Pick<AppConfig, 'TRUSTED_PROXY_HOPS'>,
     private readonly links: PublicLinkService,
+    private readonly payments: LinkPaymentsService,
     private readonly limiter: RateLimiter,
   ) {}
 
-  /** Fixed one-minute windows in the store, as for project credentials; a limited caller is told plainly when to come back. */
-  private async limit(key: string, limit: number, windowSeconds: number): Promise<void> {
-    const rl = await this.limiter.hit(key, limit, windowSeconds);
-    if (!rl.exceeded) return;
-    const retryAfter = String(Math.max(1, Math.ceil((rl.resetAt.getTime() - Date.now()) / 1000)));
-    throw new PlatformError('RATE_LIMITED', 'Too many requests from this connection. Wait a minute and try again.', { headers: { 'Retry-After': retryAfter } });
+  /** Fixed windows in the store, as for project credentials; a limited caller is told plainly when to come back. */
+  private limit(key: string, limit: number, windowSeconds: number): Promise<void> {
+    return enforceLimit(this.limiter, key, limit, windowSeconds);
   }
 
   /** Generous: many payers can share one address behind a mobile carrier. */
@@ -42,6 +41,21 @@ export class PayApiController {
   async quote(@Param('code') code: string, @Body() body: unknown, @Req() req: Request) {
     await this.limit(`paylink:quote:${clientAddress(req, this.config.TRUSTED_PROXY_HOPS)}`, 60, 60);
     return this.links.quote(code, body);
+  }
+
+  /** The review step: a real preview, priced and frozen, and the token the page follows the payment by. Nothing is asked of the payer yet. */
+  @Post('links/:code/previews')
+  @HttpCode(201)
+  async preview(@Param('code') code: string, @Body() body: unknown, @Req() req: Request) {
+    const { token, review } = await this.payments.preview(code, body, clientAddress(req, this.config.TRUSTED_PROXY_HOPS));
+    return { payment_token: token, review };
+  }
+
+  /** The payer confirms the total: only now does the operator send them a request. */
+  @Post('payments/:token/confirm')
+  @HttpCode(200)
+  async confirm(@Param('token') token: string, @Req() req: Request) {
+    return this.payments.confirm(token, clientAddress(req, this.config.TRUSTED_PROXY_HOPS));
   }
 
   /**

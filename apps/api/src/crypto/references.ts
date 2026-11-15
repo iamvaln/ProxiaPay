@@ -28,3 +28,5 @@ export const newExportReference = (): string => timeOrdered('exp');
 export const newCorrelationId = (): string => opaque(20);
 export const newCredentialKey = (env: 'production' | 'sandbox'): string => `pk_${env === 'production' ? 'live' : 'test'}_${opaque(24).toLowerCase()}`;
 export const newCredentialSecret = (env: 'production' | 'sandbox'): string => `sk_${env === 'production' ? 'live' : 'test'}_${randomBytes(32).toString('base64url')}`;
+/** The unique tail of a payment link's project reference, `PL-<code>-<suffix>`: 60 random bits, readable aloud. */
+export const newLinkPaymentSuffix = (): string => opaque(12);
