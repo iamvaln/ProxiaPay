@@ -80,6 +80,10 @@ describe('payment link routing', () => {
     expect(label('paylink', 'rule')).toContain('${PAYLINK_DOMAIN:?');
   });
 
+  it('the backup rehearsal env defines PAYLINK_DOMAIN, or its compose guard aborts', () => {
+    expect(read('ops/backup/rehearse.sh')).toMatch(/^PAYLINK_DOMAIN=\S+$/m);
+  });
+
   it('both env examples define PAYLINK_DOMAIN and PAYLINK_BASE_URL', () => {
     for (const [file, host] of [
       ['deploy/production.env.example', 'paylink.proxia-digital.com'],

@@ -109,7 +109,13 @@ jobs:
             # `proxiapay` and this deploy would recreate a different stack's
             # containers with the sandbox's environment — the failure that took
             # lehno's production down on 14 September.
-            PROJECT=$(docker compose --env-file .env.sandbox -f docker-compose.deploy.yml config --format json | sed -n 's/.*"name": *"\([^"]*\)".*/\1/p' | head -1)
+            # The exit status is read before the pipe, or a failed `config` (a missing
+            # PAYLINK_DOMAIN, say) would surface as an empty project name.
+            if ! CONFIG=$(docker compose --env-file .env.sandbox -f docker-compose.deploy.yml config --format json); then
+              echo "STOP: compose config failed — check .env.sandbox (PAYLINK_DOMAIN/PAYLINK_BASE_URL?)."
+              exit 1
+            fi
+            PROJECT=$(printf '%s\n' "$CONFIG" | sed -n 's/.*"name": *"\([^"]*\)".*/\1/p' | head -1)
             if [ "$PROJECT" != "proxiapay-sandbox" ]; then
               echo "STOP: Compose reports the project '$PROJECT', not 'proxiapay-sandbox'."
               echo "Going on would deploy onto another stack. Check STACK in .env.sandbox."
