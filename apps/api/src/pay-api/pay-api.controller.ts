@@ -60,12 +60,21 @@ export class PayApiController {
 
   /**
    * The page follows the payment here until its outcome is in, in the page's language (`?lang=fr|en`): 60 a minute per token,
-   * and, as for reading a link, a generous ceiling per address, so guessing at tokens costs the guesser and not the store.
+   * charged once the token is found, and, as for reading a link, a generous ceiling per address, charged first: that ceiling
+   * is what bounds guessing at tokens, and a guess leaves nothing in the store.
    */
   @Get('payments/:token')
   async payment(@Param('token') token: string, @Query('lang') lang: unknown, @Req() req: Request) {
     await this.limit(`paylink:payment-read:${clientAddress(req, this.config.TRUSTED_PROXY_HOPS)}`, 300, 60);
     return this.payments.follow(token, lang);
+  }
+
+  /** The receipt by email, for a succeeded payment: the address is used for the send and not kept. */
+  @Post('payments/:token/receipt')
+  @HttpCode(200)
+  async receipt(@Param('token') token: string, @Body() body: unknown, @Req() req: Request) {
+    await this.limit(`paylink:receipt-address:${clientAddress(req, this.config.TRUSTED_PROXY_HOPS)}`, 60, 60);
+    return this.payments.sendReceipt(token, body);
   }
 
   /**

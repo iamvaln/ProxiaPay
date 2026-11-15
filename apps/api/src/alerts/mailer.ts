@@ -3,7 +3,30 @@ import { CONFIG, type AppConfig } from '../config/config';
 import { log } from '../logging/logger';
 import { fetchJson } from '../providers/adapter';
 
-export interface Mail { to: string; subject: string; text: string; sensitive?: boolean }
+export interface Mail {
+  to: string; subject: string; text: string; sensitive?: boolean;
+  /** A sender display name, sent with the address of MAIL_FROM: "<fromName>" <address>. */
+  fromName?: string;
+  /** What logs show in place of `to`, for a recipient whose address is not kept (a masked form). */
+  recipientLabel?: string;
+}
+
+/** The bare address of a MAIL_FROM written either as `a@b.c` or as `Name <a@b.c>`. */
+function addressOf(from: string): string {
+  const angle = /<([^<>]+)>\s*$/.exec(from);
+  return (angle ? angle[1]! : from).trim();
+}
+
+/**
+ * The From header for a display name: the name quoted, with anything that could end the quoted string or start a new header
+ * (quotes, backslashes, angle brackets, line breaks and other control characters) removed or neutralised, so a name written
+ * by a client cannot break the header or add one. A name left empty by that falls back to the bare address.
+ */
+export function fromHeader(from: string, fromName?: string): string {
+  const address = addressOf(from);
+  const name = (fromName ?? '').replace(/[\u0000-\u001f\u007f\u0080-\u009f\u2028\u2029]+/g, ' ').replace(/[\\"<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  return name === '' ? address : `"${name}" <${address}>`;
+}
 
 /** Resend's single sending endpoint. The region a domain sends from is a property of the domain in Resend, not of the URL. */
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
@@ -26,13 +49,13 @@ export class Mailer {
     if (!this.config.RESEND_API_KEY) {
       // Outside production the full text is logged so one-time codes can be read during development; in production a sensitive body is never logged.
       const body = mail.sensitive && this.config.NODE_ENV === 'production' ? '[sensitive]' : mail.text;
-      this.logger.info({ to: mail.to, subject: mail.subject, mail_body: body }, 'mail logged (no RESEND_API_KEY configured)');
+      this.logger.info({ to: mail.recipientLabel ?? mail.to, subject: mail.subject, mail_body: body }, 'mail logged (no RESEND_API_KEY configured)');
       return 'logged';
     }
     const res = await fetchJson(RESEND_ENDPOINT, {
       method: 'POST',
       headers: { authorization: `Bearer ${this.config.RESEND_API_KEY}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ from: this.config.MAIL_FROM, to: mail.to, subject: mail.subject, text: mail.text }),
+      body: JSON.stringify({ from: mail.fromName ? fromHeader(this.config.MAIL_FROM!, mail.fromName) : this.config.MAIL_FROM, to: mail.to, subject: mail.subject, text: mail.text }),
       timeoutMs: RESEND_TIMEOUT_MS,
     });
     if (res.timedOut) throw new Error('resend: request timed out');
@@ -41,7 +64,7 @@ export class Mailer {
       throw new Error(`resend: ${res.status} ${detail.name ?? ''} ${detail.message ?? ''}`.trim());
     }
     const id = (res.body as { id?: string } | null)?.id;
-    this.logger.info({ to: mail.to, subject: mail.subject, resend_id: id }, 'mail sent');
+    this.logger.info({ to: mail.recipientLabel ?? mail.to, subject: mail.subject, resend_id: id }, 'mail sent');
     return 'sent';
   }
 }

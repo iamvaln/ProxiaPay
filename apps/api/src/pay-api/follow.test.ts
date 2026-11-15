@@ -205,6 +205,14 @@ describe('following a payment', () => {
     expect((await follow(payment_token)).status).toBe(404);
   });
 
+  it('guessed tokens write no per-token rate_limit_window rows; the address ceiling alone counts them', async () => {
+    await forgetLimits();
+    for (const guess of ['A'.repeat(43), 'B'.repeat(43), 'C'.repeat(43)]) expect((await follow(guess)).status).toBe(404);
+    const keys = (await t.db.selectFrom('rate_limit_window').select('key').execute()).map((k) => k.key);
+    expect(keys.filter((k) => k.startsWith('paylink:payment:'))).toEqual([]);
+    expect(keys).toContain('paylink:payment-read:127.0.0.1');
+  });
+
   it('60 reads a minute per token, kept against the token\'s hash', async () => {
     const momo = await routeId('CM', 'MOMO');
     const l = await link([momo]);

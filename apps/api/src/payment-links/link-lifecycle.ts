@@ -23,8 +23,8 @@ export class LinkLifecycle {
     const succeeded = await tx.selectFrom('transaction').select('reference').where('payment_link_id', '=', link.id).where('state', '=', 'succeeded').execute();
 
     if (next === 'succeeded' && succeeded.some((s) => s.reference !== txn.reference)) {
-      // Only a correction gets here (the confirmation refuses a payer once a payment succeeded): the payer paid twice,
-      // and there is no refund yet, so the platform settles it by hand.
+      // A correction, or a confirmation that raced one, gets here (the confirmation refuses a payer once a payment succeeded):
+      // the payer paid twice, and there is no refund yet, so the platform settles it by hand.
       await this.alerts.raise({
         category: 'treasury', severity: 'warning', subjectType: 'payment_link', subjectReference: link.code, projectId: link.project_id,
         fingerprint: `link_collected_twice:${link.id}`, title: 'Single-use link collected twice',

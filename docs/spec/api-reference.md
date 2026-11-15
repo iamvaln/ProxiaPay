@@ -65,7 +65,7 @@ What happens next depends on the route. On most, the customer completes the paym
 
 The two are separate deployments holding separate data, separate credentials, and separate balances. A sandbox credential reaches nothing in production.
 
-The version sits in the path. Fields may be added to a response and optional fields to a request within a version, so a client tolerates fields it does not recognise. Removing a field, renaming one, changing a type, or adding a required field opens a new version, and the version it replaces stays available for a stated period.
+The version sits in the path. Fields may be added to a response and optional fields to a request within a version, so a client tolerates fields it does not recognise: it must ignore any field it does not know, such as the optional `payment_link` that may appear on a transaction. Removing a field, renaming one, changing a type, or adding a required field opens a new version, and the version it replaces stays available for a stated period.
 
 ### 2.2 Requests and responses
 

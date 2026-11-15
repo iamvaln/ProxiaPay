@@ -5,13 +5,15 @@ import { CryptoService } from '../crypto/crypto.service';
 import { newLinkPaymentSuffix } from '../crypto/references';
 import { DB_TOKEN, type Db } from '../db/database';
 import { log } from '../logging/logger';
-import { subtract } from '../money/money';
+import { Mailer } from '../alerts/mailer';
+import { formatAmount, subtract } from '../money/money';
 import { normaliseMsisdn } from '../msisdn/msisdn';
 import { RateLimiter } from '../project-auth/rate-limiter';
 import { SubmissionService } from '../providers/submission.service';
 import { PreviewService } from '../transactions/preview.service';
 import { TERMINAL_STATES, TransactionService } from '../transactions/transaction.service';
 import { failureText, payerLanguage, type PayerLanguage } from './failure-text';
+import { maskEmail, receiptMail, receiptSender } from './receipt';
 import { amountRefusal, isUuid, LINK_UNAVAILABLE_MESSAGE, linkPrincipal, METHOD_UNAVAILABLE_MESSAGE, neutralProviderLimit, PublicLinkService } from './public-view';
 
 export const ADDRESS_LIMITED = 'Too many requests from this connection. Wait a minute and try again.';
@@ -22,6 +24,8 @@ const IN_PROGRESS = 'A payment is already in progress on this link';
 const BEING_CHECKED = 'A payment on this link is being checked';
 const PAYMENT_GONE = 'This payment is no longer available';
 const NOT_STARTED = 'We could not start this payment. Please try again.';
+const RECEIPTS_PER_PAYMENT = 3;
+const EMAIL = /^[^\s@<>",;]{1,64}@[^\s@<>",;]+\.[^\s@<>",;]+$/;
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
 /** Counts a request against a fixed window in the store; past the limit the caller is told plainly when to come back. */
@@ -108,6 +112,7 @@ export class LinkPaymentsService {
     private readonly submission: SubmissionService,
     private readonly crypto: CryptoService,
     private readonly limiter: RateLimiter,
+    private readonly mailer: Mailer,
   ) {}
 
   /** Prices the payment as a real preview and returns the review the page shows, with the token that follows the payment. */
@@ -165,11 +170,11 @@ export class LinkPaymentsService {
       .select(['pp.id', 'pp.link_id', 'pp.expires_at', 'pv.reference as preview_reference', 'pv.msisdn_index', 'pv.route_id', 'l.code', 't.reference as transaction_reference'])
       .where('pp.token_hash', '=', CryptoService.tokenHash(token)).executeTakeFirst();
     if (!payment) throw noSuchPayment();
+    // A repeat of a confirmed payment answers before the limits below: it asks the operator for nothing, so it spends no budget.
+    if (payment.transaction_reference) return { reference: payment.transaction_reference };
     // The operator pushes a request to the number here, so this is where the number and the link are limited.
     await enforceLimit(this.limiter, `paylink:confirm-number:${payment.msisdn_index.toString('hex')}`, 3, 600, NUMBER_LIMITED);
     await enforceLimit(this.limiter, `paylink:confirm-link:${payment.link_id}`, 30, 60, LINK_LIMITED);
-    // A payment already made answers the same however late the repeat: only a new payment needs the token in its day.
-    if (payment.transaction_reference) return { reference: payment.transaction_reference };
     if (payment.expires_at.getTime() <= Date.now()) throw new PlatformError('PREVIEW_EXPIRED', TOTAL_EXPIRED);
 
     const outcome = await this.db.transaction().execute(async (tx) => {
@@ -219,8 +224,6 @@ export class LinkPaymentsService {
     const gone = () => new PlatformError('NOT_FOUND', PAYMENT_GONE);
     if (!TOKEN.test(token)) throw gone();
     const hash = CryptoService.tokenHash(token);
-    // Keyed on the token's hash: the window table never holds a token.
-    await enforceLimit(this.limiter, `paylink:payment:${hash.toString('hex')}`, 60, 60);
     const row = await this.db.selectFrom('payment_link_payment as pp')
       .innerJoin('transaction as t', 't.id', 'pp.transaction_id')
       .innerJoin('route as r', 'r.id', 't.route_id')
@@ -228,6 +231,9 @@ export class LinkPaymentsService {
       .select(['t.state', 't.reference', 't.requested_amount', 't.charged_amount', 't.currency_code', 't.failure_reason', 'r.country_code', 'pm.name', 'r.payer_instructions'])
       .where('pp.token_hash', '=', hash).where('pp.expires_at', '>', sql<Date>`now()`).executeTakeFirst();
     if (!row) throw gone();
+    // Charged only for a token that exists, so a guess writes nothing; the controller's per-address ceiling covers the guessing.
+    // Keyed on the token's hash: the window table never holds a token.
+    await enforceLimit(this.limiter, `paylink:payment:${hash.toString('hex')}`, 60, 60);
     const language = payerLanguage(lang);
     const given = (row.payer_instructions as Partial<Record<PayerLanguage, unknown>> | null)?.[language];
     const final = (TERMINAL_STATES as readonly string[]).includes(row.state);
@@ -237,5 +243,52 @@ export class LinkPaymentsService {
       instructions: typeof given === 'string' && given.trim() !== '' ? given : null,
       outcome: final ? { failure_reason_text: row.state === 'succeeded' ? null : failureText(row.failure_reason, language) } : null,
     };
+  }
+
+  /**
+   * Sends the receipt of a succeeded payment to an address the payer types. The address is used for this send and kept nowhere:
+   * the payment records only how many receipts went out, when, and the masked form. The send is counted before it is made, so
+   * concurrent requests cannot pass the limit of three; the answer says whether the mailer took it.
+   */
+  async sendReceipt(token: string, body: unknown): Promise<{ status: 'sent' | 'failed' }> {
+    const gone = () => new PlatformError('NOT_FOUND', PAYMENT_GONE);
+    if (!TOKEN.test(token)) throw gone();
+    const input = (typeof body === 'object' && body !== null ? body : {}) as { email?: unknown; language?: unknown };
+    const hash = CryptoService.tokenHash(token);
+    const row = await this.db.selectFrom('payment_link_payment as pp')
+      .innerJoin('transaction as t', 't.id', 'pp.transaction_id')
+      .innerJoin('payment_link as l', 'l.id', 'pp.link_id')
+      .innerJoin('project as pr', 'pr.id', 'l.project_id')
+      .innerJoin('currency as c', 'c.code', 't.currency_code')
+      .innerJoin('route as r', 'r.id', 't.route_id')
+      .innerJoin('payment_method as pm', 'pm.code', 'r.payment_method_code')
+      .select(['pp.id', 't.state', 't.reference', 't.requested_amount', 't.charged_amount', 't.currency_code', 't.msisdn_masked', 't.terminal_at', 't.updated_at', 'c.exponent', 'l.title', 'pr.name as project_name', 'pm.name as method_name'])
+      .where('pp.token_hash', '=', hash).where('pp.expires_at', '>', sql<Date>`now()`).executeTakeFirst();
+    if (!row) throw gone();
+    await enforceLimit(this.limiter, `paylink:receipt:${hash.toString('hex')}`, 60, 60);
+    if (typeof input.email !== 'string' || input.email.length > 254 || !EMAIL.test(input.email.trim())) throw new PlatformError('FIELD_INVALID', 'Enter a valid email address.', { field: 'email' });
+    if (input.language !== undefined && input.language !== 'en' && input.language !== 'fr') throw new PlatformError('FIELD_INVALID', 'language: must be en or fr.', { field: 'language' });
+    if (row.state !== 'succeeded') throw new PlatformError('CONFLICT', 'A receipt is available once the payment has succeeded.');
+    const reserved = await this.db.updateTable('payment_link_payment').set({ receipts_sent: sql<number>`receipts_sent + 1` })
+      .where('id', '=', row.id).where('receipts_sent', '<', RECEIPTS_PER_PAYMENT).returning('id').executeTakeFirst();
+    if (!reserved) throw new PlatformError('CONFLICT', 'The receipt has already been sent three times.');
+
+    const email = input.email.trim();
+    const masked = maskEmail(email);
+    const money = (n: number) => formatAmount(n, row.exponent);
+    const mail = receiptMail({
+      projectName: row.project_name, title: row.title, reference: row.reference, paidAt: row.terminal_at ?? row.updated_at,
+      amount: money(row.requested_amount), fees: money(subtract(row.charged_amount, row.requested_amount)), total: money(row.charged_amount),
+      currency: row.currency_code, method: row.method_name, maskedNumber: row.msisdn_masked,
+    }, input.language === 'fr' ? 'fr' : 'en');
+    try {
+      await this.mailer.send({ to: email, ...mail, fromName: receiptSender(row.project_name), recipientLabel: masked });
+    } catch (e) {
+      // Neither the address nor the mailer's detail (which may repeat it) is logged.
+      this.logger.warn({ transaction: row.reference, err: (e as Error).name }, 'receipt email could not be sent');
+      return { status: 'failed' };
+    }
+    await this.db.updateTable('payment_link_payment').set({ receipt_sent_at: sql<Date>`now()`, receipt_sent_to: masked }).where('id', '=', row.id).execute();
+    return { status: 'sent' };
   }
 }

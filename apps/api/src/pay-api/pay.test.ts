@@ -311,7 +311,9 @@ describe('rate limits', () => {
     const momo = await routeId('CM', 'MOMO');
     const l = await link([momo]);
     const tok = await token(l.code, { method: l.keys[momo], msisdn: '677123456' });
-    for (let i = 0; i < 3; i++) expect((await confirm(tok)).status).toBe(200);
+    // Three earlier requests to the number spend its budget (a retried confirm does not: see below).
+    const index = t.app.get(CryptoService).blindIndex('+237677123456').toString('hex');
+    for (let i = 0; i < 3; i++) await t.app.get(RateLimiter).hit(`paylink:confirm-number:${index}`, 3, 600);
     const res = await confirm(tok);
     expect(res.status).toBe(429);
     expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
@@ -321,6 +323,24 @@ describe('rate limits', () => {
     expect(keys.some((k) => k.startsWith('paylink:confirm-number:'))).toBe(true);
     for (const k of keys) expect(k).not.toMatch(/677123456|123456/);
     expect(keys).toContain(`paylink:confirm-number:${t.app.get(CryptoService).blindIndex('+237677123456').toString('hex')}`);
+  });
+
+  it('a retried confirm answers the same payment without spending the number\'s or the link\'s budget', async () => {
+    const momo = await routeId('CM', 'MOMO');
+    const l = await link([momo]);
+    const tok = await token(l.code, { method: l.keys[momo], msisdn: '677123456' });
+    const first = await confirm(tok);
+    expect(first.status).toBe(200);
+    const { reference } = (await first.json()) as { reference: string };
+    const keys = async () => (await t.db.selectFrom('rate_limit_window').select(['key', 'count']).where('key', 'like', 'paylink:confirm-%').execute()).filter((k) => !k.key.startsWith('paylink:confirm:'));
+    const spent = await keys();
+    expect(spent.length).toBe(2);
+    for (let i = 0; i < 4; i++) {
+      const again = await confirm(tok);
+      expect(again.status).toBe(200);
+      expect(await again.json()).toEqual({ reference });
+    }
+    expect(await keys()).toEqual(spent);
   });
 
   it('previews: 10 per 600 s per number, keyed on the normalised number whatever its spelling', async () => {
