@@ -21,7 +21,7 @@ describe('client roles', () => {
       { name: 'Client finance', kind: 'client', seeded: true },
       { name: 'Client owner', kind: 'client', seeded: true },
     ]);
-    expect(await permissionsOf('Client owner')).toEqual(['client.members', 'oversight.export', 'projects.create_own', 'projects.credentials', 'projects.notifications',
+    expect(await permissionsOf('Client owner')).toEqual(['client.members', 'links.manage', 'oversight.export', 'projects.create_own', 'projects.credentials', 'projects.notifications',
       'projects.origins', 'projects.read', 'transactions.read', 'treasury.read_balances']);
     expect(await permissionsOf('Client developer')).toEqual(['projects.credentials', 'projects.notifications', 'projects.origins', 'projects.read', 'transactions.read', 'treasury.read_balances']);
     expect(await permissionsOf('Client finance')).toEqual(['oversight.export', 'projects.read', 'transactions.read', 'treasury.read_balances']);

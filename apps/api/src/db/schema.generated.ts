@@ -170,6 +170,15 @@ export interface AuthenticationEvent {
   reason: Generated<string>;
 }
 
+export interface BrandAsset {
+  bytes: Buffer;
+  content_type: string;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  project_id: string;
+  sha256: string;
+}
+
 export interface Cashout {
   amount: Int8;
   approved_by: string | null;
@@ -475,6 +484,45 @@ export interface OriginRefusal {
   project_id: string | null;
 }
 
+export interface PaymentLink {
+  amount: Int8 | null;
+  amount_type: string;
+  code: string;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  currency_code: string;
+  description: string | null;
+  expires_at: Timestamp | null;
+  id: Generated<string>;
+  logo_asset_id: string | null;
+  minimum_amount: Generated<Int8>;
+  primary_color: string;
+  project_id: string;
+  secondary_color: string | null;
+  single_use: Generated<boolean>;
+  status: Generated<string>;
+  title: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface PaymentLinkPayment {
+  expires_at: Timestamp;
+  id: Generated<string>;
+  link_id: string;
+  preview_id: string;
+  receipt_sent_at: Timestamp | null;
+  receipt_sent_to: string | null;
+  receipts_sent: Generated<number>;
+  token_hash: Buffer;
+  transaction_id: string | null;
+}
+
+export interface PaymentLinkRoute {
+  id: Generated<string>;
+  link_id: string;
+  route_id: string;
+}
+
 export interface PaymentMethod {
   code: string;
   created_at: Generated<Timestamp>;
@@ -533,6 +581,14 @@ export interface Project {
   id: Generated<string>;
   name: string;
   status: Generated<string>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface ProjectBrand {
+  logo_asset_id: string | null;
+  primary_color: string;
+  project_id: string;
+  secondary_color: string | null;
   updated_at: Generated<Timestamp>;
 }
 
@@ -705,6 +761,7 @@ export interface Route {
   currency_code: string;
   direction: string;
   id: Generated<string>;
+  payer_instructions: Json | null;
   payment_method_code: string;
 }
 
@@ -809,6 +866,7 @@ export interface Transaction {
   next_status_check_at: Timestamp | null;
   original_transaction_id: string | null;
   payer_action: string;
+  payment_link_id: string | null;
   platform_fee: Int8;
   platform_fee_bearer: string;
   preview_id: string;
@@ -878,6 +936,7 @@ export interface DB {
   approval_request: ApprovalRequest;
   audit_record: AuditRecord;
   authentication_event: AuthenticationEvent;
+  brand_asset: BrandAsset;
   cashout: Cashout;
   circuit_breaker: CircuitBreaker;
   client: Client;
@@ -903,10 +962,14 @@ export interface DB {
   notification_delivery_attempt: NotificationDeliveryAttempt;
   operation_confirmation: OperationConfirmation;
   origin_refusal: OriginRefusal;
+  payment_link: PaymentLink;
+  payment_link_payment: PaymentLinkPayment;
+  payment_link_route: PaymentLinkRoute;
   payment_method: PaymentMethod;
   platform_setting: PlatformSetting;
   preview: Preview;
   project: Project;
+  project_brand: ProjectBrand;
   project_credential: ProjectCredential;
   project_notification_endpoint: ProjectNotificationEndpoint;
   project_origin: ProjectOrigin;

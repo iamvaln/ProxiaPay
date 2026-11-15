@@ -54,6 +54,8 @@ export const PERMISSIONS = {
   'admin.roles': 'Manage roles',
   'admin.sessions': 'Revoke sessions',
   'admin.clients': 'Manage clients and their owners',
+  // Payment links
+  'links.manage': 'Create and manage payment links and project branding',
   // Client accounts: held only by roles of kind 'client'
   'projects.create_own': 'Create projects for one\'s own client',
   'client.members': 'Manage one\'s own client team',
@@ -117,7 +119,7 @@ export const CLIENT_ROLES: { name: string; description: string; profile: 'owner'
     description: 'Runs a client: its projects, credentials and team.',
     profile: 'owner',
     permissions: ['transactions.read', 'projects.read', 'projects.create_own', 'projects.credentials', 'projects.origins', 'projects.notifications',
-      'treasury.read_balances', 'oversight.export', 'client.members'],
+      'treasury.read_balances', 'oversight.export', 'client.members', 'links.manage'],
   },
   {
     name: 'Client developer',
