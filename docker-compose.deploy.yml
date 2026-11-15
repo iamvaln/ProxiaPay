@@ -99,7 +99,7 @@ services:
       # host reaches no other prefix of the api (/v1, /console, /providers, /docs).
       # THE PATHS HERE CARRY PAYER TOKENS: access logs for this router, on the shared Traefik,
       # must be off or must drop the path (docs/production-deployment.md).
-      - traefik.http.routers.${STACK:-proxiapay}-payapi.rule=Host(`${PAYLINK_DOMAIN}`) && PathPrefix(`/pay-api`)
+      - traefik.http.routers.${STACK:-proxiapay}-payapi.rule=Host(`${PAYLINK_DOMAIN:?PAYLINK_DOMAIN is required (paylink host)}`) && PathPrefix(`/pay-api`)
       - traefik.http.routers.${STACK:-proxiapay}-payapi.priority=100
       - traefik.http.routers.${STACK:-proxiapay}-payapi.entrypoints=websecure
       - traefik.http.routers.${STACK:-proxiapay}-payapi.tls.certresolver=${CERT_RESOLVER:-le}
@@ -153,7 +153,7 @@ services:
       # and nothing else. Explicit service on each router: with two services on one container
       # Traefik refuses to guess.
       - traefik.http.routers.${STACK:-proxiapay}-console.service=${STACK:-proxiapay}-console
-      - traefik.http.routers.${STACK:-proxiapay}-paylink.rule=Host(`${PAYLINK_DOMAIN}`)
+      - traefik.http.routers.${STACK:-proxiapay}-paylink.rule=Host(`${PAYLINK_DOMAIN:?PAYLINK_DOMAIN is required (paylink host)}`)
       - traefik.http.routers.${STACK:-proxiapay}-paylink.priority=1
       - traefik.http.routers.${STACK:-proxiapay}-paylink.entrypoints=websecure
       - traefik.http.routers.${STACK:-proxiapay}-paylink.tls.certresolver=${CERT_RESOLVER:-le}

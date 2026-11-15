@@ -396,6 +396,9 @@ Two settings in `.env.production`: `PAYLINK_DOMAIN=paylink.proxia-digital.com`
 (read by the api: a link's address is `<PAYLINK_BASE_URL>/<code>`; unset, the console
 cannot create links).
 
+**Before deploying this release**, `.env.production` must define both `PAYLINK_DOMAIN` and
+`PAYLINK_BASE_URL`: without `PAYLINK_DOMAIN` Compose stops with "PAYLINK_DOMAIN is required".
+
 **DNS.** `paylink.proxia-digital.com` (production) and `sandbox-paylink.proxia-digital.com`
 (sandbox) are plain A records to the VPS, already created. Like `pay.`, they must stay
 off Cloudflare's proxy while `CERT_RESOLVER=le`; behind it, switch to `le-dns`.

@@ -15,8 +15,10 @@ const label = (router: string, key: string) =>
 
 // The nginx config is two server blocks: the console, then the paylink one.
 const blocks = nginx.split(/^server \{/m).slice(1);
-const consoleBlock = blocks.find((b) => !b.includes('X-Content-Type-Options') && !b.includes('pay.html')) ?? '';
-const paylinkBlock = blocks.find((b) => b.includes('pay.html')) ?? '';
+const consoleBlock = blocks.find((b) => /listen 80;/.test(b)) ?? '';
+const paylinkBlock = blocks.find((b) => /listen 8080;/.test(b)) ?? '';
+const CSP =
+  "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 describe('payment link routing', () => {
   it('the api router on APP_DOMAIN has no /pay-api', () => {
@@ -28,14 +30,14 @@ describe('payment link routing', () => {
   });
 
   it('the payapi router is Host(PAYLINK_DOMAIN) && PathPrefix(/pay-api)', () => {
-    expect(label('payapi', 'rule')).toContain('Host(`${PAYLINK_DOMAIN}`) && PathPrefix(`/pay-api`)');
+    expect(label('payapi', 'rule')).toMatch(/Host\(`\$\{PAYLINK_DOMAIN(:\?[^}]*)?\}`\) && PathPrefix\(`\/pay-api`\)/);
     expect(label('payapi', 'service')).toContain('-api');
     expect(label('payapi', 'priority')).toMatch(/=100$/);
   });
 
   it('the paylink router serves the page at a lower priority and never reaches the api', () => {
     const rule = label('paylink', 'rule')!;
-    expect(rule).toMatch(/=Host\(`\$\{PAYLINK_DOMAIN\}`\)$/);
+    expect(rule).toMatch(/=Host\(`\$\{PAYLINK_DOMAIN(:\?[^}]*)?\}`\)$/);
     expect(Number(label('paylink', 'priority')!.split('=').pop())).toBeLessThan(100);
     // Its own service on the paylink listener (port 8080): the console listener never sees it.
     expect(label('paylink', 'service')).toContain('-paylink');
@@ -46,9 +48,7 @@ describe('payment link routing', () => {
     expect(paylinkBlock).toMatch(/listen 8080/);
     expect(paylinkBlock).toMatch(/location ~ \^\/\(v1\|console\|providers\|docs\|healthz\|pay-api\)/);
     expect(paylinkBlock).toMatch(/return 404/);
-    const csp =
-      "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
-    expect(paylinkBlock).toContain(`add_header Content-Security-Policy "${csp}" always;`);
+    expect(paylinkBlock).toContain(`add_header Content-Security-Policy "${CSP}" always;`);
     expect(paylinkBlock).toContain('add_header Referrer-Policy "no-referrer" always;');
     expect(paylinkBlock).toContain('add_header X-Content-Type-Options "nosniff" always;');
   });
@@ -57,8 +57,9 @@ describe('payment link routing', () => {
     // nginx drops inherited add_header the moment a location adds one of its own.
     for (const loc of paylinkBlock.split(/^  location /m).slice(1)) {
       if (!/add_header/.test(loc)) continue;
-      expect(loc).toContain('Content-Security-Policy');
-      expect(loc).toContain('X-Content-Type-Options');
+      expect(loc).toContain(`add_header Content-Security-Policy "${CSP}" always;`);
+      expect(loc).toContain('add_header Referrer-Policy "no-referrer" always;');
+      expect(loc).toContain('add_header X-Content-Type-Options "nosniff" always;');
     }
   });
 
@@ -70,8 +71,13 @@ describe('payment link routing', () => {
 
   it('the console block never serves pay.html', () => {
     expect(consoleBlock).toContain('/index.html');
-    expect(consoleBlock).not.toContain('pay.html');
-    expect(consoleBlock).toMatch(/listen 80;/);
+    // try_files $uri would otherwise serve the file by name, without the paylink CSP.
+    expect(consoleBlock).toMatch(/location = \/pay\.html \{\s*return 404;\s*\}/);
+  });
+
+  it('a missing PAYLINK_DOMAIN stops the deploy', () => {
+    expect(label('payapi', 'rule')).toContain('${PAYLINK_DOMAIN:?');
+    expect(label('paylink', 'rule')).toContain('${PAYLINK_DOMAIN:?');
   });
 
   it('both env examples define PAYLINK_DOMAIN and PAYLINK_BASE_URL', () => {

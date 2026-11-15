@@ -177,6 +177,9 @@ Migration `0005_payment_links.sql` runs with the next deploy. Two settings in `.
 - `PAYLINK_BASE_URL=https://sandbox-paylink.proxia-digital.com` is read by the api; a
   link's address is `<PAYLINK_BASE_URL>/<code>`.
 
+Both must be in `.env.sandbox` before this release is deployed; without `PAYLINK_DOMAIN`
+Compose stops with "PAYLINK_DOMAIN is required".
+
 The DNS record `sandbox-paylink.proxia-digital.com` already exists (a plain A record to
 the VPS, like `sandbox.pay`). That host serves the payment page and `/pay-api` only:
 `proxiapay-sandbox-payapi` sends `/pay-api` to the api, `proxiapay-sandbox-paylink` sends the
