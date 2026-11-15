@@ -1,0 +1,126 @@
+/* The payment page (spec: payment links, the page). A web page first: a centred card about 960 px wide, the client's
+   brand panel beside the form; below 720 px the panel stacks above the form. Only the console's tokens, plus the link's
+   colour, which the page sets as --pay-primary on its root through the CSSOM (the CSP allows no inline <style>).
+   Every link colour is refused below 4.5:1 against white, so white text on it always reads. */
+.pay-page {
+  --pay-primary: var(--ink);
+  --pay-on-primary: var(--surface);
+  --pay-field-line: var(--muted);
+  --pay-field-line: color-mix(in srgb, var(--muted) 45%, var(--surface));
+  min-height: 100vh; display: flex; flex-direction: column; background: var(--soft); color: var(--ink);
+  font-family: var(--font-sans); font-size: 15px; line-height: 1.5;
+}
+.pay-page :focus-visible { outline: 2px solid var(--pay-primary); outline-offset: 2px; }
+
+.pay-band { background: var(--hazard); color: var(--ink); font-size: 13px; font-weight: 700; text-align: center; padding: 7px 16px; }
+
+.pay-wrap { flex: 1; width: 100%; max-width: 1008px; margin: 0 auto; padding: 16px 24px 24px; display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+.pay-top { display: flex; justify-content: flex-end; }
+.pay-lang { display: inline-flex; border: 1px solid var(--pay-field-line); border-radius: 999px; overflow: hidden; background: var(--surface); }
+.pay-page .pay-lang button { min-height: 44px; min-width: 44px; padding: 0 14px; border: 0; border-radius: 0; background: none; color: var(--ink-2); font-size: 13px; font-weight: 600; }
+.pay-page .pay-lang button.on { background: var(--pay-primary); color: var(--pay-on-primary); }
+
+.pay-card { display: flex; width: 100%; background: var(--surface); border-radius: 16px; box-shadow: 0 10px 30px rgba(11, 13, 18, 0.1); overflow: hidden; }
+
+.pay-panel { width: 400px; flex-shrink: 0; background: var(--pay-primary); color: var(--pay-on-primary); padding: 40px; display: flex; flex-direction: column; gap: 28px; }
+.pay-brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.pay-logo { width: 52px; height: 52px; border-radius: 12px; background: var(--surface); object-fit: contain; flex-shrink: 0; }
+.pay-initial { display: flex; align-items: center; justify-content: center; color: var(--pay-primary); font-weight: 700; font-size: 22px; }
+.pay-project { font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
+.pay-intro { display: flex; flex-direction: column; gap: 8px; }
+.pay-intro h1 { margin: 0; font-size: 28px; font-weight: 700; line-height: 1.2; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+.pay-intro p { margin: 0; opacity: 0.92; white-space: pre-line; overflow-wrap: anywhere; }
+.pay-intro .pay-panel-amount { margin-top: 8px; font-size: 24px; font-weight: 700; opacity: 1; font-variant-numeric: tabular-nums; }
+.pay-check { width: 56px; height: 56px; border-radius: 28px; background: var(--surface); color: var(--state-confirmed-text); display: flex; align-items: center; justify-content: center; }
+.pay-secure { margin: auto 0 0; display: flex; align-items: center; gap: 8px; font-size: 13px; opacity: 0.88; }
+.pay-secure svg { flex-shrink: 0; }
+
+.pay-main { flex: 1; min-width: 0; padding: 40px; display: flex; flex-direction: column; }
+.pay-form { flex: 1; display: flex; flex-direction: column; gap: 20px; }
+.pay-page h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+:where(.pay-page) p { margin: 0; }
+.pay-heading { display: flex; align-items: center; gap: 12px; }
+.pay-heading h2 { font-size: 20px; }
+.pay-accent { color: var(--pay-primary); flex-shrink: 0; }
+
+.pay-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pay-field label { font-size: 13px; font-weight: 500; color: var(--ink-2); }
+.pay-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.pay-page input, .pay-page select {
+  min-height: 48px; width: 100%; padding: 11px 12px; border: 1px solid var(--pay-field-line); border-radius: 10px;
+  font: inherit; font-size: 16px; background: var(--surface); color: var(--ink);
+}
+.pay-page input:focus, .pay-page select:focus { border-color: var(--pay-primary); }
+.pay-page input[aria-invalid] { border-color: var(--state-refused-text); }
+.pay-page .pay-amount { font-size: 22px; font-weight: 600; padding: 11px 14px; border: 1.5px solid var(--pay-primary); font-variant-numeric: tabular-nums; }
+.pay-phone { display: flex; border: 1px solid var(--pay-field-line); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.pay-phone:focus-within { border-color: var(--pay-primary); }
+.pay-prefix { display: flex; align-items: center; padding: 0 12px; background: var(--soft); color: var(--ink-2); font-size: 16px; font-variant-numeric: tabular-nums; }
+.pay-page .pay-phone input { border: 0; border-radius: 0; flex: 1; min-width: 0; }
+.pay-inline { display: flex; gap: 12px; }
+.pay-inline input { flex: 1; min-width: 0; }
+
+.pay-hint { font-size: 13px; color: var(--muted); }
+.pay-muted { color: var(--muted); font-weight: 400; }
+.pay-error { font-size: 13px; color: var(--state-refused-text); font-weight: 500; }
+.pay-form-error { padding: 12px 14px; border-radius: 10px; background: var(--state-refused-bg); }
+.pay-ok { font-size: 13px; color: var(--state-confirmed-text); font-weight: 500; }
+.pay-mono { font-family: var(--font-mono); font-size: 14px; }
+
+.pay-page .pay-button {
+  min-height: 48px; padding: 12px 20px; border: 0; border-radius: 10px; background: var(--pay-primary); color: var(--pay-on-primary);
+  font: inherit; font-size: 16px; font-weight: 600; cursor: pointer;
+}
+.pay-page .pay-button:hover { filter: brightness(1.08); }
+.pay-page .pay-button:disabled { opacity: 0.55; cursor: not-allowed; filter: none; }
+.pay-page .pay-secondary { background: var(--surface); color: var(--ink-2); border: 1px solid var(--pay-field-line); }
+.pay-receipt .pay-secondary { color: var(--pay-primary); border: 1.5px solid var(--pay-primary); }
+.pay-push { margin-top: auto; }
+.pay-actions { display: flex; gap: 12px; }
+.pay-grow { flex: 1; }
+
+.pay-summary { margin: 0; display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); row-gap: 12px; column-gap: 16px; padding: 20px; background: var(--soft); border-radius: 12px; }
+.pay-summary dt { color: var(--muted); }
+.pay-summary dd { margin: 0; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.pay-summary .pay-total { color: var(--ink); font-weight: 700; font-size: 18px; padding-top: 10px; border-top: 1px solid var(--line); }
+
+.pay-instructions { padding: 16px; border-radius: 12px; background: var(--state-information-bg); color: var(--state-information-text); font-size: 14px; }
+.pay-instructions p { margin-top: 4px; white-space: pre-line; }
+.pay-instructions strong { color: var(--ink); }
+.pay-waiting { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px 0; font-weight: 500; }
+.pay-spinner { animation: pay-spin 1s linear infinite; }
+@keyframes pay-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pay-spinner { animation-duration: 3s; } }
+
+.pay-notice { display: flex; flex-direction: column; gap: 12px; }
+.pay-notice-body { display: flex; flex-direction: column; gap: 16px; align-items: flex-start; color: var(--ink-2); }
+
+.pay-footer { display: flex; justify-content: center; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); padding: 8px 0; }
+.pay-lockup { display: inline-flex; align-items: center; gap: 5px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+.pay-lockup svg { --mark-cut: var(--soft); }
+
+/* Phone width: the brand panel stacks above the form; everything stays usable at 360 px. */
+@media (max-width: 719px) {
+  .pay-wrap { padding: 12px 12px 16px; justify-content: flex-start; }
+  .pay-card { flex-direction: column; border-radius: 12px; }
+  .pay-panel { width: auto; padding: 24px 20px; gap: 16px; }
+  .pay-intro h1 { font-size: 22px; }
+  .pay-intro .pay-panel-amount { font-size: 20px; margin-top: 4px; }
+  .pay-secure { margin-top: 0; }
+  .pay-main { padding: 24px 20px; }
+  .pay-pair { grid-template-columns: minmax(0, 1fr); }
+  .pay-actions { flex-direction: column-reverse; }
+  .pay-inline { flex-direction: column; }
+}
+
+/* The receipt prints on its own: no buttons, no email field, no coloured ground. The sandbox band stays: a test receipt must say so. */
+@media print {
+  .pay-page { background: none; min-height: 0; }
+  .pay-top, .pay-email, .pay-page button, .pay-secure { display: none; }
+  .pay-wrap { padding: 0; }
+  .pay-card { box-shadow: none; flex-direction: column; border: 1px solid var(--line); }
+  .pay-panel { width: auto; background: none; color: var(--ink); padding: 24px; }
+  .pay-check { border: 2px solid var(--state-confirmed-text); }
+  .pay-main { padding: 0 24px 24px; }
+  .pay-summary { background: none; padding: 0; }
+}
