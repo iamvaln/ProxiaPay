@@ -7,7 +7,7 @@ import { CONFIG, type AppConfig } from '../config/config';
 import { DB_TOKEN, type Db } from '../db/database';
 import { log } from '../logging/logger';
 import { Mailer } from '../alerts/mailer';
-import { formatAmount, subtract } from '../money/money';
+import { subtract } from '../money/money';
 import { normaliseMsisdn } from '../msisdn/msisdn';
 import { RateLimiter } from '../project-auth/rate-limiter';
 import { SubmissionService } from '../providers/submission.service';
@@ -292,7 +292,7 @@ export class LinkPaymentsService {
       .innerJoin('currency as c', 'c.code', 't.currency_code')
       .innerJoin('route as r', 'r.id', 't.route_id')
       .innerJoin('payment_method as pm', 'pm.code', 'r.payment_method_code')
-      .select(['pp.id', 't.state', 't.reference', 't.requested_amount', 't.charged_amount', 't.currency_code', 't.msisdn_masked', 't.terminal_at', 't.updated_at', 'c.exponent', 'l.title', 'pr.name as project_name', 'pm.name as method_name'])
+      .select(['pp.id', 't.state', 't.reference', 't.requested_amount', 't.charged_amount', 't.currency_code', 't.msisdn_masked', 't.terminal_at', 't.updated_at', 'c.exponent', 'l.title', 'pr.name as project_name', 'pm.name as method_name', 'r.country_code'])
       .where('pp.token_hash', '=', hash).where('pp.expires_at', '>', sql<Date>`now()`).executeTakeFirst();
     if (!row) throw gone();
     await enforceLimit(this.limiter, `paylink:receipt:${hash.toString('hex')}`, 60, 60);
@@ -305,10 +305,9 @@ export class LinkPaymentsService {
 
     const email = input.email.trim();
     const masked = maskEmail(email);
-    const money = (n: number) => formatAmount(n, row.exponent);
     const mail = receiptMail({
-      projectName: row.project_name, title: row.title, reference: row.reference, paidAt: row.terminal_at ?? row.updated_at,
-      amount: money(row.requested_amount), fees: money(subtract(row.charged_amount, row.requested_amount)), total: money(row.charged_amount),
+      projectName: row.project_name, title: row.title, reference: row.reference, paidAt: row.terminal_at ?? row.updated_at, country: row.country_code,
+      amount: row.requested_amount, fees: subtract(row.charged_amount, row.requested_amount), total: row.charged_amount, exponent: row.exponent,
       currency: row.currency_code, method: row.method_name, maskedNumber: row.msisdn_masked,
     }, input.language === 'fr' ? 'fr' : 'en');
     try {
@@ -318,7 +317,12 @@ export class LinkPaymentsService {
       this.logger.warn({ transaction: row.reference, err: (e as Error).name }, 'receipt email could not be sent');
       return { status: 'failed' };
     }
-    await this.db.updateTable('payment_link_payment').set({ receipt_sent_at: sql<Date>`now()`, receipt_sent_to: masked }).where('id', '=', row.id).execute();
+    try {
+      await this.db.updateTable('payment_link_payment').set({ receipt_sent_at: sql<Date>`now()`, receipt_sent_to: masked }).where('id', '=', row.id).execute();
+    } catch (e) {
+      // The mail went out: the payer is told so. Only the record of when and to whom is missing.
+      this.logger.warn({ transaction: row.reference, err: (e as Error).name }, 'receipt sent but not recorded');
+    }
     return { status: 'sent' };
   }
 }

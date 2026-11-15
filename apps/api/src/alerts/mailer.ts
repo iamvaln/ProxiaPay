@@ -17,6 +17,9 @@ function addressOf(from: string): string {
   return (angle ? angle[1]! : from).trim();
 }
 
+/** The longest display name the From header carries, in characters; a caller that appends to a name cuts it first. */
+export const DISPLAY_NAME_MAX = 128;
+
 /**
  * The From header for a display name: the name quoted, with anything that could end the quoted string or start a new header
  * (quotes, backslashes, angle brackets, line breaks and other control characters) removed or neutralised, so a name written
@@ -24,7 +27,8 @@ function addressOf(from: string): string {
  */
 export function fromHeader(from: string, fromName?: string): string {
   const address = addressOf(from);
-  const name = (fromName ?? '').replace(/[\u0000-\u001f\u007f\u0080-\u009f\u2028\u2029]+/g, ' ').replace(/[\\"<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  const clean = (fromName ?? '').replace(/[\u0000-\u001f\u007f\u0080-\u009f\u2028\u2029]+/g, ' ').replace(/[\\"<>]/g, '').replace(/\s+/g, ' ').trim();
+  const name = Array.from(clean).slice(0, DISPLAY_NAME_MAX).join('').trimEnd();
   return name === '' ? address : `"${name}" <${address}>`;
 }
 

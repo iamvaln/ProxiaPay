@@ -1,4 +1,7 @@
 import 'reflect-metadata';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { sql } from 'kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -10,7 +13,7 @@ import { StatusService } from '../providers/status.service';
 import { SimulatorAdapter } from '../providers/adapters/simulator.adapter';
 
 import { Mailer, fromHeader } from '../alerts/mailer';
-import { maskEmail } from '../payment-links/receipt';
+import { maskEmail, receiptDate, receiptMail, receiptSender, ZONES } from '../payment-links/receipt';
 
 /** The receipt by email: branded, kept as a masked address only, three at most, and only once the payment succeeded. */
 let t: TestContext;
@@ -82,7 +85,9 @@ describe('receipt by email', () => {
     const row = await t.db.selectFrom('transaction').select(['reference', 'msisdn_masked', 'charged_amount']).executeTakeFirstOrThrow();
     const fees = row.charged_amount - 5000;
     expect(fees).toBeGreaterThan(0);
-    for (const part of ['Acme "Shop" <Ltd>', 'Invoice 42', 'Reference: ', 'Date: ', 'Amount: 5000 XAF', `Fees borne by you: ${fees} XAF`, `Total paid: ${row.charged_amount} XAF`, 'Method: MTN Mobile Money', 'Number: ', 'Powered by ProxiaPay']) expect(mail.text).toContain(part);
+    // Amounts grouped as the page shows them, in the mail's language.
+    const en = (n: number) => new Intl.NumberFormat('en-GB').format(n);
+    for (const part of ['Acme "Shop" <Ltd>', 'Invoice 42', 'Reference: ', 'Date: ', 'Amount: 5,000 XAF', `Fees borne by you: ${en(fees)} XAF`, `Total paid: ${en(row.charged_amount)} XAF`, 'Method: MTN Mobile Money', 'Number: ', 'Powered by ProxiaPay']) expect(mail.text).toContain(part);
     expect(mail.text).toContain(row.reference);
     expect(mail.text).toContain(row.msisdn_masked);
     expect(mail.text).not.toContain('677123456');
@@ -94,8 +99,11 @@ describe('receipt by email', () => {
     await receipt(token, { email: EMAIL, language: 'fr' });
     const mail = mailer().sent.find((m) => m.to === EMAIL)!;
     const { charged_amount } = await t.db.selectFrom('transaction').select('charged_amount').executeTakeFirstOrThrow();
-    expect(mail.text).toContain(`Frais à votre charge : ${charged_amount - 5000} XAF`);
-    expect(mail.text).toContain(`Total payé : ${charged_amount} XAF`);
+    const fr = (n: number) => new Intl.NumberFormat('fr-FR').format(n);
+    expect(mail.text).toContain(`Montant : ${fr(5000)} XAF`);
+    expect(fr(5000)).not.toBe('5000');
+    expect(mail.text).toContain(`Frais à votre charge : ${fr(charged_amount - 5000)} XAF`);
+    expect(mail.text).toContain(`Total payé : ${fr(charged_amount)} XAF`);
     expect(mail.text).toContain('Powered by ProxiaPay');
     expect((await receipt(token, { email: EMAIL, language: 'de' })).status).toBe(400);
   });
@@ -145,9 +153,69 @@ describe('receipt by email', () => {
     expect(stored).toEqual({ receipt_sent_at: null, receipt_sent_to: null });
     expect(await receipt(token, { email: EMAIL })).toEqual({ status: 200, body: { status: 'sent' } });
   });
+
+  it('a send that went out answers sent even when recording it fails', async () => {
+    const token = await pay();
+    await settle();
+    // The mail is gone: the payer is told so, whatever happens to the record of it afterwards.
+    await sql`create function test_refuse_receipt_record() returns trigger language plpgsql as $$ begin raise exception 'store unavailable'; end $$`.execute(t.db);
+    await sql`create trigger test_refuse_receipt_record before update on payment_link_payment for each row when (new.receipt_sent_to is distinct from old.receipt_sent_to) execute function test_refuse_receipt_record()`.execute(t.db);
+    try {
+      expect(await receipt(token, { email: EMAIL })).toEqual({ status: 200, body: { status: 'sent' } });
+      expect(mailer().sent.filter((m) => m.to === EMAIL)).toHaveLength(1);
+    } finally {
+      await sql`drop trigger test_refuse_receipt_record on payment_link_payment`.execute(t.db);
+      await sql`drop function test_refuse_receipt_record()`.execute(t.db);
+    }
+  });
+
+  it('dates the mail in the method country’s time, in the mail’s language', async () => {
+    const token = await pay();
+    await settle();
+    await t.db.updateTable('transaction').set({ terminal_at: new Date('2026-11-15T13:32:00Z') }).execute();
+    await receipt(token, { email: EMAIL, language: 'en' });
+    expect(mailer().sent[0]!.text).toContain('Date: 15 November 2026 at 14:32\n');
+  });
+});
+
+describe('the receipt’s words', () => {
+  const data = { projectName: 'Acme', title: 'Invoice 42', reference: 'PP-1', paidAt: new Date('2026-11-15T13:32:00Z'), amount: 1_250_000, fees: 3125, total: 1_253_125, exponent: 0, currency: 'XAF', country: 'CM', method: 'MTN Mobile Money', maskedNumber: '+237•••••3456' };
+
+  it('dates in the country’s own zone, or in UTC said so for a country over several zones', () => {
+    expect(receiptDate(new Date('2026-11-15T13:32:00Z'), 'CM', 'en')).toBe('15 November 2026 at 14:32');
+    expect(receiptDate(new Date('2026-11-15T13:32:00Z'), 'SN', 'fr')).toMatch(/^15 novembre 2026 (à )?13:32$/);
+    // Kinshasa and Lubumbashi are an hour apart: neither is the country's time.
+    expect(receiptDate(new Date('2026-11-15T13:32:00Z'), 'CD', 'en')).toBe('15 November 2026 at 13:32 UTC');
+    expect(receiptDate(new Date('2026-11-15T13:32:00Z'), 'ZZ', 'fr')).toMatch(/^15 novembre 2026 (à )?13:32 UTC$/);
+  });
+
+  it('groups amounts by language and keeps the currency’s decimals', () => {
+    expect(receiptMail(data, 'en').text).toContain('Total paid: 1,253,125 XAF');
+    expect(receiptMail(data, 'fr').text).toContain(`Total payé : ${new Intl.NumberFormat('fr-FR').format(1_253_125)} XAF`);
+    expect(receiptMail({ ...data, amount: 1250, fees: 5, total: 1255, exponent: 2, currency: 'USD' }, 'en').text).toContain('Amount: 12.50 USD');
+  });
+
+  it('keeps the page’s zones', () => {
+    const page = readFileSync(join(__dirname, '../../../console/src/pay/country.ts'), 'utf8');
+    const zones = Object.fromEntries([...page.matchAll(/'([A-Za-z_/-]+)': '([A-Z]{2})'/g)].map((m) => [m[1], m[2]]));
+    expect(ZONES).toEqual(zones);
+  });
+
+  it('masks an address from its first character, whatever it is', () => {
+    expect(maskEmail('😀ama@example.com')).toBe('😀***@example.com');
+  });
 });
 
 describe('the sender header', () => {
+  it('a long project name is cut before " via ProxiaPay", which always survives', () => {
+    const long = receiptSender('Ü'.repeat(300));
+    expect(long.endsWith(' via ProxiaPay')).toBe(true);
+    expect(Array.from(long).length).toBeLessThanOrEqual(128);
+    expect(fromHeader('no-reply@proxia.test', long)).toMatch(/ via ProxiaPay" <no-reply@proxia\.test>$/);
+    expect(fromHeader('no-reply@proxia.test', receiptSender(`${'😀'.repeat(200)}`))).toMatch(/ via ProxiaPay" </);
+    expect(receiptSender('Acme')).toBe('Acme via ProxiaPay');
+  });
+
   it('quotes the name with the address of MAIL_FROM', () => {
     expect(fromHeader('no-reply@proxia.test', 'Acme Shop via ProxiaPay')).toBe('"Acme Shop via ProxiaPay" <no-reply@proxia.test>');
     expect(fromHeader('ProxiaPay <no-reply@proxia.test>', 'Acme via ProxiaPay')).toBe('"Acme via ProxiaPay" <no-reply@proxia.test>');
