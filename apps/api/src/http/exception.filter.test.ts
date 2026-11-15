@@ -54,15 +54,18 @@ describe('a malformed identifier', () => {
     expect(filtered(e)).toEqual({ status: 404, body: { error: { code: 'NOT_FOUND', message: 'No such resource.', retryable: false } } });
   });
 
-  it('logs the malformed value at warn level, so a real defect is not silent', () => {
+  it('logs at warn level without the value, which the caller supplied', () => {
     const warn = vi.fn();
     const filter = new PlatformExceptionFilter();
     (filter as unknown as { logger: { warn: typeof warn } }).logger = { warn };
-    const e = new DatabaseError('invalid input syntax for type uuid: "nope"', 0, 'error');
+    const e = new DatabaseError('invalid input syntax for type uuid: "secret-ish-value"', 0, 'error');
     e.code = '22P02';
+    e.routine = 'string_to_uuid';
     const res = { status() { return res; }, json() { return res; }, setHeader() { return res; } };
     filter.catch(e, { switchToHttp: () => ({ getResponse: () => res }) } as unknown as ArgumentsHost);
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith({ code: '22P02', routine: 'string_to_uuid' }, 'malformed identifier reached the store');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('secret-ish-value');
   });
 
   it('any other store error stays a fault, and says nothing of itself', () => {
