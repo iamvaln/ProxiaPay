@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { PlatformError } from '../common/errors';
 import { AuditService } from '../audit/audit.service';
 import { DB_TOKEN, type Db, type Tx } from '../db/database';
-import { COLOR_MESSAGE, DEFAULT_PRIMARY_COLOR, LOGO_MESSAGE, MAX_LOGO_BYTES, isUsableColor, logoType } from './brand';
+import { COLOR_FORMAT_MESSAGE, COLOR_MESSAGE, DEFAULT_PRIMARY_COLOR, LOGO_MESSAGE, MAX_LOGO_BYTES, isHexColor, isUsableColor, logoType } from './brand';
 
 export interface Brand { logo_asset_id: string | null; primary_color: string; secondary_color: string | null }
 
@@ -32,8 +32,11 @@ export class BrandService {
 
   async setColors(tx: Tx, projectId: string, colors: { primary_color: string; secondary_color?: string | null }, actorId: string): Promise<Brand> {
     const secondary = colors.secondary_color ?? null;
-    if (!isUsableColor(colors.primary_color)) throw new PlatformError('FIELD_INVALID', COLOR_MESSAGE, { field: 'primary_color' });
-    if (secondary !== null && !isUsableColor(secondary)) throw new PlatformError('FIELD_INVALID', COLOR_MESSAGE, { field: 'secondary_color' });
+    for (const [field, value] of [['primary_color', colors.primary_color], ['secondary_color', secondary]] as const) {
+      if (value === null) continue;
+      if (!isHexColor(value)) throw new PlatformError('FIELD_INVALID', COLOR_FORMAT_MESSAGE, { field });
+      if (!isUsableColor(value)) throw new PlatformError('FIELD_INVALID', COLOR_MESSAGE, { field });
+    }
     const prior = await this.current(tx, projectId);
     await tx.insertInto('project_brand').values({ project_id: projectId, primary_color: colors.primary_color, secondary_color: secondary })
       .onConflict((oc) => oc.column('project_id').doUpdateSet({ primary_color: colors.primary_color, secondary_color: secondary })).execute();

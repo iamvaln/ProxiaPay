@@ -24,6 +24,10 @@ describe('brand checks', () => {
   it('refuses an SVG renamed .png and HTML with a PNG name', () => {
     expect(logoType(SVG)).toBeNull();
     expect(logoType(HTML)).toBeNull();
+    // A name or a content type says nothing: only the bytes count. A truncated header is not a PNG either.
+    expect(logoType(PNG.subarray(0, 4))).toBeNull();
+    expect(logoType(Buffer.from('<html><!-- \x89PNG --></html>'))).toBeNull();
+    expect(logoType(Buffer.from('RIFF....WEB'))).toBeNull();
   });
 
   it('refuses #FFFF00 and accepts #1A56DB', () => {
@@ -106,6 +110,7 @@ describe('project brand', () => {
     const req = await requestOf(await clientPerson(client.id, 'Client owner'), client.id);
     await expect(controller().setLogo(project.id, b64(SVG), req)).rejects.toMatchObject({ code: 'FIELD_INVALID', message: 'Use a PNG, JPEG or WebP image of at most 200 KB.', options: { field: 'logo' } });
     await expect(controller().setLogo(project.id, b64(HTML), req)).rejects.toMatchObject({ code: 'FIELD_INVALID' });
+    await expect(controller().setLogo(project.id, b64(PNG.subarray(0, 4)), req)).rejects.toMatchObject({ code: 'FIELD_INVALID' });
     await expect(controller().setLogo(project.id, {}, req)).rejects.toMatchObject({ code: 'FIELD_INVALID', options: { field: 'logo' } });
   });
 
@@ -123,6 +128,11 @@ describe('project brand', () => {
     const req = await requestOf(await clientPerson(client.id, 'Client owner'), client.id);
     await expect(controller().setColors(project.id, { primary_color: '#FFFF00' }, req)).rejects.toMatchObject({ code: 'FIELD_INVALID', message: 'This colour is too light for white text; pick a darker one.', options: { field: 'primary_color' } });
     await expect(controller().setColors(project.id, { primary_color: '#1A56DB', secondary_color: '#FFFF00' }, req)).rejects.toMatchObject({ options: { field: 'secondary_color' } });
+    // A malformed value is told how to write one, not that it is too light.
+    for (const bad of ['#fff', 'blue', '1A56DB', '#GGGGGG']) {
+      await expect(controller().setColors(project.id, { primary_color: bad }, req)).rejects.toMatchObject({ message: 'Use a colour written like #1A56DB.', options: { field: 'primary_color' } });
+    }
+    await expect(controller().setColors(project.id, { primary_color: '#1A56DB', secondary_color: 'blue' }, req)).rejects.toMatchObject({ message: 'Use a colour written like #1A56DB.', options: { field: 'secondary_color' } });
     expect(await t.db.selectFrom('project_brand').select('project_id').execute()).toEqual([]);
   });
 

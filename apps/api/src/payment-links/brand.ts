@@ -6,6 +6,7 @@ export const MAX_LOGO_BYTES = 200 * 1024;
 export const DEFAULT_PRIMARY_COLOR = '#0B0D12';
 
 export const LOGO_MESSAGE = 'Use a PNG, JPEG or WebP image of at most 200 KB.';
+export const COLOR_FORMAT_MESSAGE = 'Use a colour written like #1A56DB.';
 export const COLOR_MESSAGE = 'This colour is too light for white text; pick a darker one.';
 
 /** The type from the first bytes, never from a name: an SVG or an HTML page renamed .png is not an image. */
@@ -26,7 +27,9 @@ export function contrastWithWhite(hex: string): number {
   return 1.05 / (luminance + 0.05);
 }
 
+export const isHexColor = (hex: string): boolean => /^#[0-9a-fA-F]{6}$/.test(hex);
+
 /** Six-digit hex, and readable under white text (WCAG AA, 4.5:1). */
 export function isUsableColor(hex: string): boolean {
-  return /^#[0-9a-fA-F]{6}$/.test(hex) && contrastWithWhite(hex) >= 4.5;
+  return isHexColor(hex) && contrastWithWhite(hex) >= 4.5;
 }
