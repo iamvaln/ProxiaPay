@@ -104,14 +104,50 @@ session, and the link reads well in a message.
    - it carries the link it came from.
 5. **Per-link figures.** The console shows each link's payments: count, total
    collected, last payment.
-6. **The sandbox is marked.** The sandbox page says plainly that no real money
+6. **The client's brand, "Powered by ProxiaPay"** (Valentine, 2026-11-15).
+   The payment page, the receipt and the receipt email carry the project's
+   brand: logo, colours and name. ProxiaPay appears only as a discreet
+   "Powered by ProxiaPay".
+   - **Where the brand lives.** The project's owner sets the brand once on the
+     project: a logo, a primary colour and an optional secondary colour. Each
+     new link starts from it and can change it when it is created (*my call*:
+     nobody re-uploads a logo for every link).
+   - **Logo.** PNG, JPEG or WebP only, at most 200 KB. **No SVG**, which can
+     carry script. The file type is checked from its first bytes, not from
+     its name. The logo is stored by ProxiaPay and served from the paylink
+     domain with its exact content type and `nosniff`.
+   - **Colours.** Six-digit hex values. A colour whose contrast with white text
+     is below WCAG AA (4.5:1) is refused, with an explanation, so the page
+     stays readable.
+7. **Receipt.** A successful payment ends on a receipt in the client's brand:
+   - project name, link title, reference, date and time;
+   - amount, fees borne by the payer, total charged;
+   - method and masked number.
+
+   The receipt can be printed or saved as PDF from the browser (a print style
+   sheet; no server-side PDF).
+8. **Receipt by email, optional** (Valentine, 2026-11-15). At the end of the
+   flow, on the receipt, the payer may type an email address to receive the
+   receipt.
+   - The email carries the client's brand. The sender shows as "<Project name>
+     via ProxiaPay" from ProxiaPay's sending address, with the "Powered by
+     ProxiaPay" line. ProxiaPay cannot send from the client's domain.
+   - The address is used to send and is **not kept** (*my call*, the minimum
+     personal data). The transaction records only that a receipt was sent,
+     when, and to a masked address (`a***@gmail.com`).
+   - At most 3 receipt emails per payment, under the payment token's rate
+     limits.
+   - Sending happens after the response, through the existing Mailer, and a
+     failure never changes what the page shows beyond "We could not send the
+     email; save the receipt instead."
+9. **The sandbox is marked.** The sandbox page says plainly that no real money
    moves, and works with the simulator's test numbers.
 
 ## Non-goals
 
 - Partner withdrawals (next project).
-- Receipts by email or SMS. The page's final screen shows the reference.
-- A per-client logo or colours, or custom domains.
+- Receipts by SMS.
+- Custom domains per client, and fonts of the client's choice.
 - Disbursement links.
 - Card or bank payment.
 - Shopping carts, quantities and multiple items.
@@ -145,6 +181,16 @@ session, and the link reads well in a message.
 - `created_by`, `created_at`, `updated_at`.
 
 **New `payment_link_route` table**, listing the routes a link allows.
+
+**Brand:**
+- **`brand_asset` table**: id, project, bytes, content type, SHA-256, created
+  at. It is immutable: a new logo is a new row.
+- **The project's brand**: logo asset, primary colour, secondary colour.
+- **Each link's brand**: its own logo asset and colours, copied from the
+  project's brand at creation and editable then.
+
+**Receipt sent:** on the transaction, the time a receipt was sent and the
+masked address.
 
 **`transaction.payment_link_id`.** Link payments have no credential. How the
 transaction records its origin is left to the builder; the constraint is that
@@ -215,6 +261,10 @@ credential, and nothing else in the API is reachable from the paylink domain.
   - the transaction reference.
 - **`POST /pay-api/v1/payments/:token/code`** sends the payer's code, through
   the same path as `POST /v1/transactions/:reference/code`.
+- **`GET /pay-api/v1/assets/:id`** serves a logo, with immutable caching.
+  Only assets referenced by an active link or a project brand are served.
+- **`POST /pay-api/v1/payments/:token/receipt`** takes `{ email }` and sends
+  the receipt, only for a succeeded payment.
 - **Single use: never collect twice** (Valentine, 2026-11-15).
   - A single-use link accepts one payment at a time. Any payment that is not
     final holds the link, `undetermined` included, even if reconciliation
@@ -302,6 +352,8 @@ credential, and nothing else in the API is reachable from the paylink domain.
 
 ### Console
 
+- **Brand on the project page** (owner only): upload a logo, pick colours, and
+  see a live preview of the payment page's header.
 - **A "Payment links" tab on the project page:**
   - a list with title, amount (or "free, from X"), methods, status, payments
     and total collected;
