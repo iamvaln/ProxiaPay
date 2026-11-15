@@ -18,7 +18,11 @@ async function project() {
 }
 
 async function link(over: Record<string, unknown>) {
-  const { adminId, projectId } = await project();
+  // The project is made once per test: a second link in the same test reuses it.
+  const existing = await db.selectFrom('project').select('id').executeTakeFirst();
+  const { adminId, projectId } = existing
+    ? { adminId: (await db.selectFrom('administrator').select('id').executeTakeFirstOrThrow()).id, projectId: existing.id }
+    : await project();
   return db.insertInto('payment_link').values({
     code: 'abc', project_id: projectId, title: 'Donate', currency_code: 'XAF', amount_type: 'free', primary_color: '#112233', created_by: adminId, ...over,
   } as never).execute();
@@ -40,6 +44,14 @@ describe('payment link schema', () => {
   it('accepts a fixed link with an amount and a free link without', async () => {
     await link({ amount_type: 'fixed', amount: 1000 });
     await db.deleteFrom('payment_link').execute();
+    await link({ amount_type: 'free', amount: null });
+    expect(await db.selectFrom('payment_link').select(['amount', 'minimum_amount']).execute()).toEqual([{ amount: null, minimum_amount: 0 }]);
+  });
+
+  it('refuses a zero or negative amount and a negative minimum', async () => {
+    await expect(link({ amount_type: 'fixed', amount: 0 })).rejects.toThrow();
+    await expect(link({ amount_type: 'fixed', amount: -5 })).rejects.toThrow();
+    await expect(link({ amount_type: 'free', amount: null, minimum_amount: -1 })).rejects.toThrow();
   });
 
   it('refuses an SVG brand asset', async () => {

@@ -33,6 +33,8 @@ import type { ConsoleRequest } from './session.guard';
 import { ConsoleTransactionsController } from './transactions.controller';
 import { TreasuryController } from './treasury.controller';
 import { TeamController } from './team.controller';
+import { BrandController } from './brand.controller';
+import { BrandService } from '../payment-links/brand.service';
 import { InvitationService } from '../clients/invitation.service';
 
 let t: TestContext;
@@ -44,6 +46,7 @@ const controllers = {
   treasury: () => new TreasuryController(t.db, get(LedgerService), get(TreasuryService), nul, nul, nul, nul, nul),
   home: () => new HomeController(t.db, get(TreasuryService), nul, {} as ConfirmationService, new HomeService(t.db)),
   auth: () => new ConsoleAuthController(t.db, t.app.get<AppConfig>(CONFIG), get(AdminAuthService), get(SettingsService), nul),
+  brand: () => new BrandController(t.db, new BrandService(t.db, get(AuditService))),
   team: () => new TeamController(t.db, new InvitationService(t.db, t.app.get(CONFIG), get(Mailer), get(AlertService), get(AuditService))),
 };
 
@@ -264,6 +267,7 @@ describe('client views', () => {
         'GET console/projects/:id': () => controllers.projects().detail(project.id, req),
         'GET console/projects/:id/origin-refusals': () => controllers.projects().originRefusals(project.id, {}, req),
         'GET console/projects/:id/deliveries': () => controllers.projects().deliveries(project.id, {}, req),
+        'GET console/projects/:id/brand': () => controllers.brand().get(project.id, req),
         'GET console/treasury/balances': () => controllers.treasury().balances(req),
         'GET console/treasury/project/:projectId/accounts': () => controllers.treasury().projectAccounts(project.id, req),
         'GET console/team': () => controllers.team().list(req),

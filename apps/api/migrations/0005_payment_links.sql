@@ -40,7 +40,9 @@ CREATE TABLE payment_link (
   created_by      uuid NOT NULL REFERENCES administrator(id),
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT payment_link_amount_check CHECK ((amount_type = 'fixed') = (amount IS NOT NULL))
+  CONSTRAINT payment_link_amount_check CHECK ((amount_type = 'fixed') = (amount IS NOT NULL)),
+  CONSTRAINT payment_link_amount_positive CHECK (amount > 0),
+  CONSTRAINT payment_link_minimum_check CHECK (minimum_amount >= 0)
 );
 CREATE INDEX payment_link_project_idx ON payment_link (project_id);
 CREATE TRIGGER payment_link_touch BEFORE UPDATE ON payment_link FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
@@ -61,6 +63,7 @@ CREATE TABLE payment_link_payment (
   transaction_id   uuid UNIQUE REFERENCES transaction(id),
   token_hash       bytea NOT NULL UNIQUE,
   expires_at       timestamptz NOT NULL,
+  created_at       timestamptz NOT NULL DEFAULT now(),
   receipts_sent    integer NOT NULL DEFAULT 0,
   receipt_sent_at  timestamptz,
   -- Masked: the address the receipt went to is never stored in clear.

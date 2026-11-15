@@ -506,6 +506,7 @@ export interface PaymentLink {
 }
 
 export interface PaymentLinkPayment {
+  created_at: Generated<Timestamp>;
   expires_at: Timestamp;
   id: Generated<string>;
   link_id: string;
