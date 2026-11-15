@@ -1,6 +1,6 @@
 import 'reflect-metadata';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Controller, Module, Post, type INestApplication } from '@nestjs/common';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { Controller, Module, Post, type ArgumentsHost, type INestApplication } from '@nestjs/common';
 import { APP_FILTER, NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DatabaseError } from 'pg';
@@ -52,6 +52,17 @@ describe('a malformed identifier', () => {
     const e = new DatabaseError('invalid input syntax for type uuid: "nope"', 0, 'error');
     e.code = '22P02';
     expect(filtered(e)).toEqual({ status: 404, body: { error: { code: 'NOT_FOUND', message: 'No such resource.', retryable: false } } });
+  });
+
+  it('logs the malformed value at warn level, so a real defect is not silent', () => {
+    const warn = vi.fn();
+    const filter = new PlatformExceptionFilter();
+    (filter as unknown as { logger: { warn: typeof warn } }).logger = { warn };
+    const e = new DatabaseError('invalid input syntax for type uuid: "nope"', 0, 'error');
+    e.code = '22P02';
+    const res = { status() { return res; }, json() { return res; }, setHeader() { return res; } };
+    filter.catch(e, { switchToHttp: () => ({ getResponse: () => res }) } as unknown as ArgumentsHost);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('any other store error stays a fault, and says nothing of itself', () => {

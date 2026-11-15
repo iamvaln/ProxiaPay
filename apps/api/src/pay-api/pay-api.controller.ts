@@ -29,8 +29,10 @@ export class PayApiController {
     throw new PlatformError('RATE_LIMITED', 'Too many requests from this connection. Wait a minute and try again.', { headers: { 'Retry-After': retryAfter } });
   }
 
+  /** Generous: many payers can share one address behind a mobile carrier. */
   @Get('links/:code')
-  async link(@Param('code') code: string) {
+  async link(@Param('code') code: string, @Req() req: Request) {
+    await this.limit(`paylink:read:${clientAddress(req, this.config.TRUSTED_PROXY_HOPS)}`, 300, 60);
     return this.links.view(code);
   }
 
@@ -47,7 +49,8 @@ export class PayApiController {
    * magic-byte check and the table's constraint: an image type only, never sniffed, and inert if opened on its own.
    */
   @Get('assets/:id')
-  async asset(@Param('id') id: string, @Res() res: Response) {
+  async asset(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {
+    await this.limit(`paylink:asset:${clientAddress(req, this.config.TRUSTED_PROXY_HOPS)}`, 300, 60);
     const { bytes, content_type } = await this.links.asset(id);
     if (!SERVABLE.has(content_type)) throw new PlatformError('NOT_FOUND', 'No such resource.');
     res.setHeader('Content-Type', content_type);

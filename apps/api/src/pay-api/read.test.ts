@@ -134,13 +134,26 @@ describe('reading a payment link', () => {
     await t.db.updateTable('country').set({ active: false }).where('code', '=', 'GA').execute();
     expect(await methods()).toEqual([]);
     await t.db.updateTable('country').set({ active: true }).where('code', '=', 'GA').execute();
-    await t.db.updateTable('project').set({ status: 'suspended' }).where('id', '=', project.id).execute();
-    expect(await methods()).toEqual([]);
     // Nor can a dropped method be quoted.
-    await t.db.updateTable('project').set({ status: 'active' }).where('id', '=', project.id).execute();
+    await t.db.updateTable('country').set({ active: false }).where('code', '=', 'GA').execute();
     const res = await quote(l.code, { method: l.keys[momo], amount: 5000 });
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: { code: 'FIELD_INVALID', field: 'method', message: 'This payment method is not available on this link.' } });
+  });
+
+  it('a suspended project\'s link is as unavailable as an unknown one, for read, quote and logo', async () => {
+    const momo = await routeId('CM', 'MOMO');
+    const logo = await asset();
+    const l = await link([momo], { logo_asset_id: logo });
+    await t.db.updateTable('project').set({ status: 'suspended' }).where('id', '=', project.id).execute();
+    const gone = { error: { code: 'LINK_UNAVAILABLE', message: 'This link is no longer available', retryable: false } };
+    const read = await get(`/pay-api/v1/links/${l.code}`);
+    expect(read.status).toBe(404);
+    expect(await read.json()).toEqual(gone);
+    const q = await quote(l.code, { method: l.keys[momo] });
+    expect(q.status).toBe(404);
+    expect(await q.json()).toEqual(gone);
+    expect((await get(`/pay-api/v1/assets/${logo}`)).status).toBe(404);
   });
 
   it('a fixed amount outside a method\'s current limits drops that method', async () => {
@@ -186,9 +199,24 @@ describe('quoting a payment link', () => {
     const l = await link([momo], { amount: 5000 });
     const ok = await quote(l.code, { method: l.keys[momo] });
     expect(await ok.json()).toEqual({ charged_amount: 5125, fees_borne_by_payer: 125 });
+    // Its own amount stated, or null, is the same as none.
+    for (const amount of [5000, null]) expect(await (await quote(l.code, { method: l.keys[momo], amount })).json()).toEqual({ charged_amount: 5125, fees_borne_by_payer: 125 });
     const other = await quote(l.code, { method: l.keys[momo], amount: 100 });
     expect(other.status).toBe(400);
     expect(await other.json()).toMatchObject({ error: { code: 'FIELD_INVALID', field: 'amount' } });
+  });
+
+  it('refuses with the preview\'s own message when no provider takes the amount', async () => {
+    const momo = await routeId('CM', 'MOMO');
+    const l = await link([momo], { amount_type: 'free' });
+    const rv = await t.db.selectFrom('route_version').select('id').where('route_id', '=', momo).where('valid_to', 'is', null).executeTakeFirstOrThrow();
+    await sql`alter table route_binding disable trigger route_binding_immutable`.execute(t.db);
+    try { await t.db.updateTable('route_binding').set({ maximum_amount: 3000 }).where('route_version_id', '=', rv.id).execute(); }
+    finally { await sql`alter table route_binding enable trigger route_binding_immutable`.execute(t.db); }
+    const res = await quote(l.code, { method: l.keys[momo], amount: 5000 });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ error: { code: 'AMOUNT_ABOVE_MAXIMUM', field: 'amount', message: 'Amount is above what the provider accepts on this route.' } });
+    expect((await quote(l.code, { method: l.keys[momo], amount: 2000 })).status).toBe(200);
   });
 
   it('a method key from another link is unknown', async () => {
@@ -212,6 +240,18 @@ describe('quoting a payment link', () => {
     const res = await quote(l.code, { method: l.keys[momo], amount: 2000 });
     expect(res.status).toBe(429);
     expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(await res.json()).toEqual({ error: { code: 'RATE_LIMITED', message: 'Too many requests from this connection. Wait a minute and try again.', retryable: true } });
+  });
+});
+
+describe('reading a payment link', () => {
+  it('limits reads to 300 a minute per address, with a plain 429', async () => {
+    const momo = await routeId('CM', 'MOMO');
+    const l = await link([momo]);
+    const limiter = t.app.get(RateLimiter);
+    for (let i = 0; i < 300; i++) await limiter.hit('paylink:read:127.0.0.1', 300, 60);
+    const res = await get(`/pay-api/v1/links/${l.code}`);
+    expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ error: { code: 'RATE_LIMITED', message: 'Too many requests from this connection. Wait a minute and try again.', retryable: true } });
   });
 });

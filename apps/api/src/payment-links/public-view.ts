@@ -29,7 +29,7 @@ export interface PublicLinkView {
 
 /** A link as the public surface reads it: only once it is known to be payable. */
 export interface OpenLink {
-  id: string; code: string; project_id: string; project_code: string; project_name: string; project_active: boolean;
+  id: string; code: string; project_id: string; project_code: string; project_name: string;
   title: string; description: string | null; amount_type: 'fixed' | 'free'; amount: number | null; minimum_amount: number; currency_code: string; exponent: number;
   single_use: boolean; logo_asset_id: string | null; primary_color: string; secondary_color: string | null;
 }
@@ -61,6 +61,8 @@ const unavailable = () => new PlatformError('LINK_UNAVAILABLE', LINK_UNAVAILABLE
 const methodUnavailable = () => new PlatformError('FIELD_INVALID', METHOD_UNAVAILABLE_MESSAGE, { field: 'method' });
 const CODE = /^[0-9A-Za-z]{10}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Whether a path value is shaped like an id, so a malformed one never reaches the store. */
+export const isUuid = (v: string): boolean => UUID.test(v);
 
 /** The payment link as the public page reads it: no session, no credential, one neutral answer for any link that cannot be paid. */
 @Injectable()
@@ -80,9 +82,10 @@ export class PublicLinkService {
       .select(['l.id', 'l.code', 'l.project_id', 'p.code as project_code', 'p.name as project_name', 'p.status as project_status', 'l.title', 'l.description', 'l.amount_type', 'l.amount',
         'l.minimum_amount', 'l.currency_code', 'cur.exponent', 'l.single_use', 'l.status', 'l.expires_at', 'l.logo_asset_id', 'l.primary_color', 'l.secondary_color'])
       .where('l.code', '=', code).executeTakeFirst();
-    if (!row || row.status !== 'active' || (row.expires_at && row.expires_at.getTime() <= Date.now())) throw unavailable();
+    // A suspended project's links are as good as gone: read, quote and the payment itself all stop here.
+    if (!row || row.project_status !== 'active' || row.status !== 'active' || (row.expires_at && row.expires_at.getTime() <= Date.now())) throw unavailable();
     return {
-      id: row.id, code: row.code, project_id: row.project_id, project_code: row.project_code, project_name: row.project_name, project_active: row.project_status === 'active',
+      id: row.id, code: row.code, project_id: row.project_id, project_code: row.project_code, project_name: row.project_name,
       title: row.title, description: row.description, amount_type: row.amount_type as OpenLink['amount_type'], amount: row.amount, minimum_amount: row.minimum_amount,
       currency_code: row.currency_code, exponent: row.exponent, single_use: row.single_use, logo_asset_id: row.logo_asset_id, primary_color: row.primary_color, secondary_color: row.secondary_color,
     };
@@ -93,7 +96,6 @@ export class PublicLinkService {
    * project itself all active, and nothing for the payer to type or open. A method whose floor passes its maximum is dropped.
    */
   async methods(exec: Executor, link: OpenLink): Promise<UsableMethod[]> {
-    if (!link.project_active) return [];
     const rows = await exec.selectFrom('payment_link_route as lr')
       .innerJoin('route as r', 'r.id', 'lr.route_id')
       .innerJoin('route_version as rv', (j) => j.onRef('rv.route_id', '=', 'r.id').on('rv.valid_to', 'is', null))
@@ -158,24 +160,38 @@ export class PublicLinkService {
     const amount = this.amountOf(link, input.amount);
     const refusal = amountRefusal(method, amount, link.currency_code, link.exponent);
     if (refusal) throw refusal;
-    const charged = await this.charged(this.db, link, method, amount);
-    if (charged === null) throw methodUnavailable();
+    let resolution;
+    try {
+      resolution = await this.resolver.resolve(this.db, { projectId: link.project_id, direction: 'collection', country: method.country, currency: link.currency_code, paymentMethod: method.paymentMethod, amount });
+    } catch (e) {
+      if (e instanceof PlatformError) throw methodUnavailable();
+      throw e;
+    }
+    // The same provider-limit check the preview makes, so the payer is told here what the preview would tell them.
+    const counterparty = RouteResolver.counterpartyAmount(resolution.route.direction, this.resolver.computeFigures(resolution, amount, undefined));
+    if ((await this.resolver.availableBindings(this.db, resolution.routeVersion.id, counterparty)).length === 0) {
+      const providerRefusal = await this.resolver.providerLimitRefusal(this.db, resolution, amount);
+      if (providerRefusal) throw providerRefusal;
+    }
+    const charged = this.resolver.computeFigures(resolution, amount, undefined).chargedAmount;
     return { charged_amount: charged, fees_borne_by_payer: subtract(charged, amount) };
   }
 
   /** A fixed link's amount is its own; a free link's is the payer's, a positive whole number of minor units. */
   amountOf(link: OpenLink, given: unknown): number {
     if (link.amount_type === 'fixed') {
-      if (given !== undefined && given !== link.amount) throw new PlatformError('FIELD_INVALID', 'This link has a set amount.', { field: 'amount' });
+      if (given !== undefined && given !== null && given !== link.amount) throw new PlatformError('FIELD_INVALID', 'This link has a set amount.', { field: 'amount' });
       return link.amount!;
     }
     if (typeof given !== 'number' || !Number.isSafeInteger(given) || given <= 0) throw new PlatformError('FIELD_INVALID', 'Enter the amount to pay.', { field: 'amount' });
     return given;
   }
 
-  /** A logo, only while an active link or a project's brand shows it: an asset nothing shows any more is not served. */
+  /** A logo, only while an active link or a project's brand shows it, and the project is active: an asset nothing shows any more is not served. */
   async asset(id: string): Promise<{ bytes: Buffer; content_type: string }> {
+    if (!UUID.test(id)) throw new PlatformError('NOT_FOUND', 'No such resource.');
     const row = await this.db.selectFrom('brand_asset as a').select(['a.bytes', 'a.content_type']).where('a.id', '=', id)
+      .where((eb) => eb.exists(eb.selectFrom('project as p').select('p.id').whereRef('p.id', '=', 'a.project_id').where('p.status', '=', 'active')))
       .where((eb) => eb.or([
         eb.exists(eb.selectFrom('project_brand as b').select('b.project_id').whereRef('b.logo_asset_id', '=', 'a.id')),
         eb.exists(eb.selectFrom('payment_link as l').select('l.id').whereRef('l.logo_asset_id', '=', 'a.id').where('l.status', '=', 'active')

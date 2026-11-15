@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, Inject, Param, Post, Req, UseGuards } 
 import { PlatformError } from '../common/errors';
 import { DB_TOKEN, type Db } from '../db/database';
 import { parseBody } from '../http/validation';
+import { isUuid } from '../payment-links/public-view';
 import { LinksService, linkInputSchema } from '../payment-links/links.service';
 import { ClientAccessible } from './client-access';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
@@ -43,6 +44,7 @@ export class PaymentLinksController {
   @RequirePermission('projects.read')
   async detail(@Param('id') id: string, @Param('lid') lid: string, @Req() req: ConsoleRequest) {
     this.reach(req, id, 'projects.read');
+    if (!isUuid(lid)) throw new PlatformError('NOT_FOUND', 'No such resource.');
     return this.links.detail(id, lid);
   }
 
@@ -52,6 +54,7 @@ export class PaymentLinksController {
   @RequirePermission('links.manage')
   async disable(@Param('id') id: string, @Param('lid') lid: string, @Req() req: ConsoleRequest) {
     this.reach(req, id, 'links.manage');
+    if (!isUuid(lid)) throw new PlatformError('NOT_FOUND', 'No such resource.');
     return this.db.transaction().execute((tx) => this.links.disable(tx, id, lid, req.principal.administratorId));
   }
 }

@@ -42,6 +42,8 @@ export class PlatformExceptionFilter implements ExceptionFilter {
     }
     // A path parameter the store cannot read as its type (a malformed uuid): no such row can exist.
     if (exception instanceof DatabaseError && exception.code === '22P02') {
+      // Handlers validate ids first, so reaching here may be a real defect; keep a trace (the message, never the request).
+      this.logger.warn({ err: exception }, 'malformed value reached the store; answered as not found');
       res.status(404).json({ error: { code: 'NOT_FOUND', message: 'No such resource.', retryable: false } });
       return;
     }
