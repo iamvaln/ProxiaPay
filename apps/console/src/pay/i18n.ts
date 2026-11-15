@@ -38,6 +38,7 @@ const STRINGS = {
   'review.minute': { en: '1 minute', fr: '1 minute' },
   'review.minutes': { en: '{n} minutes', fr: '{n} minutes' },
   'review.edit': { en: 'Edit', fr: 'Modifier' },
+  'review.check': { en: 'Check the payment', fr: 'Vérifier le paiement' },
   'review.confirm': { en: 'Confirm and pay {total}', fr: 'Confirmer et payer {total}' },
 
   'sent.title': { en: 'Approve the payment on your phone', fr: 'Validez le paiement sur votre téléphone' },
@@ -66,6 +67,7 @@ const STRINGS = {
   'receipt.total': { en: 'Total paid', fr: 'Total payé' },
   'receipt.method': { en: 'Method', fr: 'Moyen' },
   'receipt.reference': { en: 'Reference', fr: 'Référence' },
+  'receipt.date': { en: 'Date', fr: 'Date' },
   'receipt.email': { en: 'Get the receipt by email', fr: 'Recevoir le reçu par email' },
   'receipt.optional': { en: '(optional)', fr: '(facultatif)' },
   'receipt.placeholder': { en: 'you@example.com', fr: 'vous@exemple.com' },
@@ -84,6 +86,12 @@ const STRINGS = {
   'error.being_checked': { en: 'A payment on this link is being checked.', fr: 'Un paiement sur ce lien est en cours de vérification.' },
   'error.number_pending': { en: 'A payment from this number is already in progress.', fr: 'Un paiement depuis ce numéro est déjà en cours.' },
   'error.method_down': { en: 'This payment method is not available right now. Try again later.', fr: 'Ce moyen de paiement n’est pas disponible pour le moment. Réessayez plus tard.' },
+  'error.receipt_limit': { en: 'The receipt has already been sent three times.', fr: 'Le reçu a déjà été envoyé trois fois.' },
+  'error.receipt_not_ready': { en: 'The receipt is available once the payment has succeeded.', fr: 'Le reçu est disponible une fois le paiement réussi.' },
+  'error.msisdn': { en: 'Enter a valid number for {country}.', fr: 'Saisissez un numéro valide pour ce pays ({country}).' },
+  'error.method_unavailable': { en: 'This payment method is not available on this link.', fr: 'Ce moyen de paiement n’est pas disponible sur ce lien.' },
+  'error.amount_not_payable': { en: 'This amount cannot be paid with this method.', fr: 'Ce montant ne peut pas être payé avec ce moyen de paiement.' },
+  'error.email': { en: 'Enter a valid email address.', fr: 'Saisissez une adresse email valide.' },
   'error.link_busy': { en: 'This link cannot take more payments right now. Try again later.', fr: 'Ce lien ne peut pas recevoir plus de paiements pour le moment. Réessayez plus tard.' },
 } satisfies Record<string, Record<Lang, string>>;
 

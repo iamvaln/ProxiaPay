@@ -14,6 +14,7 @@ import { TransactionService } from '../transactions/transaction.service';
 import { SimulatorAdapter } from '../providers/adapters/simulator.adapter';
 import { NotificationService } from '../notifications/notification.service';
 import { deliveryTransport } from '../notifications/delivery-transport';
+import { CONFIG, type AppConfig } from '../config/config';
 
 /** Following a link payment from the page, and what its outcome does to a single-use link. */
 let t: TestContext;
@@ -71,7 +72,7 @@ async function settle() {
 }
 const linkStatus = async (id: string) => (await t.db.selectFrom('payment_link').select('status').where('id', '=', id).executeTakeFirstOrThrow()).status;
 const txnOf = async (token: string) => t.db.selectFrom('payment_link_payment as pp').innerJoin('transaction as t', 't.id', 'pp.transaction_id')
-  .select(['t.id', 't.reference', 't.state', 't.charged_amount']).where('pp.token_hash', '=', CryptoService.tokenHash(token)).executeTakeFirstOrThrow();
+  .select(['t.id', 't.reference', 't.state', 't.charged_amount', 't.msisdn_masked', 't.terminal_at']).where('pp.token_hash', '=', CryptoService.tokenHash(token)).executeTakeFirstOrThrow();
 /** A reconciliation correction, as an administrator's accepted discrepancy applies it. */
 async function correct(transactionId: string, target: 'succeeded' | 'failed') {
   const pa = (await t.db.selectFrom('transaction_attempt').select('provider_account_id').where('transaction_id', '=', transactionId).executeTakeFirstOrThrow()).provider_account_id;
@@ -101,8 +102,12 @@ describe('following a payment', () => {
       body: {
         state: 'created', reference: txn.reference, amount: 5000, charged_amount: 5125, currency: 'XAF', method: { country: 'CM', name: 'MTN Mobile Money' },
         instructions: 'Approve the request with your MoMo PIN.', outcome: null,
+        // The receipt's facts come with the payment, so a reload keeps them once a single-use link is gone.
+        project_name: 'acme-shop', title: 'Invoice 42', exponent: 0, sandbox: app.get<Pick<AppConfig, 'PROXIAPAY_ENV'>>(CONFIG).PROXIAPAY_ENV === 'sandbox',
+        msisdn_masked: txn.msisdn_masked, completed_at: null, brand: { logo_url: null, primary_color: '#1A56DB' },
       },
     });
+    expect(txn.msisdn_masked).not.toContain('677123456');
     expect((await follow(token, 'fr')).body.instructions).toBe('Validez la demande avec votre code MoMo.');
     expect((await follow(token, 'de')).body.instructions).toBe('Approve the request with your MoMo PIN.');
     // Nothing the payer should not see: no internal id, no provider.
@@ -116,7 +121,8 @@ describe('following a payment', () => {
 
     await settle();
     const after = await follow(token);
-    expect(after.body).toMatchObject({ state: 'succeeded', reference: txn.reference, charged_amount: (await txnOf(token)).charged_amount, outcome: { failure_reason_text: null } });
+    const done = await txnOf(token);
+    expect(after.body).toMatchObject({ state: 'succeeded', reference: txn.reference, charged_amount: done.charged_amount, outcome: { failure_reason_text: null }, completed_at: done.terminal_at!.toISOString() });
     expect(await linkStatus(l.id)).toBe('completed');
     expect(await answer(await fetch(`${base}/pay-api/v1/links/${l.code}`))).toEqual({ status: 404, body: { error: { code: 'LINK_UNAVAILABLE', message: 'This link is no longer available', retryable: false } } });
   });
@@ -165,7 +171,7 @@ describe('following a payment', () => {
     expect(await linkStatus(l.id)).toBe('active');
     const res = await post(`/pay-api/v1/links/${l.code}/previews`, { method: l.keys[momo], msisdn: '677200022' });
     const { payment_token } = (await res.json()) as { payment_token: string };
-    expect(await answer(await confirm(payment_token))).toEqual({ status: 409, body: { error: { code: 'CONFLICT', message: 'A payment on this link is being checked', retryable: false } } });
+    expect(await answer(await confirm(payment_token))).toEqual({ status: 409, body: { error: { code: 'LINK_PAYMENT_BEING_CHECKED', message: 'A payment on this link is being checked', retryable: true } } });
   });
 
   it('the state follows the provider callback: a succeeded callback makes GET return succeeded', async () => {

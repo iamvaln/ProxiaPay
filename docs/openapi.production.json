@@ -1079,7 +1079,11 @@
                   "CONFIRMATION_INVALID",
                   "APPROVAL_REQUIRED",
                   "RULE_VIOLATION",
-                  "LINK_UNAVAILABLE"
+                  "LINK_UNAVAILABLE",
+                  "LINK_PAYMENT_IN_PROGRESS",
+                  "LINK_PAYMENT_BEING_CHECKED",
+                  "RECEIPT_NOT_READY",
+                  "RECEIPT_LIMIT_REACHED"
                 ]
               },
               "message": {

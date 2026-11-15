@@ -23,3 +23,9 @@ export function detectCountry(available: string[], tz: string = browserZone(), l
   }
   return available[0] ?? '';
 }
+
+/** A country's own time zone, for showing when a payment was made there; none for a country spread over several zones. */
+export function zoneOf(country: string): string | undefined {
+  const zones = Object.keys(ZONES).filter((z) => ZONES[z] === country);
+  return zones.length === 1 ? zones[0] : undefined;
+}

@@ -9,6 +9,8 @@
   --pay-field-line: color-mix(in srgb, var(--muted) 45%, var(--surface));
   min-height: 100vh; display: flex; flex-direction: column; background: var(--soft); color: var(--ink);
   font-family: var(--font-sans); font-size: 15px; line-height: 1.5;
+  /* Content the client or a route typed (a title, a description, instructions, a reference) may hold a long unbroken string. */
+  overflow-wrap: anywhere;
 }
 .pay-page :focus-visible { outline: 2px solid var(--pay-primary); outline-offset: 2px; }
 
@@ -85,7 +87,7 @@
 .pay-summary .pay-total { color: var(--ink); font-weight: 700; font-size: 18px; padding-top: 10px; border-top: 1px solid var(--line); }
 
 .pay-instructions { padding: 16px; border-radius: 12px; background: var(--state-information-bg); color: var(--state-information-text); font-size: 14px; }
-.pay-instructions p { margin-top: 4px; white-space: pre-line; }
+.pay-instructions p { margin-top: 4px; white-space: pre-line; overflow-wrap: anywhere; }
 .pay-instructions strong { color: var(--ink); }
 .pay-waiting { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px 0; font-weight: 500; }
 .pay-spinner { animation: pay-spin 1s linear infinite; }

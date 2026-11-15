@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import { PlatformError } from '../common/errors';
 import { CryptoService } from '../crypto/crypto.service';
 import { newLinkPaymentSuffix } from '../crypto/references';
+import { CONFIG, type AppConfig } from '../config/config';
 import { DB_TOKEN, type Db } from '../db/database';
 import { log } from '../logging/logger';
 import { Mailer } from '../alerts/mailer';
@@ -91,6 +92,17 @@ export interface FollowedPayment {
   instructions: string | null;
   /** Null until the payment is final; a failure carries why, in the payer's words. */
   outcome: { failure_reason_text: string | null } | null;
+  /**
+   * What the receipt shows, read from the payment itself so a reload keeps it once the link is gone (a single-use link
+   * completes on success): the project's face, the link's title, the masked number, and when the payment became final.
+   */
+  project_name: string;
+  title: string;
+  exponent: number;
+  sandbox: boolean;
+  msisdn_masked: string;
+  completed_at: string | null;
+  brand: { logo_url: string | null; primary_color: string };
 }
 
 /**
@@ -106,6 +118,7 @@ export class LinkPaymentsService {
   private readonly logger = log('payment-links');
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
+    @Inject(CONFIG) private readonly config: Pick<AppConfig, 'PROXIAPAY_ENV'>,
     private readonly links: PublicLinkService,
     private readonly previews: PreviewService,
     private readonly transactions: TransactionService,
@@ -191,7 +204,9 @@ export class LinkPaymentsService {
         const others = await tx.selectFrom('transaction').select('state').where('payment_link_id', '=', link.id).where('state', 'not in', TERMINAL_STATES.filter((s) => s !== 'succeeded')).execute();
         // A success is final for a single-use link even before anything marks it completed: it never collects twice.
         if (others.some((o) => o.state === 'succeeded')) throw new PlatformError('LINK_UNAVAILABLE', LINK_UNAVAILABLE_MESSAGE);
-        if (others.length > 0) throw new PlatformError('CONFLICT', others.every((o) => o.state === 'undetermined') ? BEING_CHECKED : IN_PROGRESS);
+        if (others.length > 0) {
+          throw others.every((o) => o.state === 'undetermined') ? new PlatformError('LINK_PAYMENT_BEING_CHECKED', BEING_CHECKED) : new PlatformError('LINK_PAYMENT_IN_PROGRESS', IN_PROGRESS);
+        }
       }
       // The method must still be on offer as the page shows it, not merely resolvable.
       if (!(await this.links.methods(tx, link)).some((m) => m.routeId === payment.route_id)) throw methodUnavailable();
@@ -228,7 +243,11 @@ export class LinkPaymentsService {
       .innerJoin('transaction as t', 't.id', 'pp.transaction_id')
       .innerJoin('route as r', 'r.id', 't.route_id')
       .innerJoin('payment_method as pm', 'pm.code', 'r.payment_method_code')
-      .select(['t.state', 't.reference', 't.requested_amount', 't.charged_amount', 't.currency_code', 't.failure_reason', 'r.country_code', 'pm.name', 'r.payer_instructions'])
+      .innerJoin('payment_link as l', 'l.id', 'pp.link_id')
+      .innerJoin('project as p', 'p.id', 'l.project_id')
+      .innerJoin('currency as c', 'c.code', 't.currency_code')
+      .select(['t.state', 't.reference', 't.requested_amount', 't.charged_amount', 't.currency_code', 't.failure_reason', 't.msisdn_masked', 't.terminal_at', 't.updated_at',
+        'r.country_code', 'pm.name', 'r.payer_instructions', 'l.title', 'l.logo_asset_id', 'l.primary_color', 'p.name as project_name', 'c.exponent'])
       .where('pp.token_hash', '=', hash).where('pp.expires_at', '>', sql<Date>`now()`).executeTakeFirst();
     if (!row) throw gone();
     // Charged only for a token that exists, so a guess writes nothing; the controller's per-address ceiling covers the guessing.
@@ -242,6 +261,9 @@ export class LinkPaymentsService {
       method: { country: row.country_code, name: row.name },
       instructions: typeof given === 'string' && given.trim() !== '' ? given : null,
       outcome: final ? { failure_reason_text: row.state === 'succeeded' ? null : failureText(row.failure_reason, language) } : null,
+      project_name: row.project_name, title: row.title, exponent: row.exponent, sandbox: this.config.PROXIAPAY_ENV === 'sandbox',
+      msisdn_masked: row.msisdn_masked, completed_at: final ? (row.terminal_at ?? row.updated_at).toISOString() : null,
+      brand: { logo_url: row.logo_asset_id ? `/pay-api/v1/assets/${row.logo_asset_id}` : null, primary_color: row.primary_color },
     };
   }
 
@@ -268,10 +290,10 @@ export class LinkPaymentsService {
     await enforceLimit(this.limiter, `paylink:receipt:${hash.toString('hex')}`, 60, 60);
     if (typeof input.email !== 'string' || input.email.length > 254 || !EMAIL.test(input.email.trim())) throw new PlatformError('FIELD_INVALID', 'Enter a valid email address.', { field: 'email' });
     if (input.language !== undefined && input.language !== 'en' && input.language !== 'fr') throw new PlatformError('FIELD_INVALID', 'language: must be en or fr.', { field: 'language' });
-    if (row.state !== 'succeeded') throw new PlatformError('CONFLICT', 'A receipt is available once the payment has succeeded.');
+    if (row.state !== 'succeeded') throw new PlatformError('RECEIPT_NOT_READY', 'A receipt is available once the payment has succeeded.');
     const reserved = await this.db.updateTable('payment_link_payment').set({ receipts_sent: sql<number>`receipts_sent + 1` })
       .where('id', '=', row.id).where('receipts_sent', '<', RECEIPTS_PER_PAYMENT).returning('id').executeTakeFirst();
-    if (!reserved) throw new PlatformError('CONFLICT', 'The receipt has already been sent three times.');
+    if (!reserved) throw new PlatformError('RECEIPT_LIMIT_REACHED', 'The receipt has already been sent three times.');
 
     const email = input.email.trim();
     const masked = maskEmail(email);

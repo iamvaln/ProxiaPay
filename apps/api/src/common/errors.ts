@@ -54,6 +54,10 @@ export const REQUEST_ERRORS = {
   RULE_VIOLATION: { status: 422, retryable: false },
   // The public payment page's codes share the shape too.
   LINK_UNAVAILABLE: { status: 404, retryable: false },
+  LINK_PAYMENT_IN_PROGRESS: { status: 409, retryable: true },
+  LINK_PAYMENT_BEING_CHECKED: { status: 409, retryable: true },
+  RECEIPT_NOT_READY: { status: 409, retryable: true },
+  RECEIPT_LIMIT_REACHED: { status: 409, retryable: false },
 } as const;
 
 export type ErrorCode = keyof typeof REQUEST_ERRORS;

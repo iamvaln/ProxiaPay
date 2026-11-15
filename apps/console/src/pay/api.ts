@@ -39,6 +39,14 @@ export interface PaymentStatus {
   method: { country: string; name: string };
   instructions: string | null;
   outcome: { failure_reason_text: string | null } | null;
+  /** The receipt's facts, carried by the payment so a reload keeps them once the link is gone. */
+  project_name: string;
+  title: string;
+  exponent: number;
+  sandbox: boolean;
+  msisdn_masked: string;
+  completed_at: string | null;
+  brand: { logo_url: string | null; primary_color: string };
 }
 
 /** The platform's error body, kept whole: the page words some codes itself and shows a field's message beside the field. */

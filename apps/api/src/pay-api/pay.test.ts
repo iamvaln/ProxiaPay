@@ -66,7 +66,7 @@ async function token(code: string, body: { method?: string; msisdn: string; amou
 /** The address limits are per minute; tests that make many calls start each round afresh. */
 const forgetLimits = () => t.db.deleteFrom('rate_limit_window').execute();
 const linkTransactions = (linkId: string) => t.db.selectFrom('transaction').select(['id', 'reference', 'state', 'project_reference', 'payment_link_id']).where('payment_link_id', '=', linkId).execute();
-const IN_PROGRESS = { status: 409, body: { error: { code: 'CONFLICT', message: 'A payment is already in progress on this link', retryable: false } } };
+const IN_PROGRESS = { status: 409, body: { error: { code: 'LINK_PAYMENT_IN_PROGRESS', message: 'A payment is already in progress on this link', retryable: true } } };
 
 describe('paying a link', () => {
   it('a payer pays a fixed link: one transaction with project_reference PL-<code>-…, payment_link_id set, normal ledger and webhook', async () => {
@@ -272,7 +272,7 @@ describe('a single-use link', () => {
     const next = await token(l.code, { method: l.keys[momo], msisdn: '677200001' });
     expect((await confirm(checking)).status).toBe(200);
     expect((await linkTransactions(l.id))[0]!.state).toBe('undetermined');
-    expect(await answer(await confirm(next))).toEqual({ status: 409, body: { error: { code: 'CONFLICT', message: 'A payment on this link is being checked', retryable: false } } });
+    expect(await answer(await confirm(next))).toEqual({ status: 409, body: { error: { code: 'LINK_PAYMENT_BEING_CHECKED', message: 'A payment on this link is being checked', retryable: true } } });
 
     // Once that payment is known to have failed, the link takes the next payer.
     const transactions = t.app.get(TransactionService);

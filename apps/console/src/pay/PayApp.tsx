@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import { Mark } from '../components/Logo';
-import { confirmPayment, createPreview, getLink, getPayment, PayError, quote as fetchQuote, sendReceipt, type LinkView, type PaymentStatus, type Quote, type Review } from './api';
-import { detectCountry } from './country';
+import { confirmPayment, createPreview, getLink, getPayment, PayError, quote as fetchQuote, sendReceipt, type LinkMethod, type LinkView, type PaymentStatus, type Quote, type Review } from './api';
+import { detectCountry, zoneOf } from './country';
 import { countryName, detectLanguage, money, parseAmount, t, type Key, type Lang } from './i18n';
 
 /**
@@ -13,10 +13,12 @@ import { countryName, detectLanguage, money, parseAmount, t, type Key, type Lang
 export interface PayTimings {
   /** How often the page asks for the payment's state in the first minute, then after it. */
   pollFast: number; pollSlow: number; slowAfter: number;
+  /** How long the page keeps asking about a payment the operator has not settled (undetermined). */
+  checkingFor: number;
   /** How long the payer pauses typing an amount before the page prices it. */
   quoteDelay: number;
 }
-const TIMINGS: PayTimings = { pollFast: 3000, pollSlow: 10_000, slowAfter: 60_000, quoteDelay: 400 };
+const TIMINGS: PayTimings = { pollFast: 3000, pollSlow: 10_000, slowAfter: 60_000, checkingFor: 30 * 60_000, quoteDelay: 400 };
 
 /** Often while the payer is likely holding their phone, then gently: an approval rarely takes more than a minute. */
 export const pollDelay = (elapsed: number, tm: PayTimings = TIMINGS): number => (elapsed < tm.slowAfter ? tm.pollFast : tm.pollSlow);
@@ -31,6 +33,9 @@ function keepToken(token: string | null): void {
   window.history.replaceState(null, '', token ? `#p=${token}` : window.location.pathname + window.location.search);
 }
 
+/** A logo is shown only from the pay API's own asset path: anything else in the field is ignored, never fetched. */
+const LOGO_PATH = '/pay-api/v1/assets/';
+
 type Stage =
   | { kind: 'loading' }
   | { kind: 'unavailable' }
@@ -39,26 +44,50 @@ type Stage =
   | { kind: 'review'; token: string; review: Review }
   | { kind: 'following'; token: string; review: Review | null; status: PaymentStatus | null };
 
-/** What the payer reads when a call fails: the page words what it knows in their language, otherwise the API's own plain message. */
-function describe(e: unknown, lang: Lang): string {
+/**
+ * What the payer reads when a call fails, always in the page's language: the page words every code the pay API gives it,
+ * and anything it does not know is the generic sentence. The API's own message is never shown.
+ */
+export function describe(e: unknown, lang: Lang): string {
   const say = (key: Key) => t(lang, key);
   if (!(e instanceof PayError)) return say('error.network');
   if (e.status === 429 || e.code === 'RATE_LIMITED') return say('error.rate_limited');
-  switch (e.code) {
-    case 'PREVIEW_EXPIRED': return say('error.total_expired');
-    case 'SIMILAR_PAYMENT_PENDING': return say('error.number_pending');
-    case 'NO_PROVIDER_AVAILABLE': case 'FLOAT_INSUFFICIENT': return say('error.method_down');
-    case 'VELOCITY_COUNT_EXCEEDED': case 'VELOCITY_VALUE_EXCEEDED': return say('error.link_busy');
-    case 'NOT_FOUND': return say('error.payment_gone');
-    case 'CONFLICT':
-      if (e.message.startsWith('A payment is already in progress')) return say('error.in_progress');
-      if (e.message.startsWith('A payment on this link is being checked')) return say('error.being_checked');
-      return e.message;
-  }
-  return e.status >= 500 || !e.message ? say('error.generic') : e.message;
+  const words: Record<string, Key> = {
+    LINK_UNAVAILABLE: 'page.unavailable',
+    LINK_PAYMENT_IN_PROGRESS: 'error.in_progress',
+    LINK_PAYMENT_BEING_CHECKED: 'error.being_checked',
+    RECEIPT_LIMIT_REACHED: 'error.receipt_limit',
+    RECEIPT_NOT_READY: 'error.receipt_not_ready',
+    PREVIEW_EXPIRED: 'error.total_expired',
+    SIMILAR_PAYMENT_PENDING: 'error.number_pending',
+    NO_PROVIDER_AVAILABLE: 'error.method_down',
+    FLOAT_INSUFFICIENT: 'error.method_down',
+    VELOCITY_COUNT_EXCEEDED: 'error.link_busy',
+    VELOCITY_VALUE_EXCEEDED: 'error.link_busy',
+    NOT_FOUND: 'error.payment_gone',
+  };
+  return say(words[e.code] ?? 'error.generic');
+}
+
+/** The field a refusal is about, when it is one the page shows beside a field; anything else is shown above the button. */
+const fieldOf = (e: unknown): 'amount' | 'msisdn' | 'method' | 'email' | null =>
+  e instanceof PayError && e.status !== 429 && (e.field === 'amount' || e.field === 'msisdn' || e.field === 'method' || e.field === 'email') ? e.field : null;
+
+/** Why a typed amount cannot be paid with a method, worked out on the page so the payer reads it in their language. */
+function amountProblem(lang: Lang, link: LinkView, method: LinkMethod | null, text: string): string | undefined {
+  const fmt = (minor: number) => money(minor, link.currency, link.exponent, lang);
+  const amount = parseAmount(text, link.exponent);
+  const floor = method?.minimum_amount ?? link.minimum_amount;
+  if (amount === null) return t(lang, 'form.amount_invalid');
+  if (amount < floor) return t(lang, 'form.amount_min', { amount: fmt(floor) });
+  if (method && amount > method.maximum_amount) return t(lang, 'form.amount_max', { amount: fmt(method.maximum_amount) });
+  return undefined;
 }
 
 const FINAL_FAILURES = new Set(['failed', 'expired']);
+
+/** The client's face as the panel shows it: from the link, or from the payment once the link is gone. */
+interface Face { project_name: string; title: string; description: string | null; amount: string | null; logo_url: string | null; primary_color: string; sandbox: boolean }
 
 export function PayApp({ timings }: { timings?: Partial<PayTimings> }) {
   const tm: PayTimings = { ...TIMINGS, ...timings };
@@ -105,11 +134,15 @@ export function PayApp({ timings }: { timings?: Partial<PayTimings> }) {
   }, [code]);
   useEffect(() => { void load(); }, [load]);
 
-  // Follows the payment: every few seconds, then less often, until its outcome is in. A change of language reads it again.
+  // Follows the payment: every few seconds, then less often, until its outcome is in; a payment the operator has not
+  // settled is followed for half an hour, then left to the pending message. A change of language reads it again at once,
+  // but keeps the pace: the clock runs from when this payment was first followed.
   const followToken = stage.kind === 'following' ? stage.token : null;
+  const followedSince = useRef<{ token: string; at: number } | null>(null);
   useEffect(() => {
     if (!followToken) return;
-    const started = Date.now();
+    if (followedSince.current?.token !== followToken) followedSince.current = { token: followToken, at: Date.now() };
+    const started = followedSince.current.at;
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
@@ -118,6 +151,7 @@ export function PayApp({ timings }: { timings?: Partial<PayTimings> }) {
         if (!live) return;
         setStage((s) => (s.kind === 'following' && s.token === followToken ? { ...s, status } : s));
         if (status.outcome) return;
+        if (status.state === 'undetermined' && Date.now() - started >= tm.checkingFor) return;
       } catch (e) {
         if (!live) return;
         // Unknown, never confirmed, or past its day: the payer starts over from the link.
@@ -142,8 +176,17 @@ export function PayApp({ timings }: { timings?: Partial<PayTimings> }) {
     setMethodKey(next?.key ?? '');
   }
 
-  const brandStyle = link ? ({ '--pay-primary': link.brand.primary_color } as CSSProperties) : undefined;
-  const succeeded = stage.kind === 'following' && stage.status?.state === 'succeeded';
+  const status = stage.kind === 'following' ? stage.status : null;
+  const face: Face | null = link
+    ? {
+      project_name: link.project_name, title: link.title, description: link.description, logo_url: link.brand.logo_url, primary_color: link.brand.primary_color, sandbox: link.sandbox,
+      amount: link.amount_type === 'fixed' && link.amount !== null ? money(link.amount, link.currency, link.exponent, lang) : say('page.amount_free'),
+    }
+    : status
+      ? { project_name: status.project_name, title: status.title, description: null, amount: null, logo_url: status.brand.logo_url, primary_color: status.brand.primary_color, sandbox: status.sandbox }
+      : null;
+  const brandStyle = face ? ({ '--pay-primary': face.primary_color } as CSSProperties) : undefined;
+  const succeeded = status?.state === 'succeeded';
 
   let body: ReactNode;
   switch (stage.kind) {
@@ -181,14 +224,14 @@ export function PayApp({ timings }: { timings?: Partial<PayTimings> }) {
           link={link} lang={lang} review={stage.review} token={stage.token}
           onEdit={() => { keepToken(null); setStage({ kind: 'form' }); }}
           onUnavailable={() => { keepToken(null); setStage({ kind: 'unavailable' }); }}
-          onConfirmed={() => setStage({ kind: 'following', token: stage.token, review: stage.review, status: null })}
+          onFollow={() => setStage({ kind: 'following', token: stage.token, review: stage.review, status: null })}
         />
       );
       break;
     case 'following': {
-      const { status, review, token } = stage;
+      const { review, token } = stage;
       if (!status) body = <p className="pay-muted" role="status">{say('page.loading')}</p>;
-      else if (status.state === 'succeeded') body = <Receipt link={link} lang={lang} status={status} review={review} token={token} />;
+      else if (status.state === 'succeeded') body = <Receipt lang={lang} status={status} token={token} />;
       else if (FINAL_FAILURES.has(status.state)) {
         body = (
           <Failure
@@ -202,14 +245,14 @@ export function PayApp({ timings }: { timings?: Partial<PayTimings> }) {
           />
         );
       } else if (status.state === 'undetermined') body = <Notice title={say('checking.title')}>{say('checking.body')}<Reference lang={lang} reference={status.reference} /></Notice>;
-      else body = <Waiting lang={lang} status={status} review={review} exponent={link?.exponent ?? guessExponent(status.currency)} />;
+      else body = <Waiting lang={lang} status={status} review={review} />;
       break;
     }
   }
 
   return (
     <div className="pay-page" style={brandStyle}>
-      {link?.sandbox && <div className="pay-band">{say('page.sandbox')}</div>}
+      {face?.sandbox && <div className="pay-band">{say('page.sandbox')}</div>}
       <div className="pay-wrap">
         <div className="pay-top">
           <div className="pay-lang" role="group" aria-label={say('page.language')}>
@@ -221,7 +264,7 @@ export function PayApp({ timings }: { timings?: Partial<PayTimings> }) {
           </div>
         </div>
         <div className="pay-card">
-          <Panel link={link} lang={lang} succeeded={succeeded} />
+          <Panel face={face} lang={lang} succeeded={succeeded} />
           <section className="pay-main">{body}</section>
         </div>
         <footer className="pay-footer">
@@ -234,29 +277,29 @@ export function PayApp({ timings }: { timings?: Partial<PayTimings> }) {
 }
 
 /** The client's side of the card: their logo, name and link; on success, the thanks. */
-function Panel({ link, lang, succeeded }: { link: LinkView | null; lang: Lang; succeeded: boolean }) {
+function Panel({ face, lang, succeeded }: { face: Face | null; lang: Lang; succeeded: boolean }) {
   const say = (key: Key, vars?: Record<string, string | number>) => t(lang, key, vars);
   return (
     <aside className="pay-panel">
-      {link && (
+      {face && (
         <div className="pay-brand">
-          {link.brand.logo_url
-            ? <img className="pay-logo" src={link.brand.logo_url} alt="" />
-            : <span className="pay-logo pay-initial" aria-hidden="true">{link.project_name.trim().charAt(0).toUpperCase()}</span>}
-          <span className="pay-project">{link.project_name}</span>
+          {face.logo_url?.startsWith(LOGO_PATH)
+            ? <img className="pay-logo" src={face.logo_url} alt="" />
+            : <span className="pay-logo pay-initial" aria-hidden="true">{face.project_name.trim().charAt(0).toUpperCase()}</span>}
+          <span className="pay-project">{face.project_name}</span>
         </div>
       )}
       {succeeded ? (
         <div className="pay-intro">
           <span className="pay-check" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5 9-10" /></svg></span>
           <h1>{say('success.title')}</h1>
-          {link && <p>{say('success.thanks', { project: link.project_name })}</p>}
+          {face && <p>{say('success.thanks', { project: face.project_name })}</p>}
         </div>
-      ) : link && (
+      ) : face && (
         <div className="pay-intro">
-          <h1>{link.title}</h1>
-          {link.description && <p>{link.description}</p>}
-          <p className="pay-panel-amount">{link.amount_type === 'fixed' && link.amount !== null ? money(link.amount, link.currency, link.exponent, lang) : say('page.amount_free')}</p>
+          <h1>{face.title}</h1>
+          {face.description && <p>{face.description}</p>}
+          {face.amount && <p className="pay-panel-amount">{face.amount}</p>}
         </div>
       )}
       <p className="pay-secure">
@@ -280,7 +323,7 @@ function FieldError({ id, message }: { id: string; message?: string }) {
   return message ? <p className="pay-error" id={id}>{message}</p> : null;
 }
 
-type FieldErrors = { amount?: string; method?: string; msisdn?: string; form?: unknown };
+type FormErrors = { amount?: unknown; method?: unknown; msisdn?: unknown; form?: unknown };
 
 function PayForm(props: {
   link: LinkView; lang: Lang; timings: PayTimings; country: string; methodKey: string; msisdn: string; amountText: string;
@@ -291,7 +334,7 @@ function PayForm(props: {
   const say = (key: Key, vars?: Record<string, string | number>) => t(lang, key, vars);
   const fmt = (minor: number) => money(minor, link.currency, link.exponent, lang);
   const [busy, setBusy] = useState(false);
-  const [errors, setErrors] = useState<FieldErrors>({});
+  const [errors, setErrors] = useState<FormErrors>({});
   const [amountTouched, setAmountTouched] = useState(false);
   const [quoted, setQuoted] = useState<{ quote?: Quote; error?: unknown } | null>(null);
 
@@ -301,10 +344,7 @@ function PayForm(props: {
   const place = link.countries.find((c) => c.code === country);
   const amount = free ? parseAmount(amountText, link.exponent) : link.amount;
   const floor = method?.minimum_amount ?? link.minimum_amount;
-  const localAmountError = !free ? undefined
-    : amount === null ? say('form.amount_invalid')
-      : amount < floor ? say('form.amount_min', { amount: fmt(floor) })
-        : method && amount > method.maximum_amount ? say('form.amount_max', { amount: fmt(method.maximum_amount) }) : undefined;
+  const localAmountError = free ? amountProblem(lang, link, method, amountText) : undefined;
 
   // A free amount is priced as the payer types, once they pause; an amount the page can already refuse is not sent.
   const quotable = free && method && amount !== null && !localAmountError ? `${method.key}:${amount}` : null;
@@ -324,9 +364,17 @@ function PayForm(props: {
 
   if (link.methods.length === 0) return <Notice title={say('page.no_methods')} />;
 
-  const quoteError = quoted?.error instanceof PayError && quoted.error.field === 'amount' ? quoted.error.message : quoted?.error ? describe(quoted.error, lang) : undefined;
+  /** A refusal of one of the form's fields, in the payer's words: the amount is judged again here, against the figures the page has. */
+  const fieldText = (field: 'amount' | 'msisdn' | 'method'): string => {
+    if (field === 'amount') return localAmountError ?? say('error.amount_not_payable');
+    if (field === 'msisdn') return say('error.msisdn', { country: place ? countryName(place.code, place.name, lang) : '' });
+    return say('error.method_unavailable');
+  };
+  const quoteFailure = quoted?.error;
+  const quoteField = fieldOf(quoteFailure);
+  const quoteError = quoteFailure === undefined ? undefined : quoteField === 'amount' || quoteField === 'method' ? fieldText(quoteField) : describe(quoteFailure, lang);
   // A figure being typed is not judged until the payer leaves the field or continues; the minimum stays in view meanwhile.
-  const amountError = errors.amount ?? (amountTouched ? localAmountError : undefined) ?? quoteError;
+  const amountError = errors.amount !== undefined ? fieldText('amount') : (amountTouched ? localAmountError : undefined) ?? quoteError;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -342,9 +390,10 @@ function PayForm(props: {
       props.onReview(r.payment_token, r.review);
     } catch (err) {
       if (err instanceof PayError && err.code === 'LINK_UNAVAILABLE') { props.onUnavailable(); return; }
-      if (err instanceof PayError && err.status !== 429 && (err.field === 'amount' || err.field === 'msisdn' || err.field === 'method')) {
-        setErrors({ [err.field]: err.message });
-        if (err.field === 'method') void props.onMethodGone();
+      const field = fieldOf(err);
+      if (field && field !== 'email') {
+        setErrors({ [field]: err });
+        if (field === 'method') void props.onMethodGone();
       } else {
         setErrors({ form: err });
       }
@@ -377,7 +426,7 @@ function PayForm(props: {
         {link.countries.length >= 2 && (
           <div className="pay-field">
             <label htmlFor="pay-country">{say('form.country')}</label>
-            <select id="pay-country" value={country} onChange={(e) => props.onCountry(e.target.value)}>
+            <select id="pay-country" value={country} onChange={(e) => { props.onCountry(e.target.value); setErrors((x) => ({ ...x, msisdn: undefined, method: undefined })); }}>
               {link.countries.map((c) => <option key={c.code} value={c.code}>{countryName(c.code, c.name, lang)}</option>)}
             </select>
           </div>
@@ -390,7 +439,7 @@ function PayForm(props: {
           >
             {methods.map((m) => <option key={m.key} value={m.key}>{m.name}</option>)}
           </select>
-          <FieldError id="pay-method-error" message={errors.method} />
+          <FieldError id="pay-method-error" message={errors.method !== undefined ? fieldText('method') : undefined} />
         </div>
       </div>
       {!free && method?.charged_amount !== undefined && (
@@ -402,11 +451,11 @@ function PayForm(props: {
           {place && <span className="pay-prefix">{place.dialling_prefix}</span>}
           <input
             id="pay-msisdn" type="tel" inputMode="tel" autoComplete="tel-national" value={msisdn}
-            aria-invalid={errors.msisdn ? true : undefined} aria-describedby="pay-msisdn-error"
+            aria-invalid={errors.msisdn !== undefined ? true : undefined} aria-describedby="pay-msisdn-error"
             onChange={(e) => { props.onMsisdn(e.target.value); setErrors((x) => ({ ...x, msisdn: undefined })); }}
           />
         </div>
-        <FieldError id="pay-msisdn-error" message={errors.msisdn} />
+        <FieldError id="pay-msisdn-error" message={errors.msisdn !== undefined ? fieldText('msisdn') : undefined} />
       </div>
       {errors.form !== undefined && <p className="pay-error pay-form-error" role="alert">{describe(errors.form, lang)}</p>}
       <button type="submit" className="pay-button pay-push" disabled={busy || !method}>{busy ? say('form.wait') : say('form.continue')}</button>
@@ -414,13 +463,15 @@ function PayForm(props: {
   );
 }
 
-function ReviewStep({ link, lang, review, token, onEdit, onUnavailable, onConfirmed }: {
-  link: LinkView; lang: Lang; review: Review; token: string; onEdit: () => void; onUnavailable: () => void; onConfirmed: () => void;
+function ReviewStep({ link, lang, review, token, onEdit, onUnavailable, onFollow }: {
+  link: LinkView; lang: Lang; review: Review; token: string; onEdit: () => void; onUnavailable: () => void; onFollow: () => void;
 }) {
   const say = (key: Key, vars?: Record<string, string | number>) => t(lang, key, vars);
   const fmt = (minor: number) => money(minor, review.currency, link.exponent, lang);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(undefined);
+  // The confirmation went out and no answer came back: the payment may have started, so the payer checks it rather than edits.
+  const [uncertain, setUncertain] = useState(false);
   const minutes = Math.max(1, Math.round((Date.parse(review.expires_at) - Date.now()) / 60_000));
   const place = link.countries.find((c) => c.code === review.method.country);
 
@@ -432,13 +483,15 @@ function ReviewStep({ link, lang, review, token, onEdit, onUnavailable, onConfir
     keepToken(token);
     try {
       await confirmPayment(token);
-      onConfirmed();
+      onFollow();
     } catch (e) {
       if (e instanceof PayError) {
         keepToken(null);
         if (e.code === 'LINK_UNAVAILABLE') { onUnavailable(); return; }
+      } else {
+        // The token stays: confirming again returns the same payment, and following it shows whether it started.
+        setUncertain(true);
       }
-      // A network failure leaves the token: confirming again returns the same payment if the first one went through.
       setError(e);
     } finally {
       setBusy(false);
@@ -460,7 +513,9 @@ function ReviewStep({ link, lang, review, token, onEdit, onUnavailable, onConfir
       </p>
       {error !== undefined && <p className="pay-error pay-form-error" role="alert">{describe(error, lang)}</p>}
       <div className="pay-actions pay-push">
-        <button type="button" className="pay-button pay-secondary" onClick={onEdit} disabled={busy}>{say('review.edit')}</button>
+        {uncertain
+          ? <button type="button" className="pay-button pay-secondary" onClick={onFollow} disabled={busy}>{say('review.check')}</button>
+          : <button type="button" className="pay-button pay-secondary" onClick={onEdit} disabled={busy}>{say('review.edit')}</button>}
         <button type="button" className="pay-button pay-grow" onClick={() => { void confirm(); }} disabled={busy}>
           {busy ? say('form.wait') : say('review.confirm', { total: fmt(review.total) })}
         </button>
@@ -469,7 +524,7 @@ function ReviewStep({ link, lang, review, token, onEdit, onUnavailable, onConfir
   );
 }
 
-function Waiting({ lang, status, review, exponent }: { lang: Lang; status: PaymentStatus; review: Review | null; exponent: number }) {
+function Waiting({ lang, status, review }: { lang: Lang; status: PaymentStatus; review: Review | null }) {
   const say = (key: Key, vars?: Record<string, string | number>) => t(lang, key, vars);
   const operator = status.method.name;
   return (
@@ -479,7 +534,7 @@ function Waiting({ lang, status, review, exponent }: { lang: Lang; status: Payme
         <h2>{say('sent.title')}</h2>
       </div>
       <p>{review ? say('sent.body', { number: review.msisdn_formatted, operator }) : say('sent.body_phone', { operator })}</p>
-      <p className="pay-hint">{say('sent.total', { total: money(status.charged_amount, status.currency, exponent, lang) })}</p>
+      <p className="pay-hint">{say('sent.total', { total: money(status.charged_amount, status.currency, status.exponent, lang) })}</p>
       {status.instructions && (
         <div className="pay-instructions">
           <strong>{operator} · {countryName(status.method.country, status.method.country, lang)}</strong>
@@ -494,10 +549,6 @@ function Waiting({ lang, status, review, exponent }: { lang: Lang; status: Payme
     </div>
   );
 }
-
-/** Only for a reloaded receipt whose link is gone: the status carries no exponent, and a link's currencies are few and fixed. */
-const EXPONENTS: Record<string, number> = { XAF: 0, XOF: 0, GNF: 0, CDF: 2, USD: 2 };
-const guessExponent = (currency: string): number => EXPONENTS[currency] ?? 2;
 
 function Reference({ lang, reference }: { lang: Lang; reference: string }) {
   return <p className="pay-hint">{t(lang, 'receipt.reference')} <span className="pay-mono">{reference}</span></p>;
@@ -523,13 +574,17 @@ function Failure({ lang, status, checkLink, onRetry }: { lang: Lang; status: Pay
   );
 }
 
-function Receipt({ link, lang, status, review, token }: { link: LinkView | null; lang: Lang; status: PaymentStatus; review: Review | null; token: string }) {
+/** When the payment became final, in the payer's language and the method country's time (else the browser's). */
+export function paidAt(iso: string, country: string, lang: Lang): string {
+  return new Intl.DateTimeFormat(lang === 'fr' ? 'fr-FR' : 'en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: zoneOf(country) }).format(new Date(iso));
+}
+
+function Receipt({ lang, status, token }: { lang: Lang; status: PaymentStatus; token: string }) {
   const say = (key: Key, vars?: Record<string, string | number>) => t(lang, key, vars);
-  const exponent = link?.exponent ?? guessExponent(status.currency);
-  const fmt = (minor: number) => money(minor, status.currency, exponent, lang);
+  const fmt = (minor: number) => money(minor, status.currency, status.exponent, lang);
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
-  const [result, setResult] = useState<{ sent?: boolean; fieldError?: string; error?: unknown } | null>(null);
+  const [result, setResult] = useState<{ sent?: boolean; badAddress?: boolean; error?: unknown } | null>(null);
 
   async function send(e: FormEvent) {
     e.preventDefault();
@@ -540,7 +595,7 @@ function Receipt({ link, lang, status, review, token }: { link: LinkView | null;
       const r = await sendReceipt(token, email.trim(), lang);
       setResult({ sent: r.status === 'sent' });
     } catch (err) {
-      setResult(err instanceof PayError && err.field === 'email' ? { fieldError: err.message } : { error: err });
+      setResult(fieldOf(err) === 'email' ? { badAddress: true } : { error: err });
     } finally {
       setSending(false);
     }
@@ -550,12 +605,13 @@ function Receipt({ link, lang, status, review, token }: { link: LinkView | null;
     <div className="pay-form pay-receipt">
       <h2>{say('receipt.title')}</h2>
       <dl className="pay-summary">
-        {link && <><dt>{say('receipt.paid_to')}</dt><dd>{link.project_name}</dd></>}
-        {link && <><dt>{say('receipt.for')}</dt><dd>{link.title}</dd></>}
+        <dt>{say('receipt.paid_to')}</dt><dd>{status.project_name}</dd>
+        <dt>{say('receipt.for')}</dt><dd>{status.title}</dd>
         <dt>{say('receipt.amount')}</dt><dd>{fmt(status.amount)}</dd>
         <dt>{say('receipt.fees')}</dt><dd>{fmt(status.charged_amount - status.amount)}</dd>
         <dt className="pay-total">{say('receipt.total')}</dt><dd className="pay-total">{fmt(status.charged_amount)}</dd>
-        <dt>{say('receipt.method')}</dt><dd>{status.method.name}{review ? ` · ${review.msisdn_formatted}` : ''}</dd>
+        <dt>{say('receipt.method')}</dt><dd>{status.method.name} · {status.msisdn_masked}</dd>
+        {status.completed_at && <><dt>{say('receipt.date')}</dt><dd>{paidAt(status.completed_at, status.method.country, lang)}</dd></>}
         <dt>{say('receipt.reference')}</dt><dd className="pay-mono">{status.reference}</dd>
       </dl>
       <form className="pay-field pay-email" onSubmit={send} noValidate>
@@ -563,12 +619,12 @@ function Receipt({ link, lang, status, review, token }: { link: LinkView | null;
         <div className="pay-inline">
           <input
             id="pay-email" type="email" autoComplete="email" placeholder={say('receipt.placeholder')} value={email}
-            aria-invalid={result?.fieldError ? true : undefined} aria-describedby="pay-email-error"
+            aria-invalid={result?.badAddress ? true : undefined} aria-describedby="pay-email-error"
             onChange={(e) => setEmail(e.target.value)}
           />
           <button type="submit" className="pay-button" disabled={sending || email.trim() === ''}>{sending ? say('receipt.sending') : say('receipt.send')}</button>
         </div>
-        <FieldError id="pay-email-error" message={result?.fieldError} />
+        <FieldError id="pay-email-error" message={result?.badAddress ? say('error.email') : undefined} />
         {result?.sent === true && <p className="pay-ok" role="status">{say('receipt.sent')}</p>}
         {result?.sent === false && <p className="pay-error" role="alert">{say('receipt.failed')}</p>}
         {result?.error !== undefined && <p className="pay-error" role="alert">{describe(result.error, lang)}</p>}

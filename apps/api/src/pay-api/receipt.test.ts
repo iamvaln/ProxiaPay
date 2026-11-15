@@ -121,14 +121,14 @@ describe('receipt by email', () => {
     const token = await pay();
     await settle();
     for (let i = 0; i < 3; i++) expect((await receipt(token, { email: EMAIL })).status).toBe(200);
-    expect(await receipt(token, { email: EMAIL })).toMatchObject({ status: 409, body: { error: { code: 'CONFLICT' } } });
+    expect(await receipt(token, { email: EMAIL })).toMatchObject({ status: 409, body: { error: { code: 'RECEIPT_LIMIT_REACHED' } } });
     expect(mailer().sent.filter((m) => m.to === EMAIL)).toHaveLength(3);
     expect((await t.db.selectFrom('payment_link_payment').select('receipts_sent').executeTakeFirstOrThrow()).receipts_sent).toBe(3);
   });
 
   it('refuses before success, and for an unknown token or a bad address', async () => {
     const token = await pay();
-    expect(await receipt(token, { email: EMAIL })).toMatchObject({ status: 409, body: { error: { code: 'CONFLICT' } } });
+    expect(await receipt(token, { email: EMAIL })).toMatchObject({ status: 409, body: { error: { code: 'RECEIPT_NOT_READY' } } });
     expect(mailer().sent).toHaveLength(0);
     expect((await t.db.selectFrom('payment_link_payment').select('receipts_sent').executeTakeFirstOrThrow()).receipts_sent).toBe(0);
     await settle();
