@@ -47,9 +47,8 @@ dashboard.
   mobile-first, shares no code path with the console, and costs no new
   container or release step.
 - **C. HTML rendered by the API.** The lightest page possible. It was rejected
-  because it puts templates in the API, handles the payer's extra steps
-  (code, redirect) and live status badly, and reuses none of the visual
-  identity.
+  because it puts templates in the API, follows the live status badly, and
+  reuses none of the visual identity.
 
 On top of B, Valentine chose a separate subdomain rather than a `/pay/` path on
 `pay.proxia-digital.com`. The page then runs on another origin than the
@@ -90,9 +89,8 @@ session, and the link reads well in a message.
    The payer then:
    - picks a method;
    - enters their number;
-   - pays;
-   - completes the extra step if the route asks for one: a code typed on the
-     page, or a redirect to open.
+   - reviews the total and confirms;
+   - approves the request on their phone.
 
    The page follows the payment to its outcome: succeeded, failed, or still
    pending with a "we are checking with the operator" message.
@@ -217,7 +215,7 @@ the projects it reaches.
   - a fixed amount sits within every chosen route's minimum and maximum;
   - a free link's minimum, when set, is not above any chosen route's maximum;
   - each route is an active collection route the project is entitled to, in
-    the link's currency;
+    the link's currency, whose payer action is `none`;
   - at least one route is chosen.
 - **Audit:** creating and disabling a link are audited.
 
@@ -234,8 +232,7 @@ credential, and nothing else in the API is reachable from the paylink domain.
   - the countries the link covers, each with its name and dialling prefix;
   - for each method: an opaque **method key** (stable for that link, never a
     route id), its country, its operator name, its own minimum and maximum,
-    and whether a code or redirect step follows. For a fixed link, each method
-    also carries the **charged amount**;
+    For a fixed link, each method also carries the **charged amount**;
   - a sandbox flag.
 
   A disabled, expired, completed or unknown link answers one neutral "This
@@ -263,23 +260,29 @@ credential, and nothing else in the API is reachable from the paylink domain.
   - A preview the payer never confirms simply expires, as any preview does,
     and does not hold a single-use link.
 - **`GET /pay-api/v1/payments/:token`** returns:
-  - the state and the extra step, if any (a code with its attempts left, or a
-    URL to open);
+  - the state;
   - the **payer instructions** for the route, in the page's language (below);
   - the final outcome;
   - the transaction reference.
-- **`POST /pay-api/v1/payments/:token/code`** sends the payer's code, through
-  the same path as `POST /v1/transactions/:reference/code`.
 - **`GET /pay-api/v1/assets/:id`** serves a logo, with immutable caching.
   Only assets referenced by an active link or a project brand are served.
 - **`POST /pay-api/v1/payments/:token/receipt`** takes `{ email }` and sends
   the receipt, only for a succeeded payment.
-- **Payer instructions per route** (Valentine, 2026-11-15: the code step
-  depends on the operator and the country). Each route carries optional
-  instructions in English and French, edited by the platform on the route's
-  configuration page, for example for Orange Money Cameroon: "Dial #150*50#,
-  choose 'Payment code', then type the code you receive by SMS." The waiting
-  screen shows them; a route without instructions shows the generic text.
+- **The payer never types anything into the page after confirming**
+  (Valentine, 2026-11-15). The operator sends the payer a request, and the
+  payer approves it on their phone (the prompt, or the Orange Money / MoMo
+  app). ProxiaPay learns the outcome as it does for any collection, through
+  the provider's callback or the status checks, and the page, which follows
+  the payment, then shows the result.
+  - Consequently a link offers only routes whose payer action is `none`.
+    Routes that need a code typed through the platform, or a redirect, are
+    not offered at link creation.
+- **Payer instructions per route** (the way to approve depends on the
+  operator and the country). Each route carries optional instructions in
+  English and French, edited by the platform on the route's configuration
+  page, for example "Approve the request on your phone with your Orange Money
+  PIN, or in the Orange Money app." The waiting screen shows them; a route
+  without instructions shows the generic text.
 - **Single use: never collect twice** (Valentine, 2026-11-15).
   - A single-use link accepts one payment at a time. Any payment that is not
     final holds the link, `undetermined` included, even if reconciliation
@@ -364,11 +367,9 @@ credential, and nothing else in the API is reachable from the paylink domain.
      method, country and number, and how long the total holds. "Edit" goes
      back; "Confirm and pay <total>" confirms.
   3. **Request sent:** "A payment request was sent to <number>. Approve it on
-     your phone, or type the operator's payment code below." The route's payer
-     instructions explain how to get the code for that operator and country.
-     A code field appears when the route takes a code; an "Open the
-     operator's page" button when it redirects. The page follows the status
-     on its own.
+     your phone or in your <operator> app." The route's payer instructions
+     follow. Nothing to type: the page follows the status on its own and moves
+     to the outcome as soon as the payment is confirmed.
   4. **Outcome:**
      - success, with the reference;
      - failure, with a reason in plain words, and "try again" if the link is

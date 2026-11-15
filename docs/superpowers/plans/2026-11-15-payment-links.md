@@ -170,7 +170,7 @@
   - `single_use?`, `expires_at?` (in the future);
   - `brand?: { logo_asset_id?, primary_color?, secondary_color? }`. When absent, the project's brand is copied.
 - Validation at creation:
-  - every route is an active collection route the project is entitled to, in `currency`;
+  - every route is an active collection route the project is entitled to, in `currency`, whose current version has no payer action (`otp_required` and `browser_required` both false). Others are refused, and the console form does not offer them;
   - a fixed amount fits each route's minimum and maximum;
   - a free minimum is not above any route's maximum;
   - a brand `logo_asset_id` belongs to the project.
@@ -211,7 +211,7 @@
   - `{ code, project_name, title, description, amount_type, amount|null, minimum_amount, currency, exponent, sandbox: boolean }`;
   - `brand: { logo_url|null, primary_color, secondary_color|null }`, where `logo_url = /pay-api/v1/assets/<id>`;
   - `countries: { code, name, dialling_prefix }[]`;
-  - `methods: { key, country, name, minimum_amount, maximum_amount, payer_action: 'none'|'code'|'browser', charged_amount?: number }[]`. `charged_amount` is set only for a fixed link.
+  - `methods: { key, country, name, minimum_amount, maximum_amount, charged_amount?: number }[]`. `charged_amount` is set only for a fixed link.
 - Only currently usable methods are listed: the route is active, the country is active, the entitlement is active, and the project is active.
 - Produces `linkPrincipal(link): ProjectPrincipal`, which fills `projectId`, `projectCode` and `scopes: ['collection']`, and sets `credentialId`, `credentialKey` and `tokenId` to `''`. The preview and transaction services read only `projectId` and `scopes`; verify this before relying on it.
 - Endpoints:
@@ -295,12 +295,10 @@
 - Endpoints:
   - `GET /pay-api/v1/payments/:token` returns:
     - `{ state, reference, amount, charged_amount, currency, method: { country, name } }`;
-    - `action: { type: 'code', attempts_remaining, expires_at } | { type: 'browser', url, expires_at } | null`;
     - `outcome: { failure_reason_text } | null`;
     - `instructions: string | null`: the route's `payer_instructions` in the requested language (`?lang=fr|en`), or null so the page shows its generic text.
 
     `failure_reason_text` is a plain sentence from a fixed map, never a provider code. An unknown or expired token answers 404 "This payment is no longer available". Rate limit: 60/min per token.
-  - `POST /pay-api/v1/payments/:token/code` takes `{ code }` and goes through `TransactionService.submitCode` with the link principal and the same adapter call as `project-api.controller.ts` `code()`. Extract a shared helper rather than duplicating it.
 - `toApi` gains `payment_link: { code } | null`. It therefore appears in `GET /v1/transactions/:reference` and in webhook payloads, and is documented as optional.
 
 - [ ] **Step 1: Write the failing tests.**
@@ -309,7 +307,7 @@
   - `an undetermined payment holds the link with "A payment on this link is being checked"`.
   - `a failed-then-corrected success after another success raises the alert`.
   - `a corrected failure of the completing payment reopens the link`.
-  - `code step: wrong code decrements attempts; right code succeeds`, against the simulator.
+  - `the state follows the provider callback: a succeeded callback makes GET return succeeded`, against the simulator.
   - `webhook and GET /v1/transactions carry payment_link.code`.
   - `an expired token is 404`.
 - [ ] **Step 2: Run.** Expected: FAIL.
@@ -406,12 +404,9 @@
      - A method select for the chosen country, then a number field with the prefix.
      - "Continue" calls `/previews`, and is disabled while it runs.
   2. **Review.** Amount, fees, **total to pay**, method and country, number, and how long the total holds. "Edit" goes back; "Confirm and pay <total>" calls `/confirm`.
-  3. **Request sent.** "A payment request was sent to <number>. Approve it on your phone, or type the operator's payment code below." Then:
+  3. **Request sent.** "A payment request was sent to <number>. Approve it on your phone or in your <operator> app." Then:
      - the route's `instructions` when present;
-     - a code field with its attempts left and expiry when `action.type === 'code'`;
-     - an "Open the operator's page" button for `browser`.
-
-     Status is polled every 3 s, backing off to 10 s after 1 min, and stops on a final state.
+     Nothing to type: the payer approves on their phone. Status is polled every 3 s, backing off to 10 s after 1 min, and stops on a final state.
   4. **Outcome.**
      - **Success:** the receipt (a print stylesheet; a "Save or print" button calls `window.print()`) and an optional email field with "Send me the receipt".
      - **Failure:** the plain reason, plus "Try again" when the link is still usable.
@@ -423,10 +418,9 @@
 - [ ] **Step 1: Write the failing tests.**
   - `detects CM from Africa/Douala, falls back to the first country`.
   - `a fixed link goes form → review (total) → confirm → request sent → receipt`.
-  - `request sent shows the route instructions and the code field`.
+  - `request sent shows the route instructions and no input`.
   - `a free link quotes as the payer types`.
   - `no country selector with one country`.
-  - `code step submits the code`.
   - `success shows the receipt and sends the email`.
   - `an unavailable link shows the neutral message`.
   - `the page never calls a path outside /pay-api/v1`.
