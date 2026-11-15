@@ -37,6 +37,8 @@ const schema = z.object({
   MAIL_FROM: z.string().optional().transform((v) => (v && v.length > 0 ? v : undefined)),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   PUBLIC_BASE_URL: z.string().url().optional(),
+  /** Where a payment link's page is served, without the code: a link is `${PAYLINK_BASE_URL}/${code}`. Unset, no link can be created. */
+  PAYLINK_BASE_URL: z.string().url().optional(),
   /**
    * Sandbox only: the console's second factor accepts any six digits and skips enrolment. Refused at
    * boot in production — see loadConfig — so a configuration slip cannot waive it where money is real.

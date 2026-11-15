@@ -21,11 +21,12 @@ import { ClientsModule } from '../clients/clients.module';
 import { ClientsController } from './clients.controller';
 import { PaymentLinksModule } from '../payment-links/payment-links.module';
 import { BrandController } from './brand.controller';
+import { PaymentLinksController } from './payment-links.controller';
 
 /** The console's server side: a separate interface project credentials never reach (spec 7). */
 @Module({
   imports: [ClientsModule, PaymentLinksModule],
-  controllers: [ConsoleAuthController, HomeController, ConsoleTransactionsController, ConsoleProjectsController, ConfigurationController, TreasuryController, ReconciliationController, OversightController, TeamController, InvitationController, ClientsController, BrandController],
+  controllers: [ConsoleAuthController, HomeController, ConsoleTransactionsController, ConsoleProjectsController, ConfigurationController, TreasuryController, ReconciliationController, OversightController, TeamController, InvitationController, ClientsController, BrandController, PaymentLinksController],
   providers: [SessionGuard, ApprovalService, RoleService, EntitlementService, RouteService, ExportService, HomeService, ClientProjectsService],
 })
 export class ConsoleApiModule {}

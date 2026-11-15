@@ -35,6 +35,8 @@ import { TreasuryController } from './treasury.controller';
 import { TeamController } from './team.controller';
 import { BrandController } from './brand.controller';
 import { BrandService } from '../payment-links/brand.service';
+import { LinksService } from '../payment-links/links.service';
+import { PaymentLinksController } from './payment-links.controller';
 import { InvitationService } from '../clients/invitation.service';
 
 let t: TestContext;
@@ -47,6 +49,7 @@ const controllers = {
   home: () => new HomeController(t.db, get(TreasuryService), nul, {} as ConfirmationService, new HomeService(t.db)),
   auth: () => new ConsoleAuthController(t.db, t.app.get<AppConfig>(CONFIG), get(AdminAuthService), get(SettingsService), nul),
   brand: () => new BrandController(t.db, new BrandService(t.db, get(AuditService))),
+  links: () => new PaymentLinksController(t.db, new LinksService(t.db, { PAYLINK_BASE_URL: 'https://pay.example.com' }, get(AuditService), new BrandService(t.db, get(AuditService)))),
   team: () => new TeamController(t.db, new InvitationService(t.db, t.app.get(CONFIG), get(Mailer), get(AlertService), get(AuditService))),
 };
 
@@ -248,6 +251,10 @@ describe('client views', () => {
     const txn = await succeededCollection(project, 'order-1');
     await t.db.insertInto('project_origin').values({ project_id: project.id, cidr: '10.0.0.0/8', description: 'office', created_by: project.adminId }).execute();
     await t.db.insertInto('origin_refusal').values({ project_id: project.id, credential_key: project.key, origin_address: '192.168.1.1' }).execute();
+    // A link with one payment on it, so the read carries its counts and not an empty shell.
+    const link = await controllers.links().create(project.id, { title: 'Invoice 42', currency: 'XAF', amount_type: 'fixed', amount: 1000, route_ids: [(await momo()).route] }, await clientRequest(owner, acme.id));
+    await t.db.updateTable('transaction').set({ payment_link_id: link.id }).where('id', '=', txn.id).execute();
+    expect((await controllers.links().detail(project.id, link.id, await clientRequest(owner, acme.id))).payments).toMatchObject({ count: 1, succeeded: 1, total_collected: 1000 });
 
     const ownerAuth = await new AuthorisationService(t.db).load(owner.id, acme.id);
     // Shaping does not rest on what the client holds: a client principal with every permission gets the client shapes too.
@@ -268,6 +275,8 @@ describe('client views', () => {
         'GET console/projects/:id/origin-refusals': () => controllers.projects().originRefusals(project.id, {}, req),
         'GET console/projects/:id/deliveries': () => controllers.projects().deliveries(project.id, {}, req),
         'GET console/projects/:id/brand': () => controllers.brand().get(project.id, req),
+        'GET console/projects/:id/payment-links': () => controllers.links().list(project.id, req),
+        'GET console/projects/:id/payment-links/:lid': () => controllers.links().detail(project.id, link.id, req),
         'GET console/treasury/balances': () => controllers.treasury().balances(req),
         'GET console/treasury/project/:projectId/accounts': () => controllers.treasury().projectAccounts(project.id, req),
         'GET console/team': () => controllers.team().list(req),
