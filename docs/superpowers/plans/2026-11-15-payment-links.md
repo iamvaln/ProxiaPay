@@ -95,6 +95,7 @@
     - `receipts_sent int default 0`, `receipt_sent_at null`, `receipt_sent_to text null` (masked).
 - Produces these changes to existing tables:
   - `transaction.payment_link_id uuid null references payment_link`, plus an index.
+  - `route.payer_instructions jsonb null`, shaped `{ "en": string, "fr": string }`. This is the per-route text shown on the waiting screen.
   - `links.manage` is inserted into roles `Owner` and `Client owner`, idempotently.
 
 - [ ] **Step 1: Write the failing test.** `schema.test.ts` asserts:
@@ -238,7 +239,10 @@
 - Test: `apps/api/src/pay-api/pay.test.ts`
 
 **Interfaces:**
-- Produces `LinkPaymentsService.start(code, { method, msisdn, amount? }, clientAddress): Promise<{ token: string; reference: string }>`. In order:
+- **Two steps** (spec: review the total, then confirm).
+  1. `LinkPaymentsService.preview(code, { method, msisdn, amount? }, clientAddress): Promise<{ token, review: { amount, fees_borne_by_payer, total, currency, method: { country, name }, msisdn_formatted, expires_at } }>`. It runs checks 1, 3 and 5 below, then step 6, and inserts `payment_link_payment` with the token hash and a null `transaction_id`. Make `transaction_id` nullable in Task 1's table, with a `preview_id` column.
+  2. `LinkPaymentsService.confirm(token, clientAddress): Promise<{ reference }>`. It runs checks 2 and 4, then steps 7 and 8, and sets `transaction_id`. An expired preview answers "This total has expired; start again."
+- The order of checks and steps across the two calls:
   1. Apply the rate limits in Global Constraints. Key the per-number limit on the normalised number, using the method's country.
   2. Lock the link row (`FOR UPDATE`).
   3. Refuse an unavailable link.
@@ -248,12 +252,17 @@
   7. Call `TransactionService.confirm(principal, preview.reference, 'collection')`, then `SubmissionService.submit(transactionId)`.
   8. Set `transaction.payment_link_id` and insert `payment_link_payment` with the token hash and a 24 h expiry.
 - Steps 3 to 8 run in one database transaction where the services allow it. Otherwise, the single-use check and the `payment_link_payment` insert share the link lock; document the choice in the report.
-- Endpoint: `POST /pay-api/v1/links/:code/payments` returns `{ payment_token, reference }` with status 201.
+- Endpoints:
+  - `POST /pay-api/v1/links/:code/previews` returns `{ payment_token, review }` with status 201.
+  - `POST /pay-api/v1/payments/:token/confirm` returns `{ reference }`.
+- An unconfirmed preview never holds a single-use link. The single-use check (4) runs at confirm.
 
 - [ ] **Step 1: Write the failing tests.**
   - `a payer pays a fixed link: one transaction with project_reference PL-<code>-…, payment_link_id set, normal ledger and webhook`.
   - `free amount: refuses below floor (link minimum 500 over a 100 route minimum), above max, 0, -1, 10.5 for XAF`.
-  - `two concurrent payments on a single-use link: exactly one created, the other refused with "A payment is already in progress on this link"`, using two promises raced against the real DB.
+  - `two concurrent confirms on a single-use link: exactly one transaction, the other refused with "A payment is already in progress on this link"`, using two promises raced against the real DB.
+  - `an unconfirmed preview does not hold a single-use link`.
+  - `confirm after the preview expired answers "This total has expired; start again."`.
   - `rate limit per number: the 4th request within 600 s answers 429`.
   - `a method key of another link answers like an unavailable method`.
   - `entitlement limits still apply`.
@@ -287,7 +296,8 @@
   - `GET /pay-api/v1/payments/:token` returns:
     - `{ state, reference, amount, charged_amount, currency, method: { country, name } }`;
     - `action: { type: 'code', attempts_remaining, expires_at } | { type: 'browser', url, expires_at } | null`;
-    - `outcome: { failure_reason_text } | null`.
+    - `outcome: { failure_reason_text } | null`;
+    - `instructions: string | null`: the route's `payer_instructions` in the requested language (`?lang=fr|en`), or null so the page shows its generic text.
 
     `failure_reason_text` is a plain sentence from a fixed map, never a provider code. An unknown or expired token answers 404 "This payment is no longer available". Rate limit: 60/min per token.
   - `POST /pay-api/v1/payments/:token/code` takes `{ code }` and goes through `TransactionService.submitCode` with the link principal and the same adapter call as `project-api.controller.ts` `code()`. Extract a shared helper rather than duplicating it.
@@ -346,6 +356,7 @@
   - logo upload: the file is read as base64 in the browser, refused client-side above 200 KB, and the server re-checks it;
   - two colour pickers, shown with the server's refusal message;
   - a live preview of the page header.
+- **Platform route page** (`RouteDetail.tsx`, gated on `routes.open_version`): edits the route's payer instructions in English and French through a small `PUT /console/configuration/routes/:id/payer-instructions` endpoint. It is platform-only, audited as `route.payer_instructions`, and covered by an API test.
 - **Links tab:**
   - a list: title, amount or "free, from X", methods, status, payments, total collected;
   - per link: **Copy** URL, QR code (existing `QrCode`), Disable (owner only), and "View payments", which opens `/transactions?payment_link=<id>`.
@@ -386,16 +397,22 @@
   - it maps time zones to countries, with at least `Africa/Douala`→CM, `Africa/Libreville`→GA, `Africa/Brazzaville`→CG, `Africa/Ndjamena`→TD, `Africa/Bangui`→CF, `Africa/Malabo`→GQ, `Africa/Abidjan`→CI, `Africa/Dakar`→SN, `Africa/Bamako`→ML, `Africa/Ouagadougou`→BF, `Africa/Lome`→TG, `Africa/Porto-Novo`→BJ, `Africa/Niamey`→NE;
   - it then tries the region of the language tags (`fr-CM`→CM);
   - it falls back to the first available country.
+- **Layout: a web page first** (spec). A centred card about 960 px wide: the client's brand panel on the left (logo, name, title, description, amount, "Paiement sécurisé · Powered by ProxiaPay"), the form on the right. Below 720 px wide, the panel stacks above the form.
 - **Screens:**
   1. **Link.**
      - The header shows the logo, project name and colours.
      - Then the title and description, and the amount or an amount field with its minimum.
      - A country selector is shown only when there are 2 or more countries.
-     - The methods of the selected country show their charged amount: from the view for a fixed link, from `/quote` (debounced at 400 ms) for a free one.
-     - A number field shows the prefix.
-     - The Pay button is disabled while a request runs.
-  2. **Waiting.** "Approve the payment on your phone", or a code field with its attempts left, or an "Open the operator's page" button. Status is polled every 3 s, backing off to 10 s after 1 min, and stops on a final state.
-  3. **Outcome.**
+     - A method select for the chosen country, then a number field with the prefix.
+     - "Continue" calls `/previews`, and is disabled while it runs.
+  2. **Review.** Amount, fees, **total to pay**, method and country, number, and how long the total holds. "Edit" goes back; "Confirm and pay <total>" calls `/confirm`.
+  3. **Request sent.** "A payment request was sent to <number>. Approve it on your phone, or type the operator's payment code below." Then:
+     - the route's `instructions` when present;
+     - a code field with its attempts left and expiry when `action.type === 'code'`;
+     - an "Open the operator's page" button for `browser`.
+
+     Status is polled every 3 s, backing off to 10 s after 1 min, and stops on a final state.
+  4. **Outcome.**
      - **Success:** the receipt (a print stylesheet; a "Save or print" button calls `window.print()`) and an optional email field with "Send me the receipt".
      - **Failure:** the plain reason, plus "Try again" when the link is still usable.
      - **Pending:** "We are checking with the operator; you can close this page."
@@ -405,7 +422,8 @@
 
 - [ ] **Step 1: Write the failing tests.**
   - `detects CM from Africa/Douala, falls back to the first country`.
-  - `a fixed link shows charged amounts and pays`.
+  - `a fixed link goes form → review (total) → confirm → request sent → receipt`.
+  - `request sent shows the route instructions and the code field`.
   - `a free link quotes as the payer types`.
   - `no country selector with one country`.
   - `code step submits the code`.
