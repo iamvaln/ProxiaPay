@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { get, post } from '../lib/api';
 import { useSession, useT } from '../lib/session';
-import { moneyParts } from '../lib/format';
+import { exponentOf, moneyParts, toMinor } from '../lib/format';
 import { Amount, ErrorLine, Pill, SubmitForm, When, useLoad } from '../components/common';
 import { QrCode } from '../components/QrCode';
 import { DataTable, type Column } from '../components/table/DataTable';
@@ -38,9 +38,11 @@ function CopyUrl({ value }: { value: string }) {
 /** The list, one row per link: what it asks, where it can be paid, what it collected, and what can be done with it. */
 function LinkList({ id, links, manage, reload }: { id: string; links: LinkRow[]; manage: boolean; reload: () => void }) {
   const t = useT();
-  const { lang } = useSession();
+  const { lang, has } = useSession();
   const [error, setError] = useState<string | null>(null);
   const disable = async (l: LinkRow) => {
+    // A disabled link cannot be enabled again: the owner says so first.
+    if (!window.confirm(t('pl.disable_confirm'))) return;
     setError(null);
     try { await post(`/projects/${id}/payment-links/${l.id}/disable`); reload(); } catch (e) { setError((e as Error).message); }
   };
@@ -54,11 +56,12 @@ function LinkList({ id, links, manage, reload }: { id: string; links: LinkRow[];
     { key: 'status', label: t('col.status'), render: (l) => <Pill value={l.status} /> },
     { key: 'payments', label: t('col.payments'), align: 'end', render: (l) => t('pl.payments_cell', { succeeded: l.payments.succeeded, count: l.payments.count }) },
     { key: 'collected', label: t('col.collected'), align: 'end', render: (l) => <Amount minor={l.payments.total_collected} currency={l.currency} /> },
+    { key: 'last_payment', label: t('col.last_payment'), render: (l) => <When value={l.payments.last_at} /> },
     { key: 'actions', label: t('table.actions'), render: (l) => (
       <div className="row">
         {l.url && <CopyUrl value={l.url} />}
         {l.url && <details><summary>{t('pl.qr')}</summary><QrCode value={l.url} alt={t('pl.qr_alt', { title: l.title })} size={160} /></details>}
-        <Link to={`/transactions?payment_link=${l.id}`}>{t('pl.view_payments')}</Link>
+        {has('transactions.read') && <Link to={`/transactions?payment_link=${l.id}`}>{t('pl.view_payments')}</Link>}
         {manage && l.status === 'active' && <button type="button" onClick={() => disable(l)}>{t('pl.disable')}</button>}
       </div>
     ) },
@@ -84,11 +87,18 @@ function CreateForm({ id, name, routes, brand, reload }: { id: string; name: str
   const here = routes.filter((r) => r.currency === form.currency);
   const countries = [...new Set(here.map((r) => r.country))];
   const chosen = picked.filter((rid) => here.some((r) => r.id === rid));
+  const exp = exponentOf(form.currency);
+  // Typed in the currency as people write it; the API takes minor units.
+  const minor = (text: string): number => {
+    const v = toMinor(text, form.currency);
+    if (v === null) throw new Error(t('pl.f_amount_invalid', { currency: form.currency, n: exp }));
+    return v;
+  };
   const submit = async () => {
     if (!chosen.length) throw new Error(t('pl.f_pick_method'));
     const body = {
       title: form.title, ...(form.description ? { description: form.description } : {}), currency: form.currency, amount_type: form.amount_type,
-      ...(form.amount_type === 'fixed' ? { amount: Number(form.amount) } : { minimum_amount: Number(form.minimum || 0) }),
+      ...(form.amount_type === 'fixed' ? { amount: minor(form.amount) } : { minimum_amount: minor(form.minimum || '0') }),
       route_ids: chosen, single_use: form.single_use, ...(form.expires ? { expires_at: new Date(form.expires).toISOString() } : {}),
       brand: { primary_color: colors.primary_color, secondary_color: colors.secondary_color },
     };
@@ -109,8 +119,8 @@ function CreateForm({ id, name, routes, brand, reload }: { id: string; name: str
           <label className="row"><input type="radio" name="amount_type" checked={form.amount_type === 'free'} onChange={() => set({ amount_type: 'free' })} /> {t('pl.f_free')}</label>
         </fieldset>
         {form.amount_type === 'fixed'
-          ? <label>{t('pl.f_amount')}<input type="number" min={1} step={1} value={form.amount} onChange={(e) => set({ amount: e.target.value })} required /></label>
-          : <label>{t('pl.f_minimum')}<input type="number" min={0} step={1} value={form.minimum} onChange={(e) => set({ minimum: e.target.value })} /></label>}
+          ? <label>{t('pl.f_amount', { currency: form.currency })}<input type="number" min={1 / 10 ** exp} step={1 / 10 ** exp} value={form.amount} onChange={(e) => set({ amount: e.target.value })} required /></label>
+          : <label>{t('pl.f_minimum', { currency: form.currency })}<input type="number" min={0} step={1 / 10 ** exp} value={form.minimum} onChange={(e) => set({ minimum: e.target.value })} /></label>}
         <fieldset>
           <legend>{t('pl.f_methods')}</legend>
           {here.length === 0 && <p className="small muted">{t('pl.f_methods_none')}</p>}

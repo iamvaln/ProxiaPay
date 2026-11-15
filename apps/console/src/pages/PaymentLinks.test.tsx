@@ -60,7 +60,7 @@ describe('the payment links tab', () => {
     fireEvent.change(form.getByLabelText('Currency'), { target: { value: 'XAF' } });
     fireEvent.change(form.getByLabelText('Title'), { target: { value: 'Donations' } });
     fireEvent.click(form.getByLabelText('Free: the payer chooses'));
-    fireEvent.change(form.getByLabelText('Smallest amount accepted (minor units)'), { target: { value: '500' } });
+    fireEvent.change(form.getByLabelText('Smallest amount accepted (XAF)'), { target: { value: '500' } });
     // Only the XAF routes are offered; the GHS one is not.
     expect(form.queryByLabelText('MoMo Ghana')).toBeNull();
     fireEvent.click(form.getByLabelText('MTN MoMo'));
@@ -70,6 +70,37 @@ describe('the payment links tab', () => {
     const post = calls.find((c) => c.method === 'POST' && c.path === '/projects/p1/payment-links')!;
     expect(post.body).toMatchObject({ title: 'Donations', currency: 'XAF', amount_type: 'free', minimum_amount: 500, route_ids: ['r-cm', 'r-ga'], single_use: false, brand: { primary_color: '#1A56DB', secondary_color: null } });
     expect(post.body).not.toHaveProperty('amount');
+  });
+
+  it('an amount in a currency with decimals is typed in the currency and sent in minor units', async () => {
+    const calls = server(OWNER, { writes: { 'POST /projects/p1/payment-links': () => ({ id: 'l2', code: 'Zz', url: 'https://pay.example.com/Zz' }) } });
+    project('links');
+    const form = within(await waitFor(() => { const el = document.getElementById('new-link'); if (!el) throw new Error('no form'); return el; }));
+    fireEvent.change(form.getByLabelText('Currency'), { target: { value: 'GHS' } });
+    fireEvent.change(form.getByLabelText('Title'), { target: { value: 'Tickets' } });
+    expect(form.queryByText(/minor units/)).toBeNull();
+    fireEvent.change(form.getByLabelText('Amount (GHS)'), { target: { value: '12.50' } });
+    fireEvent.click(form.getByLabelText('MoMo Ghana'));
+    fireEvent.click(form.getByRole('button', { name: 'Create the link' }));
+    await screen.findByText(/Link created/);
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/projects/p1/payment-links')!.body).toMatchObject({ currency: 'GHS', amount: 1250 });
+
+    // The form clears after a create: a second link, free this time.
+    fireEvent.change(form.getByLabelText('Title'), { target: { value: 'Donations' } });
+    fireEvent.click(form.getByLabelText('Free: the payer chooses'));
+    fireEvent.change(form.getByLabelText('Smallest amount accepted (GHS)'), { target: { value: '2' } });
+    fireEvent.click(form.getByLabelText('MoMo Ghana'));
+    fireEvent.click(form.getByRole('button', { name: 'Create the link' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.path === '/projects/p1/payment-links')).toHaveLength(2));
+    expect(calls.filter((c) => c.method === 'POST' && c.path === '/projects/p1/payment-links')[1]!.body).toMatchObject({ amount_type: 'free', minimum_amount: 200 });
+  });
+
+  it('shows when each link was last paid', async () => {
+    server(['projects.read']);
+    project('links');
+    expect(await screen.findByText('Invoice 42')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: /Last payment/ })).toBeTruthy();
+    expect(screen.getByTitle('2026-11-10T10:00:00.000Z').textContent).toBe('10 Nov 2026, 10:00');
   });
 
   it('a developer sees the list but no create or disable', async () => {
@@ -82,10 +113,18 @@ describe('the payment links tab', () => {
     expect(document.getElementById('new-link')).toBeNull();
   });
 
-  it('an owner disables an active link', async () => {
+  it('an owner disables an active link, once they confirm it cannot be undone', async () => {
     const calls = server(OWNER);
+    const ask = vi.fn(() => false);
+    vi.stubGlobal('confirm', ask);
     project('links');
     fireEvent.click(await screen.findByRole('button', { name: 'Disable' }));
+    expect(ask).toHaveBeenCalledWith('This link will stop accepting payments for good.');
+    await new Promise((r) => setTimeout(r, 30));
+    expect(calls.some((c) => c.method === 'POST' && c.path.endsWith('/disable'))).toBe(false);
+
+    ask.mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/projects/p1/payment-links/l1/disable')).toBe(true));
   });
 
@@ -95,6 +134,8 @@ describe('the payment links tab', () => {
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
     project('links');
     fireEvent.click(await screen.findByRole('button', { name: 'Copy' }));
+    // Without transactions.read there are no payments to view.
+    expect(screen.queryByRole('link', { name: 'View payments' })).toBeNull();
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('https://pay.example.com/AbCdEfGhIj'));
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy();
   });
@@ -113,7 +154,7 @@ describe('the payment links tab', () => {
     const form = within(await waitFor(() => { const el = document.getElementById('new-link'); if (!el) throw new Error('no form'); return el; }));
     fireEvent.change(form.getByLabelText('Currency'), { target: { value: 'XAF' } });
     fireEvent.change(form.getByLabelText('Title'), { target: { value: 'X' } });
-    fireEvent.change(form.getByLabelText('Amount (minor units)'), { target: { value: '500' } });
+    fireEvent.change(form.getByLabelText('Amount (XAF)'), { target: { value: '500' } });
     fireEvent.click(form.getByLabelText('MTN MoMo'));
     fireEvent.click(form.getByRole('button', { name: 'Create the link' }));
     expect(await screen.findByText(/must type a code/)).toBeTruthy();
