@@ -49,9 +49,12 @@ export interface PaymentStatus {
   brand: { logo_url: string | null; primary_color: string };
 }
 
-/** The platform's error body, kept whole: the page words some codes itself and shows a field's message beside the field. */
+/**
+ * The platform's error body, kept whole: the page words some codes itself and shows a field's message beside the field.
+ * `answered` says the platform's own error body came back, not a gateway's page or an empty answer.
+ */
 export class PayError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string, readonly field?: string) {
+  constructor(readonly status: number, readonly code: string, message: string, readonly field?: string, readonly answered = true) {
     super(message);
   }
 }
@@ -67,8 +70,9 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   let data: any;
   try { data = text ? JSON.parse(text) : undefined; } catch { data = undefined; }
   if (!res.ok) {
-    const e = data?.error ?? {};
-    throw new PayError(res.status, e.code ?? (res.status === 429 ? 'RATE_LIMITED' : 'INTERNAL_ERROR'), e.message ?? res.statusText, e.field);
+    const answered = typeof data?.error === 'object' && data.error !== null;
+    const e = answered ? data.error : {};
+    throw new PayError(res.status, e.code ?? (res.status === 429 ? 'RATE_LIMITED' : 'INTERNAL_ERROR'), e.message ?? res.statusText, e.field, answered);
   }
   return data as T;
 }

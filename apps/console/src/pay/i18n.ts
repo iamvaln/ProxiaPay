@@ -30,7 +30,7 @@ const STRINGS = {
 
   'review.title': { en: 'Check before you pay', fr: 'Vérifiez avant de payer' },
   'review.amount': { en: 'Amount', fr: 'Montant' },
-  'review.fees': { en: '{operator} fees', fr: 'Frais {operator}' },
+  'review.fees': { en: 'Fees', fr: 'Frais' },
   'review.method': { en: 'Method', fr: 'Moyen' },
   'review.number': { en: 'Number', fr: 'Numéro' },
   'review.total': { en: 'Total to pay', fr: 'Total à payer' },

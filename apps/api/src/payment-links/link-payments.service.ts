@@ -26,6 +26,11 @@ const BEING_CHECKED = 'A payment on this link is being checked';
 const PAYMENT_GONE = 'This payment is no longer available';
 const NOT_STARTED = 'We could not start this payment. Please try again.';
 const RECEIPTS_PER_PAYMENT = 3;
+/**
+ * Previews and confirmations per address a minute. Generous because many payers share one address behind a carrier's NAT;
+ * the limits per number and per link are what bound abuse.
+ */
+const PER_ADDRESS = 20;
 const EMAIL = /^[^\s@<>",;]{1,64}@[^\s@<>",;]+\.[^\s@<>",;]+$/;
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -130,7 +135,7 @@ export class LinkPaymentsService {
 
   /** Prices the payment as a real preview and returns the review the page shows, with the token that follows the payment. */
   async preview(code: string, body: unknown, clientAddress: string): Promise<{ token: string; review: LinkPaymentReview }> {
-    await enforceLimit(this.limiter, `paylink:preview:${clientAddress}`, 5, 60);
+    await enforceLimit(this.limiter, `paylink:preview:${clientAddress}`, PER_ADDRESS, 60);
     const input = (typeof body === 'object' && body !== null ? body : {}) as { method?: unknown; msisdn?: unknown; amount?: unknown };
     const link = await this.links.open(this.db, code);
     const method = typeof input.method === 'string' && isUuid(input.method) ? (await this.links.methods(this.db, link)).find((m) => m.key === input.method) : undefined;
@@ -174,17 +179,20 @@ export class LinkPaymentsService {
    * refuse run inside one store transaction under the link's lock; the provider is called only once it has committed.
    */
   async confirm(token: string, clientAddress: string): Promise<{ reference: string }> {
-    await enforceLimit(this.limiter, `paylink:confirm:${clientAddress}`, 5, 60);
-    if (!TOKEN.test(token)) throw noSuchPayment();
-    const payment = await this.db.selectFrom('payment_link_payment as pp')
-      .innerJoin('preview as pv', 'pv.id', 'pp.preview_id')
-      .innerJoin('payment_link as l', 'l.id', 'pp.link_id')
-      .leftJoin('transaction as t', 't.id', 'pp.transaction_id')
-      .select(['pp.id', 'pp.link_id', 'pp.expires_at', 'pv.reference as preview_reference', 'pv.msisdn_index', 'pv.route_id', 'l.code', 't.reference as transaction_reference'])
-      .where('pp.token_hash', '=', CryptoService.tokenHash(token)).executeTakeFirst();
+    const payment = TOKEN.test(token)
+      ? await this.db.selectFrom('payment_link_payment as pp')
+        .innerJoin('preview as pv', 'pv.id', 'pp.preview_id')
+        .innerJoin('payment_link as l', 'l.id', 'pp.link_id')
+        .leftJoin('transaction as t', 't.id', 'pp.transaction_id')
+        .select(['pp.id', 'pp.link_id', 'pp.expires_at', 'pv.reference as preview_reference', 'pv.msisdn_index', 'pv.route_id', 'l.code', 't.reference as transaction_reference'])
+        .where('pp.token_hash', '=', CryptoService.tokenHash(token)).executeTakeFirst()
+      : undefined;
+    // A repeat of a confirmed payment answers before every limit: it asks the operator for nothing, so it spends no budget,
+    // and a payer retrying after a lost answer is never refused the payment they already made.
+    if (payment?.transaction_reference) return { reference: payment.transaction_reference };
+    // Anything else is charged to the address, an unknown token included: that is what bounds guessing at tokens.
+    await enforceLimit(this.limiter, `paylink:confirm:${clientAddress}`, PER_ADDRESS, 60);
     if (!payment) throw noSuchPayment();
-    // A repeat of a confirmed payment answers before the limits below: it asks the operator for nothing, so it spends no budget.
-    if (payment.transaction_reference) return { reference: payment.transaction_reference };
     // The operator pushes a request to the number here, so this is where the number and the link are limited.
     await enforceLimit(this.limiter, `paylink:confirm-number:${payment.msisdn_index.toString('hex')}`, 3, 600, NUMBER_LIMITED);
     await enforceLimit(this.limiter, `paylink:confirm-link:${payment.link_id}`, 30, 60, LINK_LIMITED);

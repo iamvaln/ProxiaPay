@@ -225,6 +225,10 @@ export function PayApp({ timings }: { timings?: Partial<PayTimings> }) {
           onEdit={() => { keepToken(null); setStage({ kind: 'form' }); }}
           onUnavailable={() => { keepToken(null); setStage({ kind: 'unavailable' }); }}
           onFollow={() => setStage({ kind: 'following', token: stage.token, review: stage.review, status: null })}
+          onMethodGone={async () => {
+            const view = await refreshLink();
+            if (view) keepOffered(view);
+          }}
         />
       );
       break;
@@ -463,8 +467,22 @@ function PayForm(props: {
   );
 }
 
-function ReviewStep({ link, lang, review, token, onEdit, onUnavailable, onFollow }: {
-  link: LinkView; lang: Lang; review: Review; token: string; onEdit: () => void; onUnavailable: () => void; onFollow: () => void;
+/**
+ * A refusal the platform made before anything started: its own error body, 4xx, and not a rate limit. The transaction is
+ * committed before the operator is asked, so a server fault, a gateway's page or a limit hit on a retry may come after it.
+ */
+const isRefusal = (e: unknown): e is PayError => e instanceof PayError && e.answered && e.status >= 400 && e.status < 500 && e.status !== 429;
+
+/** What the payer reads when the confirmation is refused: a field's refusal in the form's words, anything else as described. */
+function confirmText(e: unknown, lang: Lang): string {
+  const field = fieldOf(e);
+  if (field === 'method') return t(lang, 'error.method_unavailable');
+  if (field === 'amount') return t(lang, 'error.amount_not_payable');
+  return describe(e, lang);
+}
+
+function ReviewStep({ link, lang, review, token, onEdit, onUnavailable, onFollow, onMethodGone }: {
+  link: LinkView; lang: Lang; review: Review; token: string; onEdit: () => void; onUnavailable: () => void; onFollow: () => void; onMethodGone: () => Promise<void>;
 }) {
   const say = (key: Key, vars?: Record<string, string | number>) => t(lang, key, vars);
   const fmt = (minor: number) => money(minor, review.currency, link.exponent, lang);
@@ -485,9 +503,10 @@ function ReviewStep({ link, lang, review, token, onEdit, onUnavailable, onFollow
       await confirmPayment(token);
       onFollow();
     } catch (e) {
-      if (e instanceof PayError) {
+      if (isRefusal(e)) {
         keepToken(null);
         if (e.code === 'LINK_UNAVAILABLE') { onUnavailable(); return; }
+        if (fieldOf(e) === 'method') void onMethodGone();
       } else {
         // The token stays: confirming again returns the same payment, and following it shows whether it started.
         setUncertain(true);
@@ -503,7 +522,7 @@ function ReviewStep({ link, lang, review, token, onEdit, onUnavailable, onFollow
       <h2>{say('review.title')}</h2>
       <dl className="pay-summary">
         <dt>{say('review.amount')}</dt><dd>{fmt(review.amount)}</dd>
-        <dt>{say('review.fees', { operator: review.method.name })}</dt><dd>{fmt(review.fees_borne_by_payer)}</dd>
+        <dt>{say('review.fees')}</dt><dd>{fmt(review.fees_borne_by_payer)}</dd>
         <dt>{say('review.method')}</dt><dd>{review.method.name} · {countryName(review.method.country, place?.name ?? review.method.country, lang)}</dd>
         <dt>{say('review.number')}</dt><dd>{review.msisdn_formatted}</dd>
         <dt className="pay-total">{say('review.total')}</dt><dd className="pay-total">{fmt(review.total)}</dd>
@@ -511,7 +530,7 @@ function ReviewStep({ link, lang, review, token, onEdit, onUnavailable, onFollow
       <p className="pay-hint">
         {say('review.holds', { duration: minutes === 1 ? say('review.minute') : say('review.minutes', { n: minutes }), operator: review.method.name })}
       </p>
-      {error !== undefined && <p className="pay-error pay-form-error" role="alert">{describe(error, lang)}</p>}
+      {error !== undefined && <p className="pay-error pay-form-error" role="alert">{confirmText(error, lang)}</p>}
       <div className="pay-actions pay-push">
         {uncertain
           ? <button type="button" className="pay-button pay-secondary" onClick={onFollow} disabled={busy}>{say('review.check')}</button>

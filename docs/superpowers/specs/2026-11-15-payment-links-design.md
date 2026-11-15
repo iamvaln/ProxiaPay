@@ -300,7 +300,8 @@ credential, and nothing else in the API is reachable from the paylink domain.
     correction) update the link in the same database transaction as the state
     change.
 - **Rate limits** (*my call*, values to tune):
-  - creating a payment: 5 per minute per address, 3 per 10 minutes per number,
+  - creating a payment: 20 per minute per address (many payers share one
+    address behind a carrier's NAT), 3 per 10 minutes per number,
     30 per minute per link;
   - reading a payment: 60 per minute per token.
 

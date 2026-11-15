@@ -307,20 +307,21 @@ describe('a single-use link', () => {
 });
 
 describe('rate limits', () => {
-  it('rate limit per number: the 4th request within 600 s answers 429', async () => {
+  it('rate limit per number: the 4th confirmation to a number within 600 s answers 429', async () => {
     const momo = await routeId('CM', 'MOMO');
-    const l = await link([momo]);
-    const tok = await token(l.code, { method: l.keys[momo], msisdn: '677123456' });
-    // Three earlier requests to the number spend its budget (a retried confirm does not: see below).
-    const index = t.app.get(CryptoService).blindIndex('+237677123456').toString('hex');
-    for (let i = 0; i < 3; i++) await t.app.get(RateLimiter).hit(`paylink:confirm-number:${index}`, 3, 600);
-    const res = await confirm(tok);
-    expect(res.status).toBe(429);
-    expect(Number(res.headers.get('retry-after'))).toBeGreaterThan(0);
-    expect(await res.json()).toEqual({ error: { code: 'RATE_LIMITED', message: 'Too many payment requests to this number. Wait a few minutes and try again.', retryable: true } });
+    // A reusable free link, four distinct totals to the same number: four real payments the operator would push.
+    const l = await link([momo], { amount_type: 'free' });
+    const tokens = [];
+    for (const amount of [1000, 1100, 1200, 1300]) tokens.push(await token(l.code, { method: l.keys[momo], msisdn: '677123456', amount }));
+    const answers = [];
+    for (const tok of tokens) answers.push(await confirm(tok));
+    expect(answers.map((r) => r.status)).toEqual([200, 200, 200, 429]);
+    const refused = answers[3]!;
+    expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(await refused.json()).toEqual({ error: { code: 'RATE_LIMITED', message: 'Too many payment requests to this number. Wait a few minutes and try again.', retryable: true } });
+    expect(await linkTransactions(l.id)).toHaveLength(3);
     // The limit is kept against the number's keyed index: the window table never holds the number.
     const keys = (await t.db.selectFrom('rate_limit_window').select('key').execute()).map((k) => k.key);
-    expect(keys.some((k) => k.startsWith('paylink:confirm-number:'))).toBe(true);
     for (const k of keys) expect(k).not.toMatch(/677123456|123456/);
     expect(keys).toContain(`paylink:confirm-number:${t.app.get(CryptoService).blindIndex('+237677123456').toString('hex')}`);
   });
@@ -343,6 +344,21 @@ describe('rate limits', () => {
     expect(await keys()).toEqual(spent);
   });
 
+  it('a retried confirm answers the same payment even past the address limit', async () => {
+    const momo = await routeId('CM', 'MOMO');
+    const l = await link([momo]);
+    const tok = await token(l.code, { method: l.keys[momo], msisdn: '677123456' });
+    const first = await answer(await confirm(tok));
+    expect(first.status).toBe(200);
+    // The address spends its whole minute (carrier NAT, a busy shop): the payer who retries still learns their payment.
+    const limiter = t.app.get(RateLimiter);
+    for (let i = 0; i < 20; i++) await limiter.hit('paylink:confirm:127.0.0.1', 20, 60);
+    expect(await answer(await confirm(tok))).toEqual(first);
+    // A token that confirms nothing is still charged to the address.
+    expect((await confirm('A'.repeat(43))).status).toBe(429);
+    expect(await linkTransactions(l.id)).toHaveLength(1);
+  });
+
   it('previews: 10 per 600 s per number, keyed on the normalised number whatever its spelling', async () => {
     const momo = await routeId('CM', 'MOMO');
     const l = await link([momo]);
@@ -356,13 +372,14 @@ describe('rate limits', () => {
     expect((await preview(l.code, { method: l.keys[momo], msisdn: '677654321' })).status).toBe(201);
   });
 
-  it('5 a minute per address on previews and on confirmations', async () => {
+  it('20 a minute per address on previews and on confirmations', async () => {
     const momo = await routeId('CM', 'MOMO');
     const l = await link([momo], { amount_type: 'free' });
-    for (let i = 0; i < 5; i++) expect((await preview(l.code, { method: l.keys[momo], msisdn: `6771000${i}9`, amount: 1000 + i })).status).toBe(201);
-    const sixth = await preview(l.code, { method: l.keys[momo], msisdn: '677100069', amount: 2000 });
-    expect(await answer(sixth)).toEqual({ status: 429, body: { error: { code: 'RATE_LIMITED', message: 'Too many requests from this connection. Wait a minute and try again.', retryable: true } } });
-    for (let i = 0; i < 5; i++) await confirm('A'.repeat(43));
+    // Distinct numbers, so only the address limit is in play.
+    for (let i = 0; i < 20; i++) expect((await preview(l.code, { method: l.keys[momo], msisdn: `67710${String(i).padStart(2, '0')}09`, amount: 1000 + i })).status).toBe(201);
+    const over = await preview(l.code, { method: l.keys[momo], msisdn: '677109909', amount: 2000 });
+    expect(await answer(over)).toEqual({ status: 429, body: { error: { code: 'RATE_LIMITED', message: 'Too many requests from this connection. Wait a minute and try again.', retryable: true } } });
+    for (let i = 0; i < 20; i++) expect((await confirm('A'.repeat(43))).status).toBe(404);
     expect((await confirm('A'.repeat(43))).status).toBe(429);
   });
 

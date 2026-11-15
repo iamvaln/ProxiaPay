@@ -312,7 +312,9 @@ describe('the payment page', () => {
       ['another payment being checked', () => refusal(409, 'LINK_PAYMENT_BEING_CHECKED', API), 'Un paiement sur ce lien est en cours de vérification.'],
       ['an expired total', () => refusal(409, 'PREVIEW_EXPIRED', API), 'Ce total a expiré ; recommencez.'],
       ['a payment gone', () => refusal(404, 'NOT_FOUND', API), 'Ce paiement n’est plus disponible.'],
-      ['an unknown code', () => refusal(500, 'INTERNAL_ERROR', API), 'Une erreur est survenue. Réessayez.'],
+      ['a code the page does not know', () => refusal(409, 'SOMETHING_NEW', API), 'Une erreur est survenue. Réessayez.'],
+      ['a method gone since the review', () => refusal(400, 'FIELD_INVALID', API, 'method'), 'Ce moyen de paiement n’est pas disponible sur ce lien.'],
+      ['an amount the method no longer takes', () => refusal(400, 'FIELD_INVALID', API, 'amount'), 'Ce montant ne peut pas être payé avec ce moyen de paiement.'],
     ];
     for (const [what, answer, french] of atConfirm) {
       it(`at the confirmation: ${what}`, async () => {
@@ -375,6 +377,40 @@ describe('the payment page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Check the payment' }));
     expect(await screen.findByText('Approve the payment on your phone')).toBeTruthy();
     expect(calls.some((c) => c.path === `/pay-api/v1/payments/${TOKEN}`)).toBe(true);
+  });
+
+  // The transaction is committed before the operator is asked, so a server fault or a gateway's page may come after it:
+  // only a definitive refusal lets the payer edit (and pay again); anything else keeps the payment to check.
+  const uncertainAtConfirm: [string, () => Response, string][] = [
+    ['a server error', () => refusal(500, 'INTERNAL_ERROR', 'ENGLISH FROM THE API'), 'Something went wrong. Please try again.'],
+    ['a gateway page', () => new Response('<html>Bad Gateway</html>', { status: 502, headers: { 'Content-Type': 'text/html' } }), 'Something went wrong. Please try again.'],
+    ['too many attempts', () => refusal(429, 'RATE_LIMITED', 'ENGLISH FROM THE API'), 'Too many attempts, please wait a moment.'],
+  ];
+  for (const [what, reply, english] of uncertainAtConfirm) {
+    it(`a confirmation answered by ${what} keeps the payment to check, not to edit`, async () => {
+      server({
+        [`GET /pay-api/v1/links/${CODE}`]: LINK,
+        [`POST /pay-api/v1/links/${CODE}/previews`]: { payment_token: TOKEN, review: REVIEW },
+        [`POST /pay-api/v1/payments/${TOKEN}/confirm`]: reply,
+        [`GET /pay-api/v1/payments/${TOKEN}`]: () => status('processing'),
+      });
+      render(<PayApp timings={FAST} />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Confirm and pay 5,125 XAF' }));
+      expect(await screen.findByText(english)).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+      expect(window.location.hash).toBe(`#p=${TOKEN}`);
+      fireEvent.click(screen.getByRole('button', { name: 'Check the payment' }));
+      expect(await screen.findByText('Approve the payment on your phone')).toBeTruthy();
+    });
+  }
+
+  it('the review shows the fees without the operator’s name', async () => {
+    server({ [`GET /pay-api/v1/links/${CODE}`]: LINK, [`POST /pay-api/v1/links/${CODE}/previews`]: { payment_token: TOKEN, review: REVIEW } });
+    render(<PayApp timings={FAST} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('Fees')).toBeTruthy();
+    expect(screen.queryByText('Orange Money fees')).toBeNull();
   });
 
   it('stops asking about a payment still being checked after the checking time, keeping the message', async () => {
@@ -461,6 +497,10 @@ describe('the page’s shape', () => {
   it('dates the receipt in the method country’s time, in the page’s language', () => {
     expect(paidAt('2026-11-15T13:32:00Z', 'CM', 'en')).toBe('15 November 2026 at 14:32');
     expect(paidAt('2026-11-15T13:32:00Z', 'SN', 'fr')).toMatch(/^15 novembre 2026 (à )?13:32$/);
+  });
+
+  it('the page’s own title names no language before the link is read', () => {
+    expect(readFileSync(join(__dirname, '../../pay.html'), 'utf8')).toMatch(/<title>ProxiaPay<\/title>/);
   });
 
   it('has every word in both languages', () => {
