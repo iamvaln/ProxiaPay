@@ -52,6 +52,8 @@ export const REQUEST_ERRORS = {
   CONFIRMATION_INVALID: { status: 422, retryable: true },
   APPROVAL_REQUIRED: { status: 202, retryable: false },
   RULE_VIOLATION: { status: 422, retryable: false },
+  // The public payment page's codes share the shape too.
+  LINK_UNAVAILABLE: { status: 404, retryable: false },
 } as const;
 
 export type ErrorCode = keyof typeof REQUEST_ERRORS;

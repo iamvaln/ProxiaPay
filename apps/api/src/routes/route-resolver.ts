@@ -270,7 +270,10 @@ export function resolveTerms(rv: RouteVersionRow, ev: EntitlementVersionRow): Re
   };
 }
 
-export function resolveLimits(rv: RouteVersionRow, ev: EntitlementVersionRow): ResolvedLimits {
+export function resolveLimits(
+  rv: Pick<RouteVersionRow, 'minimum_amount' | 'maximum_amount'>,
+  ev: Pick<EntitlementVersionRow, 'minimum_amount' | 'maximum_amount' | 'count_24h' | 'value_24h' | 'count_30d' | 'value_30d'>,
+): ResolvedLimits {
   const sources: Record<string, 'entitlement' | 'route'> = {};
   // An entitlement may narrow a route's limits, never widen them.
   const minimum = ev.minimum_amount != null && ev.minimum_amount > rv.minimum_amount ? ((sources.minimum = 'entitlement'), ev.minimum_amount) : ((sources.minimum = 'route'), rv.minimum_amount);

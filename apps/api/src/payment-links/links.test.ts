@@ -5,6 +5,7 @@ import { AuthorisationService } from '../admin-auth/authorisation.service';
 import { AuditService } from '../audit/audit.service';
 import { PaymentLinksController } from '../console-api/payment-links.controller';
 import type { ConsoleRequest } from '../console-api/session.guard';
+import { filtered } from '../test/filtered';
 import { BrandService } from './brand.service';
 import { LinksService, newLinkCode } from './links.service';
 
@@ -180,6 +181,15 @@ describe('payment links in the console API', () => {
     await expect(controller().detail(b.project.id, inB.id, reqA)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(controller().create(b.project.id, fixed([cm]), reqA)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect((await t.db.selectFrom('payment_link').select('status').where('id', '=', inB.id).executeTakeFirstOrThrow()).status).toBe('active');
+  });
+
+  it('a malformed :lid answers like a missing link, not a fault', async () => {
+    const { client, project } = await acme();
+    const req = await requestOf(await clientPerson(client.id, 'Client owner'), client.id);
+    for (const call of [() => controller().detail(project.id, 'not-a-uuid', req), () => controller().disable(project.id, 'not-a-uuid', req)]) {
+      const error = await call().then(() => null, (e: unknown) => e);
+      expect(filtered(error)).toEqual({ status: 404, body: { error: { code: 'NOT_FOUND', message: 'No such resource.', retryable: false } } });
+    }
   });
 
   it('refuses creation when PAYLINK_BASE_URL is unset', async () => {

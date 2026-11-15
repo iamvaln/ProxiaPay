@@ -1078,7 +1078,8 @@
                   "CONFIRMATION_REQUIRED",
                   "CONFIRMATION_INVALID",
                   "APPROVAL_REQUIRED",
-                  "RULE_VIOLATION"
+                  "RULE_VIOLATION",
+                  "LINK_UNAVAILABLE"
                 ]
               },
               "message": {
