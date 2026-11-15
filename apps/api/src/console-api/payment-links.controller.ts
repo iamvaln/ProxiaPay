@@ -28,6 +28,15 @@ export class PaymentLinksController {
     return { links: await this.links.list(id) };
   }
 
+  /** What the create form offers: routes usable for a link, by method name only. Declared before ':lid', which would take 'routes' for an id. */
+  @Get('routes')
+  @ClientAccessible()
+  @RequirePermission('projects.read')
+  async routes(@Param('id') id: string, @Req() req: ConsoleRequest) {
+    this.reach(req, id, 'projects.read');
+    return { routes: await this.links.usableRoutes(id) };
+  }
+
   @Post()
   @ClientAccessible()
   @HttpCode(201)

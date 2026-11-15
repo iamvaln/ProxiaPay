@@ -65,6 +65,10 @@ export function transactionList({ t, has, ref, reload, currency, project, client
   return { columns, filters, actions, summary, rowKey: (r) => r.id, defaultSort: 'created', defaultOrder: 'desc', empty: { none: t('l.txn_none'), why: t('l.txn_why') } };
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The payment link a list is narrowed to (from a link's "View payments"); anything but an id is dropped. */
+export const readPaymentLink = (params: URLSearchParams): string | undefined => { const v = params.get('payment_link') ?? ''; return UUID.test(v) ? v : undefined; };
+
 /** The page's range params from the URL; a value the browser or server could not read is dropped, never thrown on. */
 export function readRange(params: URLSearchParams): Record<string, string> {
   const ok = (k: string, v: string) => (k.startsWith('amount') ? /^\d{1,15}$/.test(v) : !Number.isNaN(Date.parse(v)));
@@ -99,6 +103,7 @@ export function TransactionsPage() {
   const { has } = useSession();
   const [params, setParams] = useSearchParams();
   const range = readRange(params);
+  const paymentLink = readPaymentLink(params);
   const apply = (form: HTMLFormElement) => {
     const data = new FormData(form);
     setParams((prev) => {
@@ -109,7 +114,7 @@ export function TransactionsPage() {
     });
   };
   // The server takes instants; the browser's datetime-local is the administrator's own clock.
-  const sent = { ...range, ...(range.created_after ? { created_after: new Date(range.created_after).toISOString() } : {}), ...(range.created_before ? { created_before: new Date(range.created_before).toISOString() } : {}) };
+  const sent = { ...range, ...(paymentLink ? { payment_link: paymentLink } : {}), ...(range.created_after ? { created_after: new Date(range.created_after).toISOString() } : {}), ...(range.created_before ? { created_before: new Date(range.created_before).toISOString() } : {}) };
   const exportCsv = async (e: React.MouseEvent) => {
     e.preventDefault();
     const state = readTableState(params, '', { sort: 'created', order: 'desc', filterKeys: FILTER_KEYS });
@@ -129,7 +134,10 @@ export function TransactionsPage() {
         <label className="small">{t('l.amount_max')} <input type="number" name="amount_max" style={{ width: 110 }} defaultValue={range.amount_max ?? ''} /></label>
         <button>{t('l.apply')}</button>
       </form>
-      <TransactionTable range={sent} onClearFilters={() => setParams((prev) => { const next = new URLSearchParams(prev); for (const k of RANGE) next.delete(k); return next; })} />
+      {paymentLink && (
+        <p className="row"><Tag family="tag">{t('pl.filter_chip', { id: paymentLink.slice(0, 8) })}</Tag> <a href="#all" onClick={(e) => { e.preventDefault(); setParams((prev) => { const next = new URLSearchParams(prev); next.delete('payment_link'); next.delete('page'); return next; }); }}>{t('pl.filter_clear')}</a></p>
+      )}
+      <TransactionTable range={sent} onClearFilters={() => setParams((prev) => { const next = new URLSearchParams(prev); for (const k of [...RANGE, 'payment_link']) next.delete(k); return next; })} />
     </>
   );
 }

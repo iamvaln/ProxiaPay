@@ -125,6 +125,22 @@ export class LinksService {
     return { logo_asset_id: logo ?? null, primary_color: primary, secondary_color: secondary };
   }
 
+  /** The routes a link can be made over: the project's active collection routes with no step for the payer beyond their phone. Method names only, never a provider. */
+  async usableRoutes(projectId: string): Promise<{ id: string; country: string; payment_method: string; payment_method_name: string; currency: string; minimum_amount: number; maximum_amount: number }[]> {
+    const rows = await this.db.selectFrom('route as r')
+      .innerJoin('route_version as rv', (j) => j.onRef('rv.route_id', '=', 'r.id').on('rv.valid_to', 'is', null))
+      .innerJoin('entitlement as e', (j) => j.onRef('e.route_id', '=', 'r.id').on('e.project_id', '=', projectId))
+      .innerJoin('entitlement_version as ev', (j) => j.onRef('ev.entitlement_id', '=', 'e.id').on('ev.valid_to', 'is', null))
+      .innerJoin('payment_method as pm', 'pm.code', 'r.payment_method_code')
+      .select(['r.id', 'r.country_code', 'r.payment_method_code', 'pm.name', 'r.currency_code', 'rv.minimum_amount as route_minimum', 'rv.maximum_amount as route_maximum', 'ev.minimum_amount as entitlement_minimum', 'ev.maximum_amount as entitlement_maximum'])
+      .where('r.direction', '=', 'collection').where('rv.active', '=', true).where('ev.active', '=', true).where('rv.otp_required', '=', false).where('rv.browser_required', '=', false)
+      .orderBy('r.country_code').orderBy('r.payment_method_code').execute();
+    return rows.map((r) => {
+      const limits = resolveLimits({ minimum_amount: r.route_minimum, maximum_amount: r.route_maximum } as never, { minimum_amount: r.entitlement_minimum, maximum_amount: r.entitlement_maximum } as never);
+      return { id: r.id, country: r.country_code, payment_method: r.payment_method_code, payment_method_name: r.name, currency: r.currency_code, minimum_amount: Number(limits.minimum), maximum_amount: Number(limits.maximum) };
+    });
+  }
+
   async disable(tx: Tx, projectId: string, linkId: string, actorId: string): Promise<{ id: string; status: string }> {
     const link = await tx.selectFrom('payment_link').select(['id', 'status']).where('id', '=', linkId).where('project_id', '=', projectId).forUpdate().executeTakeFirst();
     if (!link) throw new PlatformError('NOT_FOUND', 'No such payment link.');

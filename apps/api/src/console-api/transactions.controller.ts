@@ -23,6 +23,7 @@ const searchSchema = pageQuerySchema.extend({
   provider_account: z.string().uuid().optional(), currency: z.string().max(3).optional(), failure_reason: z.string().max(64).optional(),
   created_after: z.string().datetime().optional(), created_before: z.string().datetime().optional(),
   amount_min: z.coerce.number().int().optional(), amount_max: z.coerce.number().int().optional(),
+  payment_link: z.string().uuid().optional(),
 });
 
 const previewsSchema = pageQuerySchema.extend({
@@ -84,6 +85,7 @@ export class ConsoleTransactionsController {
     if (q.direction) query = query.where('t.direction', '=', q.direction);
     if (q.project) query = query.where('t.project_id', '=', q.project);
     if (q.route) query = query.where('t.route_id', '=', q.route);
+    if (q.payment_link) query = query.where('t.payment_link_id', '=', q.payment_link);
     if (q.country) query = query.where('r.country_code', '=', q.country);
     if (q.payment_method) query = query.where('r.payment_method_code', '=', q.payment_method);
     // A client never names a provider account: the filter would tell it which ids carry its payments.

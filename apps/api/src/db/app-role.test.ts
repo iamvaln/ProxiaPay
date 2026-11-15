@@ -60,11 +60,13 @@ describe('least-privilege app role', () => {
 
   it('derives the revoke list from refuse_mutation triggers', () => {
     const both = ['ledger_entry', 'ledger_posting', 'ledger_checkpoint', 'transaction_event', 'audit_record', 'authentication_event',
-      'discrepancy_comment', 'route_binding', 'ledger_account', 'route'];
-    const expected = [...both.flatMap((x) => [`${x}:UPDATE`, `${x}:DELETE`]), 'route_version:DELETE', 'entitlement_version:DELETE',
+      'discrepancy_comment', 'route_binding', 'ledger_account'];
+    // A route is deleted never, but its payer instructions are edited: the privilege is there, the trigger polices which columns.
+    const expected = [...both.flatMap((x) => [`${x}:UPDATE`, `${x}:DELETE`]), 'route:DELETE', 'route_version:DELETE', 'entitlement_version:DELETE',
       'schema_migrations:INSERT', 'schema_migrations:UPDATE', 'schema_migrations:DELETE'];
     expect([...revoked].sort()).toEqual(expected.sort());
     expect(revoked).not.toContain('route_version:UPDATE');
+    expect(revoked).not.toContain('route:UPDATE');
   });
 
   it('a table created by a later migration is granted to the app role', async () => {

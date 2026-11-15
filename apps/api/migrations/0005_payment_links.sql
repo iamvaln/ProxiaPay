@@ -77,6 +77,18 @@ CREATE INDEX transaction_payment_link_idx ON transaction (payment_link_id) WHERE
 -- Per-route text for the waiting screen: { "en": string, "fr": string }.
 ALTER TABLE route ADD COLUMN payer_instructions jsonb;
 
+-- A route stays immutable except for this text, which is edited from the console without opening a version.
+CREATE OR REPLACE FUNCTION route_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF to_jsonb(NEW) - 'payer_instructions' = to_jsonb(OLD) - 'payer_instructions' THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION 'table % is append-only', TG_TABLE_NAME USING ERRCODE = 'integrity_constraint_violation';
+END $$;
+DROP TRIGGER route_immutable ON route;
+CREATE TRIGGER route_immutable BEFORE DELETE ON route FOR EACH ROW EXECUTE FUNCTION refuse_mutation();
+CREATE TRIGGER route_update_guard BEFORE UPDATE ON route FOR EACH ROW EXECUTE FUNCTION route_guard();
+
 INSERT INTO role_permission (role_id, permission_key)
 SELECT id, 'links.manage' FROM role WHERE name IN ('Owner', 'Client owner')
 ON CONFLICT DO NOTHING;

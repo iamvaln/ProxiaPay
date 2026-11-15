@@ -17,6 +17,8 @@ const countryPatch = z.object({ name: nonEmpty(64).optional(), dialling_prefix: 
 const methodSchema = z.object({ code: z.string().regex(/^[A-Z0-9_]{2,16}$/), name: nonEmpty(64) });
 const providerAccountSchema = z.object({ provider_code: nonEmpty(32), name: nonEmpty(64), base_url: z.string().url(), statement_format: z.string().max(32).optional(), capabilities: z.array(z.object({ country: z.string().length(2), currency: z.string().length(3), payment_method: nonEmpty(16), direction: z.enum(['collection', 'disbursement']) })).default([]) });
 const credentialsSchema = z.object({ credentials: z.record(z.string().max(64), z.string().max(4096)), confirmation: confirmationSchema.optional() });
+// What the payer reads while a payment waits; an empty text is no text, and the page falls back to its own wording.
+const payerInstructionsSchema = z.object({ en: z.string().trim().max(500), fr: z.string().trim().max(500) });
 const rateChangeSetSchema = z.object({ effective_at: z.string().datetime().optional(), note: nonEmpty(1000), agreement_reference: z.string().max(128).optional(), routes: z.array(z.object({ route_id: z.string().uuid(), version: routeVersionInputSchema })).min(1) });
 
 /** Configuration (console spec 7): countries, methods, routes and versions, provider accounts, rate change sets. */
@@ -109,6 +111,21 @@ export class ConfigurationController {
   @RequirePermission('routes.read')
   async route(@Param('id') id: string) {
     return this.routes.detail(id);
+  }
+
+  /** Text only, no version: the route's terms are untouched, which the table's guard checks. */
+  @Put('routes/:id/payer-instructions')
+  @RequirePermission('routes.open_version')
+  async setPayerInstructions(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
+    const input = parseBody(payerInstructionsSchema, body);
+    return this.db.transaction().execute(async (tx) => {
+      const prior = await tx.selectFrom('route').select('payer_instructions').where('id', '=', id).forUpdate().executeTakeFirst();
+      if (!prior) throw new PlatformError('NOT_FOUND', 'No such route.');
+      const next = input.en || input.fr ? { en: input.en, fr: input.fr } : null;
+      await tx.updateTable('route').set({ payer_instructions: next === null ? null : JSON.stringify(next) }).where('id', '=', id).execute();
+      await this.audit.record(tx, { actorId: req.principal.administratorId, action: 'route.payer_instructions', subjectType: 'route', subjectId: id, prior: prior.payer_instructions, next });
+      return { payer_instructions: next };
+    });
   }
 
   @Post('routes/:id/versions/compare')

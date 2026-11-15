@@ -1,9 +1,25 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { get, post } from '../lib/api';
+import { get, post, put } from '../lib/api';
 import { useSession, useT } from '../lib/session';
-import { ErrorLine, NeedsPermission, Pill, Tag, When, useLoad } from '../components/common';
+import { ErrorLine, NeedsPermission, Pill, SubmitForm, Tag, When, useLoad } from '../components/common';
 import { DataTable } from '../components/table/DataTable';
+
+/** The text the payment page shows a payer while they approve on their phone, per language. It is the route's own text, not a version of its terms. */
+export function PayerInstructions({ id, current, reload }: { id: string; current: { en?: string; fr?: string } | null; reload: () => void }) {
+  const t = useT();
+  const [text, setText] = useState({ en: current?.en ?? '', fr: current?.fr ?? '' });
+  return (
+    <div className="card" id="payer-instructions">
+      <h2>{t('ri.title')}</h2>
+      <p className="small muted">{t('ri.intro')}</p>
+      <SubmitForm submitLabel={t('ri.save')} onSubmit={async () => { await put(`/configuration/routes/${id}/payer-instructions`, text); reload(); return t('ri.saved'); }}>
+        <label>{t('ri.en')}<textarea value={text.en} maxLength={500} onChange={(e) => setText({ ...text, en: e.target.value })} /></label>
+        <label>{t('ri.fr')}<textarea value={text.fr} maxLength={500} onChange={(e) => setText({ ...text, fr: e.target.value })} /></label>
+      </SubmitForm>
+    </div>
+  );
+}
 
 /** Route detail (console spec 7.2): the current version, projects with their own rates, the version history as a sequence, and opening a new version with its comparison. */
 export function RouteDetailPage() {
@@ -61,6 +77,7 @@ export function RouteDetailPage() {
           <ul>{data.versions.map((v: any) => <li key={v.id}>#{v.sequence} · <When value={v.valid_from} /> → {v.valid_to ? <When value={v.valid_to} /> : 'open'} {v.author ? `· ${v.author}` : ''} · <i>{v.note}</i>{Object.keys(v.changes_from_previous).length > 0 && <div className="diff">{Object.entries(v.changes_from_previous).map(([k, ch]: any) => <div key={k}>{k}: {String(ch.from)} → {String(ch.to)}</div>)}</div>}</li>)}</ul>
         </div>
       </div>
+      {has('routes.open_version') && <PayerInstructions key={JSON.stringify(r.payer_instructions)} id={id!} current={r.payer_instructions} reload={reload} />}
       <div className="card">
         <h2>Open a new version</h2>
         <p className="small muted">Existing versions are never altered; transactions refer to the terms that were true at the time.</p>

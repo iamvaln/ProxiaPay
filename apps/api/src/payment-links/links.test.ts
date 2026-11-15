@@ -53,6 +53,20 @@ async function patchVersion(routeId: string, patch: { active?: boolean; otp_requ
 const fixed = (route_ids: string[], extra: object = {}) => ({ title: 'Invoice 42', currency: 'XAF', amount_type: 'fixed', amount: 5000, route_ids, ...extra });
 
 describe('payment links in the console API', () => {
+  it('offers only active collection routes with no payer step, by method name', async () => {
+    const { client, project } = await acme();
+    const req = await requestOf(await clientPerson(client.id, 'Client owner'), client.id);
+    const all = (await controller().routes(project.id, req)).routes;
+    expect(all.length).toBeGreaterThan(1);
+    const momo = await routeId('CM', 'MOMO', 'XAF');
+    expect(all.find((r) => r.id === momo)).toMatchObject({ country: 'CM', payment_method: 'MOMO', currency: 'XAF', minimum_amount: expect.any(Number), maximum_amount: expect.any(Number) });
+    expect(Object.keys(all[0]!).sort()).toEqual(['country', 'currency', 'id', 'maximum_amount', 'minimum_amount', 'payment_method', 'payment_method_name']);
+    await patchVersion(momo, { otp_required: true });
+    expect((await controller().routes(project.id, req)).routes.map((r) => r.id)).not.toContain(momo);
+    const other = await acme('other-shop');
+    await expect(controller().routes(other.project.id, req)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('a client owner creates a fixed link over routes of two countries in XAF', async () => {
     const { client, project } = await acme();
     const req = await requestOf(await clientPerson(client.id, 'Client owner'), client.id);

@@ -51,6 +51,7 @@ const CLIENT_ACCESSIBLE_ROUTES = [
   'PUT console/projects/:id/brand',
   'POST console/projects/:id/brand/logo',
   'GET console/projects/:id/payment-links',
+  'GET console/projects/:id/payment-links/routes',
   'POST console/projects/:id/payment-links',
   'GET console/projects/:id/payment-links/:lid',
   'POST console/projects/:id/payment-links/:lid/disable',

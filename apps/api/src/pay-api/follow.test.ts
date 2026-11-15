@@ -1,5 +1,4 @@
 import 'reflect-metadata';
-import { sql } from 'kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -89,10 +88,7 @@ const twiceAlerts = () => t.db.selectFrom('alert').select(['category', 'severity
 describe('following a payment', () => {
   it('follows a payment from created to succeeded; the link completes', async () => {
     const momo = await routeId('CM', 'MOMO');
-    // The route table refuses updates; the console's instructions editor is a later task, so the test sets them past the trigger.
-    await sql`alter table route disable trigger route_immutable`.execute(t.db);
-    try { await t.db.updateTable('route').set({ payer_instructions: JSON.stringify({ en: 'Approve the request with your MoMo PIN.', fr: 'Validez la demande avec votre code MoMo.' }) }).where('id', '=', momo).execute(); }
-    finally { await sql`alter table route enable trigger route_immutable`.execute(t.db); }
+    await t.db.updateTable('route').set({ payer_instructions: JSON.stringify({ en: 'Approve the request with your MoMo PIN.', fr: 'Validez la demande avec votre code MoMo.' }) }).where('id', '=', momo).execute();
     const l = await link([momo], { single_use: true });
     // The submission is interrupted: the payment waits, created, for the queued retry.
     vi.spyOn(app.get(SubmissionService), 'submit').mockRejectedValueOnce(new Error('connect ECONNRESET'));

@@ -276,6 +276,7 @@ describe('client views', () => {
         'GET console/projects/:id/deliveries': () => controllers.projects().deliveries(project.id, {}, req),
         'GET console/projects/:id/brand': () => controllers.brand().get(project.id, req),
         'GET console/projects/:id/payment-links': () => controllers.links().list(project.id, req),
+        'GET console/projects/:id/payment-links/routes': () => controllers.links().routes(project.id, req),
         'GET console/projects/:id/payment-links/:lid': () => controllers.links().detail(project.id, link.id, req),
         'GET console/treasury/balances': () => controllers.treasury().balances(req),
         'GET console/treasury/project/:projectId/accounts': () => controllers.treasury().projectAccounts(project.id, req),

@@ -99,6 +99,19 @@ describe('GET /console/transactions on the page contract', () => {
     expect(other.total).toBe(0);
   });
 
+  it('filters by payment link, inside the caller\'s scope', async () => {
+    const { project, refs } = await seed('shop', 3);
+    const other = await seed('beta', 1);
+    const admin = (await t.admin()).id;
+    const link = await t.db.insertInto('payment_link').values({ code: 'abcdef', project_id: project.id, title: 'Donate', currency_code: 'XAF', amount_type: 'free', primary_color: '#112233', created_by: admin }).returning('id').executeTakeFirstOrThrow();
+    await t.db.updateTable('transaction').set({ payment_link_id: link.id }).where('reference', 'in', [refs[0]!, refs[2]!, other.refs[0]!]).execute();
+    const hit = await controller.search({ payment_link: link.id }, consoleRequest(t));
+    expect(hit.data.map((r) => r.reference).sort()).toEqual([refs[0]!, refs[2]!, other.refs[0]!].sort());
+    const scoped = await controller.search({ payment_link: link.id }, consoleRequest(t, { scope: [project.id] }));
+    expect(scoped.total).toBe(2);
+    await expect(controller.search({ payment_link: 'nope' }, consoleRequest(t))).rejects.toMatchObject({ code: 'FIELD_INVALID' });
+  });
+
   it('scoped total counts only the scoped projects', async () => {
     const a = await seed('alpha', 3);
     await seed('beta', 4);

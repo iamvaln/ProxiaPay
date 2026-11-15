@@ -7,6 +7,8 @@ import { SecretOnce } from '../components/SecretOnce';
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type RowAction } from '../components/table/DataTable';
 import { chip, fetchPage, periodFilter, useReload, useTab, yesNo } from './list-support';
 import { TransactionTable } from './Transactions';
+import { BrandSection } from './Brand';
+import { PaymentLinksTab } from './PaymentLinks';
 
 type Row = Record<string, any>;
 type Tr = (k: string, v?: Record<string, string | number>) => string;
@@ -100,7 +102,7 @@ export function originList({ t, has, reload, id }: { t: Tr; has: (p: string) => 
   };
 }
 
-const TABS = ['overview', 'keys', 'origins', 'routes', 'deliveries', 'activity'] as const;
+const TABS = ['overview', 'keys', 'origins', 'routes', 'links', 'deliveries', 'activity'] as const;
 /** A client has no activity tab: the transactions list is where it reads its payments. */
 const CLIENT_TABS = TABS.filter((k) => k !== 'activity');
 type Secret = { label: string; value: string }[];
@@ -147,6 +149,7 @@ function OverviewTab({ data, id, reload }: { data: Project; id: string; reload: 
           <dt>{t('l.balances')}</dt><dd>{data.balances.length ? data.balances.map((b: Row) => <div key={b.currency}><Amount minor={b.available} currency={b.currency} /> {t('pd.available')} · <Amount minor={b.reserved} currency={b.currency} /> {t('l.reserved')}</div>) : '—'}</dd>
         </dl>
       </div>
+      {has('links.manage') && <BrandSection id={id} name={p.name} />}
       {has('admin.clients') && !p.client_id && <AttachClient id={id} reload={reload} />}
     </>
   );
@@ -350,6 +353,7 @@ function ProjectDetail({ id }: { id: string }) {
       {tab === 'keys' && <KeysTab data={data} id={id!} reload={reload} credentialSecret={credentialSecret} setCredentialSecret={setCredentialSecret} signingSecret={signingSecret} setSigningSecret={setSigningSecret} />}
       {tab === 'origins' && <OriginsTab data={data} id={id!} reload={reload} />}
       {tab === 'routes' && (client ? <ClientRoutes routes={data.routes} waiting={data.waiting_for_routes} /> : <PlatformRoutes data={data} id={id!} reload={reload} />)}
+      {tab === 'links' && <PaymentLinksTab id={id!} name={p.name} />}
       {tab === 'deliveries' && (
         <div className="card" id="deliveries">
           <h2>{t('l.deliveries')}</h2>
