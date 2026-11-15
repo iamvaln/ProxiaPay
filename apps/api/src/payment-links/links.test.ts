@@ -123,7 +123,9 @@ describe('payment links in the console API', () => {
     const req = await requestOf(await clientPerson(client.id, 'Client owner'), client.id);
     const cm = await routeId('CM', 'MOMO', 'XAF');
     const rv = await t.db.selectFrom('route_version').select(['minimum_amount', 'maximum_amount']).where('route_id', '=', cm).where('valid_to', 'is', null).executeTakeFirstOrThrow();
-    if (rv.minimum_amount > 1) await expect(controller().create(project.id, fixed([cm], { amount: rv.minimum_amount - 1 }), req)).rejects.toMatchObject({ code: 'AMOUNT_INVALID' });
+    // The seeded route has a minimum above 1, so an amount below it is always tried.
+    expect(rv.minimum_amount).toBeGreaterThan(1);
+    await expect(controller().create(project.id, fixed([cm], { amount: rv.minimum_amount - 1 }), req)).rejects.toMatchObject({ code: 'AMOUNT_INVALID', options: { field: 'amount' } });
     await expect(controller().create(project.id, fixed([cm], { amount: rv.maximum_amount + 1 }), req)).rejects.toMatchObject({ code: 'AMOUNT_INVALID', options: { field: 'amount' } });
     await expect(controller().create(project.id, { title: 'Gift', currency: 'XAF', amount_type: 'free', minimum_amount: rv.maximum_amount + 1, route_ids: [cm] }, req)).rejects.toMatchObject({ code: 'AMOUNT_INVALID', options: { field: 'minimum_amount' } });
     // A project's narrower limit counts, not just the route's.

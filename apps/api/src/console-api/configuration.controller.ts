@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, Inject, Param, Patch, Post, Put, Query
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { PlatformError } from '../common/errors';
+import { isUuid } from '../payment-links/public-view';
 import { DB_TOKEN, type Db } from '../db/database';
 import { nonEmpty, parseBody } from '../http/validation';
 import { AuditService } from '../audit/audit.service';
@@ -117,6 +118,8 @@ export class ConfigurationController {
   @Put('routes/:id/payer-instructions')
   @RequirePermission('routes.open_version')
   async setPayerInstructions(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
+    // Not an id: no such route, and the store is not asked to read it as one.
+    if (!isUuid(id)) throw new PlatformError('NOT_FOUND', 'No such route.');
     const input = parseBody(payerInstructionsSchema, body);
     return this.db.transaction().execute(async (tx) => {
       const prior = await tx.selectFrom('route').select('payer_instructions').where('id', '=', id).forUpdate().executeTakeFirst();

@@ -7,9 +7,15 @@ import { AuditService } from '../audit/audit.service';
 import { CONFIG, type AppConfig } from '../config/config';
 import { DB_TOKEN, type Db, type Tx } from '../db/database';
 import { nonEmpty } from '../http/validation';
-import { resolveLimits } from '../routes/route-resolver';
+import { resolveLimits, type EntitlementVersionRow } from '../routes/route-resolver';
 import { COLOR_FORMAT_MESSAGE, COLOR_MESSAGE, isHexColor, isUsableColor } from './brand';
 import { BrandService } from './brand.service';
+
+/** The entitlement's velocity columns, read with its amounts so the limits resolve as at payment time. */
+const VELOCITY = ['ev.count_24h', 'ev.value_24h', 'ev.count_30d', 'ev.value_30d'] as const;
+/** A route's limits as narrowed by the project's entitlement, from one row read with both. */
+const limitsOf = (r: { route_minimum: number; route_maximum: number; entitlement_minimum: number | null; entitlement_maximum: number | null } & Pick<EntitlementVersionRow, 'count_24h' | 'value_24h' | 'count_30d' | 'value_30d'>) =>
+  resolveLimits({ minimum_amount: r.route_minimum, maximum_amount: r.route_maximum }, { minimum_amount: r.entitlement_minimum, maximum_amount: r.entitlement_maximum, count_24h: r.count_24h, value_24h: r.value_24h, count_30d: r.count_30d, value_30d: r.value_30d });
 
 const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 const CODE_LENGTH = 10;
@@ -92,7 +98,7 @@ export class LinksService {
       .innerJoin('entitlement as e', (j) => j.onRef('e.route_id', '=', 'r.id').on('e.project_id', '=', projectId))
       .innerJoin('entitlement_version as ev', (j) => j.onRef('ev.entitlement_id', '=', 'e.id').on('ev.valid_to', 'is', null))
       .select(['r.id', 'r.direction', 'r.currency_code', 'rv.active as route_active', 'rv.otp_required', 'rv.browser_required', 'rv.minimum_amount as route_minimum', 'rv.maximum_amount as route_maximum',
-        'ev.active as entitlement_active', 'ev.minimum_amount as entitlement_minimum', 'ev.maximum_amount as entitlement_maximum'])
+        'ev.active as entitlement_active', 'ev.minimum_amount as entitlement_minimum', 'ev.maximum_amount as entitlement_maximum', ...VELOCITY])
       .where('r.id', 'in', routeIds).execute();
     for (const id of routeIds) {
       const r = rows.find((x) => x.id === id);
@@ -103,7 +109,7 @@ export class LinksService {
       if (r.otp_required || r.browser_required) throw bad('A link cannot use a route where the payer must type a code or open a page.');
     }
     for (const r of rows) {
-      const limits = resolveLimits({ minimum_amount: r.route_minimum, maximum_amount: r.route_maximum } as never, { minimum_amount: r.entitlement_minimum, maximum_amount: r.entitlement_maximum } as never);
+      const limits = limitsOf(r);
       if (input.amount_type === 'fixed' && (input.amount! < limits.minimum || input.amount! > limits.maximum)) throw new PlatformError('AMOUNT_INVALID', `The amount must be between ${limits.minimum} and ${limits.maximum} on every route.`, { field: 'amount' });
       if (input.amount_type === 'free' && input.minimum_amount > limits.maximum) throw new PlatformError('AMOUNT_INVALID', `The minimum cannot be above ${limits.maximum}, the most a route takes.`, { field: 'minimum_amount' });
     }
@@ -132,11 +138,11 @@ export class LinksService {
       .innerJoin('entitlement as e', (j) => j.onRef('e.route_id', '=', 'r.id').on('e.project_id', '=', projectId))
       .innerJoin('entitlement_version as ev', (j) => j.onRef('ev.entitlement_id', '=', 'e.id').on('ev.valid_to', 'is', null))
       .innerJoin('payment_method as pm', 'pm.code', 'r.payment_method_code')
-      .select(['r.id', 'r.country_code', 'r.payment_method_code', 'pm.name', 'r.currency_code', 'rv.minimum_amount as route_minimum', 'rv.maximum_amount as route_maximum', 'ev.minimum_amount as entitlement_minimum', 'ev.maximum_amount as entitlement_maximum'])
+      .select(['r.id', 'r.country_code', 'r.payment_method_code', 'pm.name', 'r.currency_code', 'rv.minimum_amount as route_minimum', 'rv.maximum_amount as route_maximum', 'ev.minimum_amount as entitlement_minimum', 'ev.maximum_amount as entitlement_maximum', ...VELOCITY])
       .where('r.direction', '=', 'collection').where('rv.active', '=', true).where('ev.active', '=', true).where('rv.otp_required', '=', false).where('rv.browser_required', '=', false)
       .orderBy('r.country_code').orderBy('r.payment_method_code').execute();
     return rows.map((r) => {
-      const limits = resolveLimits({ minimum_amount: r.route_minimum, maximum_amount: r.route_maximum } as never, { minimum_amount: r.entitlement_minimum, maximum_amount: r.entitlement_maximum } as never);
+      const limits = limitsOf(r);
       return { id: r.id, country: r.country_code, payment_method: r.payment_method_code, payment_method_name: r.name, currency: r.currency_code, minimum_amount: Number(limits.minimum), maximum_amount: Number(limits.maximum) };
     });
   }
