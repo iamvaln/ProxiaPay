@@ -244,19 +244,28 @@ credential, and nothing else in the API is reachable from the paylink domain.
   on a free link. It answers the charged amount and the fees borne by the
   payer, computed as a preview would, without creating anything. The page
   calls it as the payer types. Its rate limit is that of reading a payment.
-- **`POST /pay-api/v1/links/:code/payments`** takes
-  `{ method, msisdn }`, plus `amount` on a free link. `method` is the method
-  key; the number is normalised with that method's country. A free link
-  refuses an amount below the effective floor or above the route's maximum,
-  with a plain message.
-  - It creates the preview and confirms it in one step, server side, as the
-    project would.
+- **`POST /pay-api/v1/links/:code/previews`** takes `{ method, msisdn }`,
+  plus `amount` on a free link. `method` is the method key; the number is
+  normalised with that method's country.
+  - It creates a real preview for the project and returns the review the page
+    shows before any money is asked for: amount, fees borne by the payer,
+    **total to pay**, method, country, the formatted number, and how long the
+    total holds.
+  - It also returns an opaque **payment token**, random, stored hashed and
+    valid 24 h. The page uses it for every later call.
+- **`POST /pay-api/v1/payments/:token/confirm`** confirms that preview, the
+  same as `POST /v1/collections`, and submits it. Only now does the operator
+  send the payer a request (Valentine, 2026-11-15: review the total, then
+  confirm).
+  - A free link refuses, at the preview step, an amount below the effective
+    floor or above the route's maximum, with a plain message.
   - The project reference is generated as `PL-<code>-<unique suffix>`.
-  - It returns an opaque **payment token**: random, stored hashed, valid 24 h.
-    The page uses the token to follow the payment.
+  - A preview the payer never confirms simply expires, as any preview does,
+    and does not hold a single-use link.
 - **`GET /pay-api/v1/payments/:token`** returns:
   - the state and the extra step, if any (a code with its attempts left, or a
     URL to open);
+  - the **payer instructions** for the route, in the page's language (below);
   - the final outcome;
   - the transaction reference.
 - **`POST /pay-api/v1/payments/:token/code`** sends the payer's code, through
@@ -265,6 +274,12 @@ credential, and nothing else in the API is reachable from the paylink domain.
   Only assets referenced by an active link or a project brand are served.
 - **`POST /pay-api/v1/payments/:token/receipt`** takes `{ email }` and sends
   the receipt, only for a succeeded payment.
+- **Payer instructions per route** (Valentine, 2026-11-15: the code step
+  depends on the operator and the country). Each route carries optional
+  instructions in English and French, edited by the platform on the route's
+  configuration page, for example for Orange Money Cameroon: "Dial #150*50#,
+  choose 'Payment code', then type the code you receive by SMS." The waiting
+  screen shows them; a route without instructions shows the generic text.
 - **Single use: never collect twice** (Valentine, 2026-11-15).
   - A single-use link accepts one payment at a time. Any payment that is not
     final holds the link, `undetermined` included, even if reconciliation
@@ -325,6 +340,11 @@ credential, and nothing else in the API is reachable from the paylink domain.
 
   The payment token lives only in the page's memory and URL fragment, never in
   a cookie.
+- **A web page, not a mobile app** (Valentine, 2026-11-15). It is a link
+  people add to their website or share, so it is designed for a desktop
+  browser first: a centred card with the client's brand panel (logo, name,
+  title, description, amount) beside the payment form. It stays usable at
+  phone width, where the brand panel stacks above the form.
 - **Language.** French or English, from the browser's language, with a
   toggle.
 - **Screens.**
@@ -337,11 +357,19 @@ credential, and nothing else in the API is reachable from the paylink domain.
        region, for example `Africa/Douala` → Cameroon (*my call*: no
        geolocation service, no IP lookup). It falls back to the link's first
        country.
-     - **Methods** of the chosen country, with what the payer will be charged.
+     - **Method** among those of the chosen country.
      - **Number field** with that country's prefix.
-  2. **Waiting for the payer to approve on their phone**, or the extra step:
-     a code field, or an "Open the operator's page" button.
-  3. **Outcome:**
+     - "Continue" creates the preview.
+  2. **Review** (Valentine, 2026-11-15): amount, fees, **total to pay**,
+     method, country and number, and how long the total holds. "Edit" goes
+     back; "Confirm and pay <total>" confirms.
+  3. **Request sent:** "A payment request was sent to <number>. Approve it on
+     your phone, or type the operator's payment code below." The route's payer
+     instructions explain how to get the code for that operator and country.
+     A code field appears when the route takes a code; an "Open the
+     operator's page" button when it redirects. The page follows the status
+     on its own.
+  4. **Outcome:**
      - success, with the reference;
      - failure, with a reason in plain words, and "try again" if the link is
        still usable;
