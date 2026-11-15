@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { get, post } from '../lib/api';
 import { useSession, useT } from '../lib/session';
-import { exponentOf, moneyParts, toMinor } from '../lib/format';
-import { Amount, ErrorLine, Pill, SubmitForm, When, useLoad } from '../components/common';
+import { figureOf, toMinor } from '../lib/format';
+import { ErrorLine, Pill, SubmitForm, When, useLoad } from '../components/common';
 import { QrCode } from '../components/QrCode';
 import { DataTable, type Column } from '../components/table/DataTable';
 import { ColorFields, HeaderPreview, type BrandColors } from './Brand';
@@ -14,7 +14,20 @@ type LinkRow = {
   methods: { country: string; payment_method: string; payment_method_name: string }[];
   payments: { count: number; succeeded: number; total_collected: number; last_at: string | null };
 };
-type UsableRoute = { id: string; country: string; payment_method: string; payment_method_name: string; currency: string; minimum_amount: number; maximum_amount: number };
+type UsableRoute = { id: string; country: string; payment_method: string; payment_method_name: string; currency: string; exponent: number; minimum_amount: number; maximum_amount: number };
+/** Each currency's decimals, as the platform's currency table gives them with the routes. */
+type Exponents = Record<string, number>;
+
+/**
+ * A link amount, written with its currency's decimals from the platform. A currency with no route loaded has no known
+ * exponent: no figure is shown rather than one that could be a hundred times off.
+ */
+function LinkAmount({ minor, currency, exponents }: { minor: number | null; currency: string; exponents: Exponents }) {
+  const { lang } = useSession();
+  const exp = exponents[currency];
+  if (minor == null || exp === undefined) return <span className="muted">—</span>;
+  return <span className="amount"><span className="amount-figure">{figureOf(minor, exp, lang)}</span> <span className="amount-currency">{currency}</span></span>;
+}
 
 /** Copies the address; says so for two seconds, or asks for a manual copy when the browser refuses. */
 function CopyUrl({ value }: { value: string }) {
@@ -36,7 +49,7 @@ function CopyUrl({ value }: { value: string }) {
 }
 
 /** The list, one row per link: what it asks, where it can be paid, what it collected, and what can be done with it. */
-function LinkList({ id, links, manage, reload }: { id: string; links: LinkRow[]; manage: boolean; reload: () => void }) {
+function LinkList({ id, links, exponents, manage, reload }: { id: string; links: LinkRow[]; exponents: Exponents; manage: boolean; reload: () => void }) {
   const t = useT();
   const { lang, has } = useSession();
   const [error, setError] = useState<string | null>(null);
@@ -46,16 +59,19 @@ function LinkList({ id, links, manage, reload }: { id: string; links: LinkRow[];
     setError(null);
     try { await post(`/projects/${id}/payment-links/${l.id}/disable`); reload(); } catch (e) { setError((e as Error).message); }
   };
-  const amountOf = (l: LinkRow) => (l.amount_type === 'fixed'
-    ? <Amount minor={l.amount} currency={l.currency} />
-    : l.minimum_amount > 0 ? t('pl.amount_free', { amount: `${moneyParts(l.minimum_amount, l.currency, lang).figure} ${l.currency}` }) : t('pl.amount_free_any'));
+  const amountOf = (l: LinkRow) => {
+    if (l.amount_type === 'fixed') return <LinkAmount minor={l.amount} currency={l.currency} exponents={exponents} />;
+    if (l.minimum_amount <= 0) return t('pl.amount_free_any');
+    const exp = exponents[l.currency];
+    return exp === undefined ? <span className="muted">—</span> : t('pl.amount_free', { amount: `${figureOf(l.minimum_amount, exp, lang)} ${l.currency}` });
+  };
   const columns: Column<LinkRow>[] = [
     { key: 'title', label: t('col.link'), render: (l) => <><b>{l.title}</b>{l.single_use && <span className="small muted"> · {t('pl.single_use')}</span>}</> },
     { key: 'amount', label: t('col.amount'), render: amountOf },
     { key: 'methods', label: t('col.methods'), render: (l) => <span className="small">{l.methods.map((m) => `${m.country} ${m.payment_method_name}`).join(', ')}</span> },
     { key: 'status', label: t('col.status'), render: (l) => <Pill value={l.status} /> },
     { key: 'payments', label: t('col.payments'), align: 'end', render: (l) => t('pl.payments_cell', { succeeded: l.payments.succeeded, count: l.payments.count }) },
-    { key: 'collected', label: t('col.collected'), align: 'end', render: (l) => <Amount minor={l.payments.total_collected} currency={l.currency} /> },
+    { key: 'collected', label: t('col.collected'), align: 'end', render: (l) => <LinkAmount minor={l.payments.total_collected} currency={l.currency} exponents={exponents} /> },
     { key: 'last_payment', label: t('col.last_payment'), render: (l) => <When value={l.payments.last_at} /> },
     { key: 'actions', label: t('table.actions'), render: (l) => (
       <div className="row">
@@ -77,7 +93,7 @@ function LinkList({ id, links, manage, reload }: { id: string; links: LinkRow[];
 }
 
 /** Owner only. The methods are the project's own routes a payer can use from a phone alone, grouped by country. */
-function CreateForm({ id, name, routes, brand, reload }: { id: string; name: string; routes: UsableRoute[]; brand: BrandColors; reload: () => void }) {
+function CreateForm({ id, name, routes, exponents, brand, reload }: { id: string; name: string; routes: UsableRoute[]; exponents: Exponents; brand: BrandColors; reload: () => void }) {
   const t = useT();
   const currencies = [...new Set(routes.map((r) => r.currency))].sort();
   const [form, setForm] = useState({ title: '', description: '', currency: currencies[0] ?? '', amount_type: 'fixed' as 'fixed' | 'free', amount: '', minimum: '', single_use: false, expires: '' });
@@ -87,11 +103,14 @@ function CreateForm({ id, name, routes, brand, reload }: { id: string; name: str
   const here = routes.filter((r) => r.currency === form.currency);
   const countries = [...new Set(here.map((r) => r.country))];
   const chosen = picked.filter((rid) => here.some((r) => r.id === rid));
-  const exp = exponentOf(form.currency);
+  // The currency's decimals from the platform; none known (no route loaded for it) means no amount can be typed.
+  const exp: number | undefined = exponents[form.currency];
+  const step = exp === undefined ? 1 : 1 / 10 ** exp;
   // Typed in the currency as people write it; the API takes minor units.
   const minor = (text: string): number => {
-    const v = toMinor(text, form.currency);
-    if (v === null) throw new Error(t('pl.f_amount_invalid', { currency: form.currency, n: exp }));
+    if (exp === undefined) throw new Error(t('pl.f_methods_none'));
+    const v = toMinor(text, exp);
+    if (v === null) throw new Error(exp === 0 ? t('pl.f_amount_whole', { currency: form.currency }) : t('pl.f_amount_invalid', { currency: form.currency, n: exp }));
     return v;
   };
   const submit = async () => {
@@ -119,8 +138,8 @@ function CreateForm({ id, name, routes, brand, reload }: { id: string; name: str
           <label className="row"><input type="radio" name="amount_type" checked={form.amount_type === 'free'} onChange={() => set({ amount_type: 'free' })} /> {t('pl.f_free')}</label>
         </fieldset>
         {form.amount_type === 'fixed'
-          ? <label>{t('pl.f_amount', { currency: form.currency })}<input type="number" min={1 / 10 ** exp} step={1 / 10 ** exp} value={form.amount} onChange={(e) => set({ amount: e.target.value })} required /></label>
-          : <label>{t('pl.f_minimum', { currency: form.currency })}<input type="number" min={0} step={1 / 10 ** exp} value={form.minimum} onChange={(e) => set({ minimum: e.target.value })} /></label>}
+          ? <label>{t('pl.f_amount', { currency: form.currency })}<input type="number" min={step} step={step} disabled={exp === undefined} value={form.amount} onChange={(e) => set({ amount: e.target.value })} required /></label>
+          : <label>{t('pl.f_minimum', { currency: form.currency })}<input type="number" min={0} step={step} disabled={exp === undefined} value={form.minimum} onChange={(e) => set({ minimum: e.target.value })} /></label>}
         <fieldset>
           <legend>{t('pl.f_methods')}</legend>
           {here.length === 0 && <p className="small muted">{t('pl.f_methods_none')}</p>}
@@ -151,16 +170,18 @@ export function PaymentLinksTab({ id, name }: { id: string; name: string }) {
   const { has } = useSession();
   const manage = has('links.manage');
   const links = useLoad(() => get<{ links: LinkRow[] }>(`/projects/${id}/payment-links`), [id]);
-  const routes = useLoad(() => (manage ? get<{ routes: UsableRoute[] }>(`/projects/${id}/payment-links/routes`) : Promise.resolve({ routes: [] })), [id, manage]);
+  // Read by everyone who sees the list: the routes carry each currency's decimals, which every link amount is written with.
+  const routes = useLoad(() => get<{ routes: UsableRoute[] }>(`/projects/${id}/payment-links/routes`), [id]);
+  const exponents: Exponents = Object.fromEntries((routes.data?.routes ?? []).map((r) => [r.currency, r.exponent]));
   const brand = useLoad(() => (manage ? get<BrandColors>(`/projects/${id}/brand`) : Promise.resolve(null)), [id, manage]);
   if (links.error) return <ErrorLine error={links.error} />;
   return (
     <>
       <div className="card" id="links">
         <h2>{t('pl.title')}</h2>
-        {links.data && <LinkList id={id} links={links.data.links} manage={manage} reload={links.reload} />}
+        {links.data && <LinkList id={id} links={links.data.links} exponents={exponents} manage={manage} reload={links.reload} />}
       </div>
-      {manage && routes.data && brand.data && <CreateForm key={brand.data.primary_color + brand.data.secondary_color} id={id} name={name} routes={routes.data.routes} brand={{ primary_color: brand.data.primary_color, secondary_color: brand.data.secondary_color }} reload={links.reload} />}
+      {manage && routes.data && brand.data && <CreateForm key={brand.data.primary_color + brand.data.secondary_color} id={id} name={name} routes={routes.data.routes} exponents={exponents} brand={{ primary_color: brand.data.primary_color, secondary_color: brand.data.secondary_color }} reload={links.reload} />}
       <ErrorLine error={routes.error ?? brand.error} />
     </>
   );

@@ -292,6 +292,10 @@ describe('client views', () => {
         if (Array.isArray((res as { data?: unknown }).data)) expect((res as { data: unknown[] }).data.length, key).toBeGreaterThan(0);
         else expect(JSON.stringify(res).length, key).toBeGreaterThan(20);
       }
+      // The routes a link can use reach a client as these fields only: the method by name, its limits, the currency's decimals.
+      const { routes } = (await calls['GET console/projects/:id/payment-links/routes']!()) as { routes: object[] };
+      expect(routes.length).toBeGreaterThan(0);
+      for (const r of routes) expect(Object.keys(r).sort()).toEqual(['country', 'currency', 'exponent', 'id', 'maximum_amount', 'minimum_amount', 'payment_method', 'payment_method_name']);
       // The project's ledger accounts reach a client as their kind and currency only.
       const { accounts } = (await calls['GET console/treasury/project/:projectId/accounts']!()) as { accounts: object[] };
       expect(accounts.length).toBeGreaterThan(0);

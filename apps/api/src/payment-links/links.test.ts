@@ -59,8 +59,11 @@ describe('payment links in the console API', () => {
     const all = (await controller().routes(project.id, req)).routes;
     expect(all.length).toBeGreaterThan(1);
     const momo = await routeId('CM', 'MOMO', 'XAF');
-    expect(all.find((r) => r.id === momo)).toMatchObject({ country: 'CM', payment_method: 'MOMO', currency: 'XAF', minimum_amount: expect.any(Number), maximum_amount: expect.any(Number) });
-    expect(Object.keys(all[0]!).sort()).toEqual(['country', 'currency', 'id', 'maximum_amount', 'minimum_amount', 'payment_method', 'payment_method_name']);
+    expect(all.find((r) => r.id === momo)).toMatchObject({ country: 'CM', payment_method: 'MOMO', currency: 'XAF', exponent: 0, minimum_amount: expect.any(Number), maximum_amount: expect.any(Number) });
+    expect(Object.keys(all[0]!).sort()).toEqual(['country', 'currency', 'exponent', 'id', 'maximum_amount', 'minimum_amount', 'payment_method', 'payment_method_name']);
+    // Each route carries its currency's decimals from the currency table, so the console never guesses them.
+    const exponents = Object.fromEntries((await t.db.selectFrom('currency').select(['code', 'exponent']).execute()).map((c) => [c.code, c.exponent]));
+    for (const r of all) expect(r.exponent, r.currency).toBe(exponents[r.currency]);
     await patchVersion(momo, { otp_required: true });
     expect((await controller().routes(project.id, req)).routes.map((r) => r.id)).not.toContain(momo);
     const other = await acme('other-shop');

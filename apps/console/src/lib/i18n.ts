@@ -543,6 +543,7 @@ const STRINGS: Record<string, { en: string; fr: string }> = {
   'pl.f_free': { en: 'Free: the payer chooses', fr: 'Libre : le payeur choisit' },
   'pl.f_amount': { en: 'Amount ({currency})', fr: 'Montant ({currency})' },
   'pl.f_minimum': { en: 'Smallest amount accepted ({currency})', fr: 'Plus petit montant accepté ({currency})' },
+  'pl.f_amount_whole': { en: 'Enter a whole amount in {currency}.', fr: 'Saisissez un montant entier en {currency}.' },
   'pl.f_amount_invalid': { en: 'Enter an amount in {currency}, with at most {n} decimals.', fr: 'Saisissez un montant en {currency}, avec au plus {n} décimales.' },
   'pl.f_methods': { en: 'Payment methods', fr: 'Moyens de paiement' },
   'pl.f_methods_none': { en: 'This project has no route a payer can use from a phone alone in this currency.', fr: 'Ce projet n’a aucune route qu’un payeur puisse utiliser depuis son seul téléphone dans cette devise.' },

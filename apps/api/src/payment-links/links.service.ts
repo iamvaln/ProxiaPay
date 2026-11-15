@@ -132,18 +132,20 @@ export class LinksService {
   }
 
   /** The routes a link can be made over: the project's active collection routes with no step for the payer beyond their phone. Method names only, never a provider. */
-  async usableRoutes(projectId: string): Promise<{ id: string; country: string; payment_method: string; payment_method_name: string; currency: string; minimum_amount: number; maximum_amount: number }[]> {
+  async usableRoutes(projectId: string): Promise<{ id: string; country: string; payment_method: string; payment_method_name: string; currency: string; exponent: number; minimum_amount: number; maximum_amount: number }[]> {
     const rows = await this.db.selectFrom('route as r')
       .innerJoin('route_version as rv', (j) => j.onRef('rv.route_id', '=', 'r.id').on('rv.valid_to', 'is', null))
       .innerJoin('entitlement as e', (j) => j.onRef('e.route_id', '=', 'r.id').on('e.project_id', '=', projectId))
       .innerJoin('entitlement_version as ev', (j) => j.onRef('ev.entitlement_id', '=', 'e.id').on('ev.valid_to', 'is', null))
       .innerJoin('payment_method as pm', 'pm.code', 'r.payment_method_code')
-      .select(['r.id', 'r.country_code', 'r.payment_method_code', 'pm.name', 'r.currency_code', 'rv.minimum_amount as route_minimum', 'rv.maximum_amount as route_maximum', 'ev.minimum_amount as entitlement_minimum', 'ev.maximum_amount as entitlement_maximum', ...VELOCITY])
+      // The currency's decimals, so the console converts what an owner types without guessing them.
+      .innerJoin('currency as c', 'c.code', 'r.currency_code')
+      .select(['r.id', 'r.country_code', 'r.payment_method_code', 'pm.name', 'r.currency_code', 'c.exponent', 'rv.minimum_amount as route_minimum', 'rv.maximum_amount as route_maximum', 'ev.minimum_amount as entitlement_minimum', 'ev.maximum_amount as entitlement_maximum', ...VELOCITY])
       .where('r.direction', '=', 'collection').where('rv.active', '=', true).where('ev.active', '=', true).where('rv.otp_required', '=', false).where('rv.browser_required', '=', false)
       .orderBy('r.country_code').orderBy('r.payment_method_code').execute();
     return rows.map((r) => {
       const limits = limitsOf(r);
-      return { id: r.id, country: r.country_code, payment_method: r.payment_method_code, payment_method_name: r.name, currency: r.currency_code, minimum_amount: Number(limits.minimum), maximum_amount: Number(limits.maximum) };
+      return { id: r.id, country: r.country_code, payment_method: r.payment_method_code, payment_method_name: r.name, currency: r.currency_code, exponent: r.exponent, minimum_amount: Number(limits.minimum), maximum_amount: Number(limits.maximum) };
     });
   }
 

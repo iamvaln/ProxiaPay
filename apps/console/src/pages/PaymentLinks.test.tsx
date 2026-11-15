@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { toMinor } from '../lib/format';
 import { SessionProvider } from '../lib/session';
 import { ProjectDetailPage } from './ProjectDetail';
 import { TransactionsPage } from './Transactions';
@@ -16,9 +17,11 @@ const PROJECT = {
   balances: [], credentials: [], origins: [], entitlements: [], notification_endpoint: null,
 };
 const ROUTES = { routes: [
-  { id: 'r-cm', country: 'CM', payment_method: 'MOMO', payment_method_name: 'MTN MoMo', currency: 'XAF', minimum_amount: 100, maximum_amount: 1000000 },
-  { id: 'r-ga', country: 'GA', payment_method: 'AIRTEL', payment_method_name: 'Airtel Money', currency: 'XAF', minimum_amount: 100, maximum_amount: 1000000 },
-  { id: 'r-gh', country: 'GH', payment_method: 'MOMO', payment_method_name: 'MoMo Ghana', currency: 'GHS', minimum_amount: 100, maximum_amount: 100000 },
+  { id: 'r-cm', country: 'CM', payment_method: 'MOMO', payment_method_name: 'MTN MoMo', currency: 'XAF', exponent: 0, minimum_amount: 100, maximum_amount: 1000000 },
+  { id: 'r-ga', country: 'GA', payment_method: 'AIRTEL', payment_method_name: 'Airtel Money', currency: 'XAF', exponent: 0, minimum_amount: 100, maximum_amount: 1000000 },
+  { id: 'r-gh', country: 'GH', payment_method: 'MOMO', payment_method_name: 'MoMo Ghana', currency: 'GHS', exponent: 2, minimum_amount: 100, maximum_amount: 100000 },
+  // A currency without decimals that the console knows nothing of: only the route's exponent says so.
+  { id: 'r-ug', country: 'UG', payment_method: 'MOMO', payment_method_name: 'MoMo Uganda', currency: 'UGX', exponent: 0, minimum_amount: 500, maximum_amount: 5000000 },
 ] };
 const LINK = {
   id: 'l1', code: 'AbCdEfGhIj', url: 'https://pay.example.com/AbCdEfGhIj', title: 'Invoice 42', amount_type: 'free', amount: null, minimum_amount: 1000, currency: 'XAF', single_use: false, expires_at: null, status: 'active',
@@ -27,7 +30,7 @@ const LINK = {
 const EMPTY_PAGE = { data: [], total: 0, page: 1, page_size: 25 };
 
 /** A console API: answers by method and path and records every call. */
-const server = (permissions: string[], over: { links?: unknown[]; writes?: Record<string, (body: any) => unknown> } = {}) => {
+const server = (permissions: string[], over: { links?: unknown[]; routes?: unknown[]; writes?: Record<string, (body: any) => unknown> } = {}) => {
   const calls: { method: string; path: string; query: string; body: any }[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
     const method = init.method ?? 'GET';
@@ -35,7 +38,7 @@ const server = (permissions: string[], over: { links?: unknown[]; writes?: Recor
     const body = init.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ method, path, query, body });
     const reads: Record<string, unknown> = {
-      '/auth/me': me(permissions), '/projects/p1': PROJECT, '/projects/p1/payment-links': { links: over.links ?? [LINK] }, '/projects/p1/payment-links/routes': ROUTES,
+      '/auth/me': me(permissions), '/projects/p1': PROJECT, '/projects/p1/payment-links': { links: over.links ?? [LINK] }, '/projects/p1/payment-links/routes': over.routes ? { routes: over.routes } : ROUTES,
       '/projects/p1/brand': { logo_asset_id: null, primary_color: '#1A56DB', secondary_color: null },
     };
     const write = over.writes?.[`${method} ${path}`];
@@ -93,6 +96,55 @@ describe('the payment links tab', () => {
     fireEvent.click(form.getByRole('button', { name: 'Create the link' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.path === '/projects/p1/payment-links')).toHaveLength(2));
     expect(calls.filter((c) => c.method === 'POST' && c.path === '/projects/p1/payment-links')[1]!.body).toMatchObject({ amount_type: 'free', minimum_amount: 200 });
+  });
+
+  it('a currency without decimals is converted by the route’s exponent, not a guess', async () => {
+    const calls = server(OWNER, { writes: { 'POST /projects/p1/payment-links': () => ({ id: 'l2', code: 'Zz', url: 'https://pay.example.com/Zz' }) } });
+    project('links');
+    const form = within(await waitFor(() => { const el = document.getElementById('new-link'); if (!el) throw new Error('no form'); return el; }));
+    fireEvent.change(form.getByLabelText('Currency'), { target: { value: 'UGX' } });
+    fireEvent.change(form.getByLabelText('Title'), { target: { value: 'Tickets' } });
+    fireEvent.click(form.getByLabelText('MoMo Uganda'));
+    // A fraction is refused: UGX has none. The field steps by whole units, so the browser itself holds the form back.
+    const amount = form.getByLabelText('Amount (UGX)') as HTMLInputElement;
+    fireEvent.change(amount, { target: { value: '12.5' } });
+    expect(amount.step).toBe('1');
+    expect(amount.validity.stepMismatch).toBe(true);
+    fireEvent.click(form.getByRole('button', { name: 'Create the link' }));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/projects/p1/payment-links')).toBe(false);
+    // And the conversion refuses it too, should a browser let it through.
+    expect(toMinor('12.5', 0)).toBeNull();
+    expect(toMinor('12.50', 2)).toBe(1250);
+    expect(toMinor('5000', 0)).toBe(5000);
+    fireEvent.change(form.getByLabelText('Amount (UGX)'), { target: { value: '5000' } });
+    fireEvent.click(form.getByRole('button', { name: 'Create the link' }));
+    await screen.findByText(/Link created/);
+    expect(calls.find((c) => c.method === 'POST' && c.path === '/projects/p1/payment-links')!.body).toMatchObject({ currency: 'UGX', amount: 5000 });
+  });
+
+  it('the list writes each link’s amounts with its currency’s exponent, and guesses none', async () => {
+    const links = [
+      { ...LINK, id: 'l-ug', title: 'Uganda', currency: 'UGX', amount_type: 'fixed', amount: 25000, payments: { ...LINK.payments, total_collected: 15000 } },
+      { ...LINK, id: 'l-gh', title: 'Ghana', currency: 'GHS', amount_type: 'fixed', amount: 1250, payments: { ...LINK.payments, total_collected: 2500 } },
+      { ...LINK, id: 'l-eu', title: 'Euro', currency: 'EUR', amount_type: 'fixed', amount: 1250, payments: { ...LINK.payments, total_collected: 2500 } },
+    ];
+    server(['projects.read'], { links });
+    project('links');
+    const row = async (title: string) => (await screen.findByText(title)).closest('tr') as HTMLElement;
+    expect((await row('Uganda')).textContent).toContain('25,000 UGX');
+    expect((await row('Uganda')).textContent).toContain('15,000 UGX');
+    expect((await row('Ghana')).textContent).toContain('12.50 GHS');
+    expect((await row('Ghana')).textContent).toContain('25.00 GHS');
+    // No route loaded for EUR: no exponent, so no figure rather than a guessed one.
+    expect((await row('Euro')).textContent).not.toMatch(/12\.50|1,250|25\.00/);
+  });
+
+  it('no amount can be typed for a currency with no route loaded', async () => {
+    server(OWNER, { routes: [] });
+    project('links');
+    const form = within(await waitFor(() => { const el = document.getElementById('new-link'); if (!el) throw new Error('no form'); return el; }));
+    expect((form.getByRole('spinbutton') as HTMLInputElement).disabled).toBe(true);
   });
 
   it('shows when each link was last paid', async () => {
