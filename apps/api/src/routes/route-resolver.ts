@@ -146,16 +146,10 @@ export class RouteResolver {
     if (all.length === 0) return null;
     const direction = resolution.route.direction;
     const counterparty = (r: number) => RouteResolver.counterpartyAmount(direction, this.computeFigures(resolution, r, undefined));
-    const admits = (r: number) => all.some((b) => (b.minimum_amount == null || counterparty(r) >= b.minimum_amount) && (b.maximum_amount == null || counterparty(r) <= b.maximum_amount));
-    if (admits(requested)) return null;
-    const { minimum, maximum } = resolution.limits;
-    for (let r = requested + 1; r <= maximum; r++) {
-      if (admits(r)) return new PlatformError('AMOUNT_BELOW_MINIMUM', 'Amount is below what the provider accepts on this route.', { field: 'amount', details: { minimum: r } });
-    }
-    for (let r = requested - 1; r >= minimum; r--) {
-      if (admits(r)) return new PlatformError('AMOUNT_ABOVE_MAXIMUM', 'Amount is above what the provider accepts on this route.', { field: 'amount', details: { maximum: r } });
-    }
-    return null;
+    const bound = providerLimitBound(counterparty, counterpartyMonotone(resolution), all, requested, resolution.limits);
+    if (!bound) return null;
+    if ('minimum' in bound) return new PlatformError('AMOUNT_BELOW_MINIMUM', 'Amount is below what the provider accepts on this route.', { field: 'amount', details: { minimum: bound.minimum } });
+    return new PlatformError('AMOUNT_ABOVE_MAXIMUM', 'Amount is above what the provider accepts on this route.', { field: 'amount', details: { maximum: bound.maximum } });
   }
 
   computeFigures(resolution: Resolution, amount: number, binding: Pick<BindingRow, 'expected_fee_bps' | 'expected_fee_fixed'> | undefined): Figures {
@@ -279,4 +273,70 @@ export function resolveLimits(
   const minimum = ev.minimum_amount != null && ev.minimum_amount > rv.minimum_amount ? ((sources.minimum = 'entitlement'), ev.minimum_amount) : ((sources.minimum = 'route'), rv.minimum_amount);
   const maximum = ev.maximum_amount != null && ev.maximum_amount < rv.maximum_amount ? ((sources.maximum = 'entitlement'), ev.maximum_amount) : ((sources.maximum = 'route'), rv.maximum_amount);
   return { minimum, maximum, count24h: ev.count_24h, value24h: ev.value_24h, count30d: ev.count_30d, value30d: ev.value_30d, sources: { ...sources, velocity: 'entitlement' } };
+}
+
+/**
+ * Whether what the counterparty experiences never falls as the requested amount grows. A payer's debit is the request plus
+ * fees, so it always rises. A recipient's receipt is the request less the fees they bear: it holds or rises while those fees
+ * together rise by at most one unit per unit, and can dip otherwise (two fees both rounding up on the same unit).
+ */
+export function counterpartyMonotone(resolution: Pick<Resolution, 'route' | 'terms'>): boolean {
+  if (resolution.route.direction === 'collection') return true;
+  const { processing, platform, processingBearer, platformBearer } = resolution.terms;
+  const borne = [processingBearer === 'counterparty' ? processing : null, platformBearer === 'counterparty' ? platform : null];
+  // A half-up rounded fee at `bps` rises by at most ceil(bps / 10000) per unit; floors and ceilings only flatten it.
+  return borne.reduce((n, t) => n + (t ? Math.ceil(t.bps / 10000) : 0), 0) <= 1;
+}
+
+type AmountLimits = { minimum_amount: number | null; maximum_amount: number | null };
+
+/** The smallest r in [lo, hi] where `pred`, false then true along the range, holds; null when it never does. */
+function firstTrue(lo: number, hi: number, pred: (r: number) => boolean): number | null {
+  if (lo > hi || !pred(hi)) return null;
+  while (lo < hi) {
+    const mid = lo + Math.floor((hi - lo) / 2);
+    if (pred(mid)) hi = mid; else lo = mid + 1;
+  }
+  return lo;
+}
+
+/** The largest r in [lo, hi] where `pred`, true then false along the range, holds; null when it never does. */
+function lastTrue(lo: number, hi: number, pred: (r: number) => boolean): number | null {
+  if (lo > hi || !pred(lo)) return null;
+  while (lo < hi) {
+    const mid = lo + Math.ceil((hi - lo) / 2);
+    if (pred(mid)) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
+ * The nearest requested amount some binding admits: the smallest above `requested` (within the route's maximum) or else the
+ * largest below it (within its minimum). Null when `requested` is admitted or nothing in range is. With a monotone
+ * counterparty amount each binding admits one run of amounts, found by bisection in O(log n): a scan of every unit up to a
+ * 1 000 000 maximum would let an unauthenticated caller (the public payment page) burn CPU. A payout whose recipient amount
+ * can dip keeps the unit scan, which is exact for any shape; it is reachable only by an authenticated project.
+ */
+export function providerLimitBound(counterparty: (r: number) => number, monotone: boolean, bindings: AmountLimits[], requested: number, limits: { minimum: number; maximum: number }): { minimum: number } | { maximum: number } | null {
+  const fits = (b: AmountLimits, c: number) => (b.minimum_amount == null || c >= b.minimum_amount) && (b.maximum_amount == null || c <= b.maximum_amount);
+  if (bindings.some((b) => fits(b, counterparty(requested)))) return null;
+  const { minimum, maximum } = limits;
+  if (!monotone) {
+    const admits = (r: number) => bindings.some((b) => fits(b, counterparty(r)));
+    for (let r = requested + 1; r <= maximum; r++) if (admits(r)) return { minimum: r };
+    for (let r = requested - 1; r >= minimum; r--) if (admits(r)) return { maximum: r };
+    return null;
+  }
+  // Above: per binding, the first amount reaching its minimum; it is admitted only if it does not already pass its maximum.
+  const above = bindings.map((b) => {
+    const r = firstTrue(requested + 1, maximum, (x) => b.minimum_amount == null || counterparty(x) >= b.minimum_amount);
+    return r !== null && fits(b, counterparty(r)) ? r : null;
+  }).filter((r): r is number => r !== null);
+  if (above.length > 0) return { minimum: Math.min(...above) };
+  // Below: per binding, the last amount within its maximum; admitted only if it still reaches its minimum.
+  const below = bindings.map((b) => {
+    const r = lastTrue(minimum, requested - 1, (x) => b.maximum_amount == null || counterparty(x) <= b.maximum_amount);
+    return r !== null && fits(b, counterparty(r)) ? r : null;
+  }).filter((r): r is number => r !== null);
+  return below.length > 0 ? { maximum: Math.max(...below) } : null;
 }
