@@ -11,6 +11,17 @@ These concern the platform itself and are checked by its operator, once. The pro
 - [ ] The GitHub environment `production` requires approval (a named reviewer), with deployments limited to `main` and `v*` tags.
 - [ ] The Ejara balances in the console match the Ejara dashboard.
 
+## For a client's account
+
+A client exists only in the environment where it was created. Production starts
+empty of clients: ProxiaPay creates the owner there again (`docs/client-onboarding.md`),
+and the client then recreates in production what it built on the sandbox.
+
+- [ ] The owner has accepted the production invitation and enrolled an authenticator.
+- [ ] The client has created its projects in production. Routes are opened by ProxiaPay after the "Project waiting for routes" alert; nothing is open until then.
+- [ ] The client has issued its live credentials (`pk_live_…` / `sk_live_…`) and set the notification address on each project.
+- [ ] The client has invited its team (Developer, Finance) in production, with their projects.
+
 ## Infrastructure
 
 - [ ] Every address or range the product calls from is known and has been declared on the project. Production refuses calls from elsewhere before credentials are considered.

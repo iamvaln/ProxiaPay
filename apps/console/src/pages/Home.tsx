@@ -1,13 +1,14 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { get } from '../lib/api';
-import { useT } from '../lib/session';
+import { useState } from 'react';
+import { get, post, readableError } from '../lib/api';
+import { useSession, useT } from '../lib/session';
 import { Amount, Empty, ErrorLine, ScopeNote, useEvery, useLoad } from '../components/common';
 import { Headline } from '../components/Headline';
 import { RouteChart } from '../components/RouteChart';
 import { Verdict } from '../components/Verdict';
-import { age } from '../lib/format';
-import type { HomeCards } from '../lib/home';
+import { age, money, pct } from '../lib/format';
+import type { CollectedToday, HomeCards, RateVsBaseline } from '../lib/home';
 
 interface Home { cards: HomeCards }
 
@@ -56,7 +57,37 @@ export function HomeView({ cards, loadedAt }: { cards: HomeCards; loadedAt: Date
   );
 }
 
-export function HomePage() {
+function AcceptButton({ membershipId }: { membershipId: string }) {
+  const { refresh } = useSession();
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const accept = async () => {
+    setBusy(true); setError(null);
+    try { await post(`/auth/memberships/${membershipId}/accept`); await refresh(); } catch (e) { setError(readableError(e, t)); setBusy(false); }
+  };
+  return <><button type="button" className="primary" disabled={busy} onClick={() => void accept()}>{busy ? t('common.working') : t('pending.accept')}</button><ErrorLine error={error} /></>;
+}
+
+/** Memberships offered to this account and not yet accepted; accepting one makes the client available to switch to. */
+export function PendingInvitations() {
+  const { me } = useSession();
+  const t = useT();
+  if (!me?.pending_clients.length) return null;
+  return (
+    <section className="card">
+      <h2>{t('pending.title')}</h2>
+      {me.pending_clients.map((p) => (
+        <div key={p.membership_id}>
+          <p>{t('pending.invited', { client: p.client_name })}</p>
+          <AcceptButton membershipId={p.membership_id} />
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function LoadedHome() {
   const { data, error, reload } = useLoad(() => get<Home>('/home'));
   useEvery(reload, 60_000);
   // A new response object marks a successful load; "updated n s ago" counts from it.
@@ -65,4 +96,52 @@ export function HomePage() {
   if (error && !data) return <ErrorLine error={error} />;
   if (!data) return <p className="muted">…</p>;
   return <HomeView cards={data.cards} loadedAt={loadedAt} />;
+}
+
+interface ClientHomeData { collected_today: CollectedToday[]; success_rate: RateVsBaseline; undetermined: number }
+
+/** A client's home: the figures of its own projects, with nothing of the platform's (no verdict, chart, float or earnings) and no link to a platform page. */
+export function ClientHomeView({ data }: { data: ClientHomeData }) {
+  const t = useT();
+  const { lang } = useSession();
+  return (
+    <>
+      <h1>{t('nav.home')}</h1>
+      <div className="headline">
+        <div className="headline-figure">
+          <span className="headline-label">{t('home.headline.collected')}</span>
+          {data.collected_today.length === 0 && <span className="headline-value">—</span>}
+          {data.collected_today.map((c) => <span className="headline-row" key={c.currency}><span className="headline-value">{money(c.today, c.currency, lang)}</span></span>)}
+        </div>
+        <div className="headline-figure">
+          <span className="headline-label">{t('home.headline.success_rate')}</span>
+          <span className="headline-value">{pct(data.success_rate.current)}</span>
+        </div>
+        <Link className="headline-figure" to="/transactions?state=undetermined">
+          <span className="headline-label">{t('home.headline.undetermined')}</span>
+          <span className="headline-value">{data.undetermined}</span>
+          <span className="headline-detail small muted">{t('home.client.undetermined_detail')}</span>
+        </Link>
+      </div>
+    </>
+  );
+}
+
+function LoadedClientHome() {
+  const { me } = useSession();
+  // Keyed by the active client: a switch asks again, so one client's figures never stand for another's.
+  const { data, error } = useLoad(() => get<ClientHomeData>('/client/home'), [me?.active_client?.id]);
+  if (error && !data) return <ErrorLine error={error} />;
+  if (!data) return <p className="muted">…</p>;
+  return <ClientHomeView data={data} />;
+}
+
+export function HomePage() {
+  const { me } = useSession();
+  const t = useT();
+  // A client account with no active client has no home yet: the invitation waiting for it is the page.
+  if (me?.kind === 'client' && !me.active_client) {
+    return <><h1>{t('nav.home')}</h1><PendingInvitations />{!me.pending_clients.length && <Empty text={t('pending.none')} />}</>;
+  }
+  return <><PendingInvitations />{me?.kind === 'client' ? <LoadedClientHome /> : <LoadedHome />}</>;
 }

@@ -208,6 +208,20 @@ describe('administrators and roles', () => {
     expect(self).not.toContain('×');
     expect(self).toContain('Vous ne pouvez pas modifier');
   });
+  it('offer no status change on a client account, and point to Clients instead', () => {
+    const client = admin('awa', { kind: 'client', assignments: [] });
+    expect(cfg.actions!.filter((x) => x.when!(client))).toEqual([]);
+    expect(cfg.actions!.filter((x) => x.when!({ ...client, status: 'disabled' }))).toEqual([]);
+    const out = wrap(<>{cfg.summary!(client)}</>);
+    expect(out).not.toContain('Désactiver');
+    expect(out).toContain('Géré depuis Supervision → Clients.');
+  });
+  it('offer no removal of an assignment that belongs to a client membership', () => {
+    const member = admin('ama', { assignments: [{ id: 'as-ama', role_name: 'Client owner', scope_type: 'client', membership_id: 'm1', scopes: [] }] });
+    const out = wrap(<>{cfg.summary!(member)}</>);
+    expect(out).toContain('Client owner');
+    expect(out).not.toContain('×');
+  });
   it('filter by status and by role', () => {
     expect(cfg.filters!.map((f) => f.key)).toEqual(['status', 'role']);
     expect(run(rows, cfg, { filters: { status: 'disabled' } }).map((a) => a.id)).toEqual(['bob']);
@@ -222,6 +236,12 @@ describe('administrators and roles', () => {
     void rc.actions![0]!.run!(role);
     expect(edited).toEqual([role]);
     expect(rc.actions![0]!.opens).toBeUndefined();
+  });
+  it('a client role is read-only: no Modifier', () => {
+    const rc = roleList({ t: fr, edit: none });
+    const client = { id: 'rc', name: 'Client owner', description: 'Owns', seeded: true, kind: 'client', permissions: ['projects.create_own'], administrators: [] };
+    expect(rc.actions!.filter((a) => !a.when || a.when(client))).toEqual([]);
+    expect(rc.actions!.filter((a) => !a.when || a.when({ ...client, kind: 'platform' }))).toHaveLength(1);
   });
 });
 

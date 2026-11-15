@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider, useSession } from './lib/session';
 import { Shell } from './components/Shell';
@@ -16,7 +17,10 @@ import { FloatDetailPage } from './pages/FloatDetail';
 import { ReconciliationPage } from './pages/Reconciliation';
 import { DiscrepancyPage } from './pages/Discrepancy';
 import { OversightPage } from './pages/Oversight';
+import { TeamPage } from './pages/Team';
 import { SearchPage } from './pages/Search';
+import { AccountPage } from './pages/Account';
+import { InvitationPage } from './pages/Invitation';
 
 function Guarded({ children }: { children: React.ReactNode }) {
   const { me, loading } = useSession();
@@ -24,7 +28,8 @@ function Guarded({ children }: { children: React.ReactNode }) {
   if (loading) return <p className="muted" style={{ padding: 24 }}>…</p>;
   // Sign-in brings the administrator back to the page they were on.
   if (!me || !me.second_factor_complete) return <Navigate to="/sign-in" replace state={{ from: here.pathname + here.search }} />;
-  return <Shell>{children}</Shell>;
+  // Keyed on the active client: after a switch every page remounts and reloads, so nothing of the previous client stays on screen.
+  return <Shell><Fragment key={me.active_client?.id ?? 'platform'}>{children}</Fragment></Shell>;
 }
 
 export function App() {
@@ -32,7 +37,10 @@ export function App() {
     <SessionProvider>
       <Routes>
         <Route path="/sign-in" element={<SignInPage />} />
+        <Route path="/invitation/:token" element={<InvitationPage />} />
         <Route path="/" element={<Guarded><HomePage /></Guarded>} />
+        <Route path="/account" element={<Guarded><AccountPage /></Guarded>} />
+        <Route path="/team" element={<Guarded><TeamPage /></Guarded>} />
         <Route path="/approvals" element={<Guarded><ApprovalsPage /></Guarded>} />
         <Route path="/search" element={<Guarded><SearchPage /></Guarded>} />
         <Route path="/transactions" element={<Guarded><TransactionsPage /></Guarded>} />

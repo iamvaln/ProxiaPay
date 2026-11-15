@@ -35,9 +35,11 @@ export function projectList({ t, rows }: { t: Tr; rows: Row[] }): Pick<DataTable
 }
 
 export function ProjectsPage() {
-  const { has } = useSession();
+  const { has, me } = useSession();
   const t = useT();
   const hint = useId();
+  // A client owner creates projects for its own client; platform staff create any.
+  const canCreate = has('projects.manage') || has('projects.create_own');
   const { data, error, reload } = useLoad(() => get<any>('/projects'));
   const [form, setForm] = useState({ code: '', name: '' });
   const create = async () => {
@@ -53,14 +55,14 @@ export function ProjectsPage() {
       {data && <DataTable<Row> rows={data.projects} {...projectList({ t, rows: data.projects })} />}
       <div className="card" style={{ marginTop: 16, maxWidth: 520 }}>
         <h2>{t('proj.new')}</h2>
-        {has('projects.manage') ? (
+        {canCreate ? (
           <SubmitForm submitLabel={t('proj.create')} onSubmit={create}>
             {/* The API takes lowercase only, so the field writes what it will accept. */}
             <label>{t('field.code')}<input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toLowerCase() })} pattern="[a-z0-9][a-z0-9\-]{1,31}" aria-describedby={hint} required /></label>
             <p id={hint} className="small muted">{t('proj.code_hint')}</p>
             <label>{t('field.name')}<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
           </SubmitForm>
-        ) : <NeedsPermission permission="projects.manage" />}
+        ) : <NeedsPermission permission={me?.kind === 'client' ? 'projects.create_own' : 'projects.manage'} />}
       </div>
     </>
   );

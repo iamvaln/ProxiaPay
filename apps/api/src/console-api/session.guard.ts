@@ -9,6 +9,7 @@ import { requestContext } from '../logging/logger';
 import { AdminAuthService, type SessionPrincipal } from '../admin-auth/admin-auth.service';
 import { AuthorisationService, type Authorisation } from '../admin-auth/authorisation.service';
 import type { Permission } from '../permissions/permissions';
+import { CLIENT_ACCESSIBLE } from './client-access';
 
 export const SESSION_COOKIE = 'pp_session';
 export const ALLOW_PARTIAL = 'allowPartialSession';
@@ -28,8 +29,9 @@ export interface ConsoleRequest extends Request {
 
 /**
  * Console sessions: an HttpOnly, SameSite=Strict cookie holding an opaque token resolved in the
- * store, a custom header on every mutating call as the cross-site guard, and the permission the
- * endpoint declares checked before the handler runs. Permission denied names the permission.
+ * store, a custom header on every mutating call as the cross-site guard, client accounts kept to
+ * the handlers marked `@ClientAccessible()`, and the permission the endpoint declares checked
+ * before the handler runs. Permission denied names the permission.
  */
 @Injectable()
 export class SessionGuard implements CanActivate {
@@ -50,12 +52,16 @@ export class SessionGuard implements CanActivate {
     const token = parseCookie(req.headers.cookie ?? '')[SESSION_COOKIE];
     const principal = token ? await this.sessions.resolveSession(token) : undefined;
     if (!principal) throw new PlatformError('UNAUTHENTICATED', 'Sign in to continue.');
+    // The wall: a client account reaches only handlers opened to it, and learns nothing of the
+    // others, so this comes before the second factor and the permission and answers exactly as a route
+    // that does not exist (the exception filter's body for an unknown path).
+    if (principal.kind === 'client' && !this.reflector.get<boolean>(CLIENT_ACCESSIBLE, ctx.getHandler())) throw new PlatformError('NOT_FOUND', 'No such resource.');
     const partialAllowed = this.reflector.getAllAndOverride<boolean>(ALLOW_PARTIAL, [ctx.getHandler(), ctx.getClass()]);
     if (!principal.secondFactorComplete && !partialAllowed) throw new PlatformError('SECOND_FACTOR_REQUIRED', 'Complete the second factor to continue.');
     req.principal = principal;
     const store = requestContext.getStore();
     if (store) store.administratorId = principal.administratorId;
-    req.auth = await this.authorisation.load(principal.administratorId);
+    req.auth = await this.authorisation.load(principal.administratorId, principal.activeClientId);
     const required = this.reflector.getAllAndOverride<Permission | undefined>(PERMISSION_KEY, [ctx.getHandler(), ctx.getClass()]);
     if (required) req.auth.require(required);
     return true;

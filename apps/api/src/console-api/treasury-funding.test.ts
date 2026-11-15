@@ -172,7 +172,7 @@ describe('funding opens the float it funds', () => {
       const grants: Grant[] = ALL_PERMISSIONS.map((permission) => permission === 'treasury.funding'
         ? { permission, scopeType: 'projects', projectIds, providerAccountIds: [] }
         : { permission, scopeType: 'all', projectIds: [], providerAccountIds: [] });
-      return { ...req, auth: new Authorisation(req.principal.administratorId, grants) } as typeof req;
+      return { ...req, auth: new Authorisation(req.principal.administratorId, grants, null, false) } as typeof req;
     }
     const project = { target: 'project', currency: 'XAF', amount: 5000, justification: 'opening balance' };
 

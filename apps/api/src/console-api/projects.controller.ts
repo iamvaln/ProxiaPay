@@ -6,15 +6,21 @@ import { DB_TOKEN, type Db } from '../db/database';
 import { nonEmpty, parseBody } from '../http/validation';
 import { LedgerService } from '../ledger/ledger.service';
 import { NotificationService } from '../notifications/notification.service';
+import { NOT_PUBLIC, vetTarget } from '../notifications/public-address';
 import { CredentialService, CREDENTIAL_SCOPES } from '../project-auth/credential.service';
 import { ConfirmationService } from '../admin-auth/confirmation.service';
 import { AuditService } from '../audit/audit.service';
 import { EntitlementService, entitlementInputSchema } from './entitlement.service';
+import { ClientProjectsService } from './client-projects.service';
 import { pageQuerySchema, paginate } from './pagination';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
+import { ClientAccessible } from './client-access';
+import { clientProjectDetail, clientProjectSummary } from './client-views';
+import type { Permission } from '../permissions/permissions';
 
-const projectSchema = z.object({ code: z.string().regex(/^[a-z0-9][a-z0-9-]{1,31}$/), name: nonEmpty(128) });
+const projectSchema = z.object({ code: z.string().regex(/^[a-z0-9][a-z0-9-]{1,31}$/), name: nonEmpty(128), client_id: z.string().uuid().optional() });
+const attachSchema = z.object({ client_id: z.string().uuid(), confirmation: confirmationSchema.optional() });
 const credentialSchema = z.object({ scopes: z.array(z.enum(CREDENTIAL_SCOPES)).min(1), confirmation: confirmationSchema.optional() });
 const confirmOnly = z.object({ confirmation: confirmationSchema.optional(), reason: z.string().max(512).optional() });
 const originSchema = z.object({ cidr: z.string().regex(/^[0-9a-fA-F:.]+(\/\d{1,3})?$/), description: z.string().max(256).default('') });
@@ -35,13 +41,16 @@ export class ConsoleProjectsController {
     private readonly confirmations: ConfirmationService,
     private readonly entitlements: EntitlementService,
     private readonly audit: AuditService,
+    private readonly clientProjects: ClientProjectsService,
   ) {}
 
-  private reach(req: ConsoleRequest, projectId: string, permission: 'projects.read' | 'projects.manage' = 'projects.read') {
+  /** Reach is checked with the permission the handler declares, so a grant scoped to one sub-resource does not need `projects.manage`. */
+  private reach(req: ConsoleRequest, projectId: string, permission: Permission = 'projects.read') {
     if (!req.auth.canReachProject(permission, projectId)) throw new PlatformError('NOT_FOUND', 'No such project.');
   }
 
   @Get()
+  @ClientAccessible()
   @RequirePermission('projects.read')
   async list(@Req() req: ConsoleRequest) {
     const scope = req.auth.projectScope('projects.read');
@@ -57,25 +66,52 @@ export class ConsoleProjectsController {
       const { rows: routes } = await sql<{ n: number }>`select count(*)::int as n from entitlement e join entitlement_version v on v.entitlement_id = e.id and v.valid_to is null and v.active where e.project_id = ${p.id}`.execute(this.db);
       out.push({ ...p, volume_30d: mine.reduce((n, a) => n + a.n, 0), value_30d: mine.map((a) => ({ currency: a.currency_code, value: Number(a.value) })), balances: await this.ledger.projectBalances(this.db, p.id), routes_granted: routes[0]!.n, credentials_active: creds.find((c) => c.project_id === p.id)?.n ?? 0 });
     }
+    if (req.auth.isClient) return { projects: out.map(clientProjectSummary), scoped: scope !== null };
     return { projects: out, scoped: scope !== null };
   }
 
+  /** A client needs `projects.create_own` and its project is its own; the platform needs `projects.manage` and may name a client. One decorator cannot say "either", so the handler does. */
   @Post()
+  @ClientAccessible()
   @HttpCode(201)
-  @RequirePermission('projects.manage')
   async create(@Body() body: unknown, @Req() req: ConsoleRequest) {
-    const input = parseBody(projectSchema, body);
+    const { client_id: requested, ...input } = parseBody(projectSchema, body);
+    const byClient = req.auth.isClient;
+    req.auth.require(byClient ? 'projects.create_own' : 'projects.manage');
+    // A client's body never chooses the client: the active one is the only one it can create for.
+    const clientId = byClient ? req.auth.clientId : (requested ?? null);
+    if (byClient && !clientId) throw new PlatformError('PERMISSION_DENIED', 'Choose a client to work in first.');
     return this.db.transaction().execute(async (tx) => {
-      const p = await tx.insertInto('project').values({ ...input, created_by: req.principal.administratorId }).returning(['id', 'code', 'name', 'status']).executeTakeFirstOrThrow().catch((e) => {
-        if ((e as { code?: string }).code === '23505') throw new PlatformError('CONFLICT', 'A project with that code exists.');
+      if (!byClient && clientId && !(await tx.selectFrom('client').select('id').where('id', '=', clientId).executeTakeFirst())) throw new PlatformError('FIELD_INVALID', 'No such client.', { field: 'client_id' });
+      const p = await tx.insertInto('project').values({ ...input, client_id: clientId, created_by: req.principal.administratorId }).returning(['id', 'code', 'name', 'status', 'client_id']).executeTakeFirstOrThrow().catch((e) => {
+        if ((e as { code?: string }).code === '23505') throw new PlatformError('FIELD_INVALID', 'That code is taken.', { field: 'code' });
         throw e;
       });
-      await this.audit.record(tx, { actorId: req.principal.administratorId, action: 'project.create', subjectType: 'project', subjectId: p.id, next: input });
+      await this.audit.record(tx, { actorId: req.principal.administratorId, action: 'project.create', subjectType: 'project', subjectId: p.id, next: { ...input, client_id: clientId } });
+      if (byClient) await this.clientProjects.openRoutes(tx, p);
       return p;
     });
   }
 
+  /** Platform only: a project never moves between clients, and the response names the platform accounts that still reach it. */
+  @Post(':id/client')
+  @HttpCode(200)
+  @RequirePermission('admin.clients')
+  async attachClient(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
+    const { client_id, confirmation } = parseBody(attachSchema, body);
+    return withConfirmation(this.db, this.confirmations, req.principal, 'project.attach_client', { project_id: id, client_id }, confirmation, (tx, cid) => this.clientProjects.attach(tx, id, client_id, req.principal.administratorId, cid));
+  }
+
+  /** Platform only: who keeps reaching the project once it is attached, read before the confirmation code is asked for. */
+  @Get(':id/reach')
+  @RequirePermission('admin.clients')
+  async reachBy(@Param('id') id: string) {
+    if (!(await this.db.selectFrom('project').select('id').where('id', '=', id).executeTakeFirst())) throw new PlatformError('NOT_FOUND', 'No such project.');
+    return { platform_accounts: await this.clientProjects.platformAccountsReaching(this.db, id) };
+  }
+
   @Get(':id')
+  @ClientAccessible()
   @RequirePermission('projects.read')
   async detail(@Param('id') id: string, @Req() req: ConsoleRequest) {
     this.reach(req, id);
@@ -84,24 +120,30 @@ export class ConsoleProjectsController {
     const credentials = await this.credentials.listForProject(id);
     const origins = await this.db.selectFrom('project_origin').selectAll().where('project_id', '=', id).where('active', '=', true).orderBy('created_at').execute();
     const endpoint = await this.db.selectFrom('project_notification_endpoint').select(['id', 'url', 'active', 'verified_at', 'created_at']).where('project_id', '=', id).where('active', '=', true).executeTakeFirst();
+    const balances = await this.ledger.projectBalances(this.db, id);
+    // A client sees its own resolved terms per route, never the entitlement rows with the route's base fees, notes and authors.
+    if (req.auth.isClient) return clientProjectDetail({ project, balances, credentials, origins, notification_endpoint: endpoint ?? null }, await this.entitlements.termsForProject(id));
     return {
-      project, balances: await this.ledger.projectBalances(this.db, id), credentials, origins,
+      project, balances, credentials, origins,
       entitlements: await this.entitlements.listForProject(id), notification_endpoint: endpoint ? { ...endpoint, secret_set: true } : null,
     };
   }
 
   @Get(':id/origin-refusals')
+  @ClientAccessible()
   @RequirePermission('projects.read')
   async originRefusals(@Param('id') id: string, @Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
     this.reach(req, id);
     const q = parseBody(refusalsSchema, query);
-    let qb = this.db.selectFrom('origin_refusal').selectAll().where('project_id', '=', id);
+    // Named columns: a column added to the table later does not reach a client's page unseen.
+    let qb = this.db.selectFrom('origin_refusal').select(['id', 'credential_key', 'origin_address', 'occurred_at']).where('project_id', '=', id);
     if (q.after) qb = qb.where('occurred_at', '>', new Date(q.after));
     if (q.before) qb = qb.where('occurred_at', '<', new Date(q.before));
     return paginate(qb, q, { sorts: { when: 'occurred_at' }, defaultSort: 'when', id: 'id' });
   }
 
   @Get(':id/deliveries')
+  @ClientAccessible()
   @RequirePermission('projects.read')
   async deliveries(@Param('id') id: string, @Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
     this.reach(req, id);
@@ -114,49 +156,54 @@ export class ConsoleProjectsController {
   }
 
   @Post(':id/credentials')
+  @ClientAccessible()
   @HttpCode(201)
   @RequirePermission('projects.credentials')
   async issue(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.credentials');
     const { scopes, confirmation } = parseBody(credentialSchema, body);
     return withConfirmation(this.db, this.confirmations, req.principal, 'credential.issue', { project_id: id, scopes }, confirmation, (tx, cid) => this.credentials.issue(tx, id, scopes, req.principal.administratorId, cid));
   }
 
   @Post(':id/credentials/:cid/promote')
+  @ClientAccessible()
   @HttpCode(200)
   @RequirePermission('projects.credentials')
   async promote(@Param('id') id: string, @Param('cid') cid: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.credentials');
     const { confirmation } = parseBody(confirmOnly, body);
-    await withConfirmation(this.db, this.confirmations, req.principal, 'credential.promote', { credential_id: cid }, confirmation, (tx, c) => this.credentials.promote(tx, cid, req.principal.administratorId, c));
+    await withConfirmation(this.db, this.confirmations, req.principal, 'credential.promote', { credential_id: cid }, confirmation, (tx, c) => this.credentials.promote(tx, id, cid, req.principal.administratorId, c));
     return { ok: true };
   }
 
   @Delete(':id/credentials/:cid')
+  @ClientAccessible()
   @HttpCode(200)
   @RequirePermission('projects.credentials')
   async remove(@Param('id') id: string, @Param('cid') cid: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.credentials');
     const { confirmation } = parseBody(confirmOnly, body);
-    await withConfirmation(this.db, this.confirmations, req.principal, 'credential.delete', { credential_id: cid }, confirmation, (tx, c) => this.credentials.delete(tx, cid, req.principal.administratorId, c));
+    await withConfirmation(this.db, this.confirmations, req.principal, 'credential.delete', { credential_id: cid }, confirmation, (tx, c) => this.credentials.delete(tx, id, cid, req.principal.administratorId, c));
     return { ok: true };
   }
 
   @Post(':id/credentials/:cid/revoke')
+  @ClientAccessible()
   @HttpCode(200)
   @RequirePermission('projects.credentials')
   async revoke(@Param('id') id: string, @Param('cid') cid: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.credentials');
     const { confirmation, reason } = parseBody(confirmOnly, body);
-    await withConfirmation(this.db, this.confirmations, req.principal, 'credential.revoke', { credential_id: cid, reason: reason ?? '' }, confirmation, (tx, c) => this.credentials.revoke(tx, cid, req.principal.administratorId, reason ?? 'revoked', c));
+    await withConfirmation(this.db, this.confirmations, req.principal, 'credential.revoke', { credential_id: cid, reason: reason ?? '' }, confirmation, (tx, c) => this.credentials.revoke(tx, id, cid, req.principal.administratorId, reason ?? 'revoked', c));
     return { ok: true };
   }
 
   @Post(':id/origins')
+  @ClientAccessible()
   @HttpCode(201)
   @RequirePermission('projects.origins')
   async addOrigin(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.origins');
     const input = parseBody(originSchema, body);
     return this.db.transaction().execute(async (tx) => {
       const row = await tx.insertInto('project_origin').values({ project_id: id, cidr: input.cidr, description: input.description, created_by: req.principal.administratorId }).returning(['id', 'cidr', 'description']).executeTakeFirstOrThrow();
@@ -166,10 +213,11 @@ export class ConsoleProjectsController {
   }
 
   @Delete(':id/origins/:oid')
+  @ClientAccessible()
   @HttpCode(200)
   @RequirePermission('projects.origins')
   async removeOrigin(@Param('id') id: string, @Param('oid') oid: string, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.origins');
     await this.db.transaction().execute(async (tx) => {
       const prior = await tx.selectFrom('project_origin').selectAll().where('id', '=', oid).where('project_id', '=', id).executeTakeFirst();
       if (!prior) throw new PlatformError('NOT_FOUND', 'No such origin.');
@@ -183,7 +231,7 @@ export class ConsoleProjectsController {
   @HttpCode(201)
   @RequirePermission('projects.entitlements')
   async grant(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.entitlements');
     const input = parseBody(entitlementInputSchema, body);
     return this.entitlements.grantOrAmend(id, input, req.principal.administratorId);
   }
@@ -192,34 +240,39 @@ export class ConsoleProjectsController {
   @RequirePermission('projects.read')
   async inFlight(@Param('id') id: string, @Param('eid') eid: string, @Req() req: ConsoleRequest) {
     this.reach(req, id);
-    return { transactions: await this.entitlements.inFlight(eid) };
+    return { transactions: await this.entitlements.inFlight(id, eid) };
   }
 
   @Post(':id/entitlements/:eid/deactivate')
   @HttpCode(200)
   @RequirePermission('projects.entitlements')
   async deactivate(@Param('id') id: string, @Param('eid') eid: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.entitlements');
     const { note } = parseBody(z.object({ note: nonEmpty(512) }), body);
-    await this.entitlements.deactivate(eid, note, req.principal.administratorId);
+    await this.entitlements.deactivate(id, eid, note, req.principal.administratorId);
     return { ok: true };
   }
 
   @Put(':id/notification-endpoint')
+  @ClientAccessible()
   @HttpCode(200)
   @RequirePermission('projects.notifications')
   async setEndpoint(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.notifications');
     const { url } = parseBody(endpointSchema, body);
+    // For everyone, platform staff included: a project's notifications never go into a network, and the delivery checks again.
+    // A name that does not resolve is refused too: nothing could be delivered to it.
+    if ((await vetTarget(url)).verdict !== 'public') throw new PlatformError('FIELD_INVALID', NOT_PUBLIC, { field: 'url' });
     const { secret } = await this.db.transaction().execute((tx) => this.notifications.setEndpoint(tx, id, url, req.principal.administratorId));
     return { url, signing_secret: secret, note: 'The secret is shown once; store it now.' };
   }
 
   @Post(':id/notification-endpoint/regenerate-secret')
+  @ClientAccessible()
   @HttpCode(200)
   @RequirePermission('projects.notifications')
   async regenerate(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
-    this.reach(req, id, 'projects.manage');
+    this.reach(req, id, 'projects.notifications');
     const { confirmation } = parseBody(confirmOnly, body);
     const { secret } = await withConfirmation(this.db, this.confirmations, req.principal, 'notification_endpoint.regenerate', { project_id: id }, confirmation, (tx, c) => this.notifications.regenerateSecret(tx, id, req.principal.administratorId, c));
     return { signing_secret: secret, note: 'Signature checks fail until the project deploys this value.' };

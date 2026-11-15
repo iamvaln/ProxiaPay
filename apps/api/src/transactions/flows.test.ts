@@ -1,6 +1,6 @@
 import { RouteService } from '../console-api/route.service';
 import { AuditService } from '../audit/audit.service';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestContext, type TestContext } from '../test/context';
 import { ProjectAuthService, type ProjectPrincipal } from '../project-auth/project-auth.service';
 import { PreviewService } from '../transactions/preview.service';
@@ -12,6 +12,8 @@ import { TransactionReader } from '../transactions/transaction-reader';
 import { SimulatorAdapter } from '../providers/adapters/simulator.adapter';
 import { PlatformError } from '../common/errors';
 import { NotificationService } from '../notifications/notification.service';
+import { addressResolver, NOT_PUBLIC } from '../notifications/public-address';
+import { deliveryTransport } from '../notifications/delivery-transport';
 import { TreasuryService } from '../treasury/treasury.service';
 
 let t: TestContext;
@@ -26,6 +28,7 @@ beforeAll(async () => {
   SimulatorAdapter.settleAfterMs = 0;
 });
 afterAll(() => t.close());
+afterEach(() => vi.restoreAllMocks());
 beforeEach(async () => {
   await t.reset();
   project = await t.project('shop', { fundXaf: 50_000 });
@@ -120,7 +123,9 @@ describe('collection', () => {
   });
 
   it('records a payer decline as a failure with no ledger movement, and notifies the project', async () => {
-    await notifications.setEndpoint(t.db, project.id, 'http://127.0.0.1:1/hook', project.adminId);
+    await notifications.setEndpoint(t.db, project.id, 'https://hooks.example.com/hook', project.adminId);
+    // The project's server refuses the connection, as a closed port would; no test reaches the network.
+    vi.spyOn(deliveryTransport, 'post').mockRejectedValue(new Error('connect ECONNREFUSED'));
     const p = await previews.create(principal, collection('677123401', 'order-5'));
     const { transactionId } = await transactions.confirm(principal, p.reference, 'collection');
     await submission.submit(transactionId);
@@ -132,10 +137,71 @@ describe('collection', () => {
     const deliveries = await t.db.selectFrom('notification_delivery').selectAll().execute();
     expect(deliveries.map((d) => d.event_type)).toEqual(['transaction.failed']);
     expect((deliveries[0]!.payload as { data: { transaction: { state: string } } }).data.transaction.state).toBe('failed');
-    await t.drain(); // delivery attempt fails against the closed port and is rescheduled
+    await t.drain(); // delivery attempt fails against the refused connection and is rescheduled
     const attempts = await t.db.selectFrom('notification_delivery_attempt').selectAll().execute();
     expect(attempts).toHaveLength(1);
     expect((await t.db.selectFrom('notification_delivery').select('status').executeTakeFirstOrThrow()).status).toBe('pending');
+  });
+
+  it.each([
+    ['a name that now resolves inside the network', 'https://hooks.example.com/hook', ['93.184.215.14', '10.0.0.7']],
+    ['a loopback address set before the check existed', 'http://127.0.0.1:1/hook', []],
+  ])('refuses a delivery to %s before connecting, and does not retry it', async (_case, url, addresses) => {
+    await notifications.setEndpoint(t.db, project.id, url, project.adminId);
+    vi.spyOn(addressResolver, 'lookup').mockResolvedValue(addresses);
+    const post = vi.spyOn(deliveryTransport, 'post').mockRejectedValue(new Error('connect ECONNREFUSED'));
+    const p = await previews.create(principal, collection('677123401', 'order-5b'));
+    const { transactionId } = await transactions.confirm(principal, p.reference, 'collection');
+    await submission.submit(transactionId);
+    await t.db.updateTable('transaction').set({ next_status_check_at: new Date(0) }).execute();
+    await status.sweep();
+    await t.drain();
+    expect(post).not.toHaveBeenCalled();
+    expect(await t.db.selectFrom('notification_delivery_attempt').select(['attempt', 'error', 'response_status']).execute()).toEqual([{ attempt: 1, error: NOT_PUBLIC, response_status: null }]);
+    expect(await t.db.selectFrom('notification_delivery').select(['status', 'attempt']).executeTakeFirstOrThrow()).toEqual({ status: 'exhausted', attempt: 1 });
+    expect(await t.db.selectFrom('job').select('id').where('kind', '=', 'notification.deliver').where('status', '=', 'queued').execute()).toEqual([]);
+  });
+
+  /** One failed collection with a notification, delivered once by the worker; returns the attempts recorded. */
+  async function deliverOnce() {
+    const p = await previews.create(principal, collection('677123401', 'order-5c'));
+    const { transactionId } = await transactions.confirm(principal, p.reference, 'collection');
+    await submission.submit(transactionId);
+    await t.db.updateTable('transaction').set({ next_status_check_at: new Date(0) }).execute();
+    await status.sweep();
+    await t.drain();
+    return t.db.selectFrom('notification_delivery_attempt').select(['attempt', 'error', 'response_status']).execute();
+  }
+
+  it('connects to the addresses it vetted, even when the name would answer differently a second time', async () => {
+    await notifications.setEndpoint(t.db, project.id, 'https://hooks.example.com/hook', project.adminId);
+    // Rebinding: public on the lookup the check makes, internal on any later one.
+    const lookup = vi.spyOn(addressResolver, 'lookup').mockResolvedValueOnce(['93.184.215.14']).mockResolvedValue(['10.0.0.7']);
+    const post = vi.spyOn(deliveryTransport, 'post').mockResolvedValue({ status: 200, body: 'ok' });
+    await deliverOnce();
+    expect(lookup).toHaveBeenCalledOnce();
+    expect(post).toHaveBeenCalledOnce();
+    expect(post.mock.calls[0]![0]).toBe('https://hooks.example.com/hook');
+    expect(post.mock.calls[0]![3]).toEqual([{ address: '93.184.215.14', family: 4 }]);
+    expect((await t.db.selectFrom('notification_delivery').select('status').executeTakeFirstOrThrow()).status).toBe('delivered');
+  });
+
+  it('counts a redirect as a failed attempt and does not follow it', async () => {
+    await notifications.setEndpoint(t.db, project.id, 'https://hooks.example.com/hook', project.adminId);
+    const post = vi.spyOn(deliveryTransport, 'post').mockResolvedValue({ status: 302, body: '' });
+    expect(await deliverOnce()).toEqual([{ attempt: 1, error: 'Redirect not followed.', response_status: 302 }]);
+    expect(post).toHaveBeenCalledOnce();
+    expect((await t.db.selectFrom('notification_delivery').select('status').executeTakeFirstOrThrow()).status).toBe('pending');
+  });
+
+  it('does not connect when the name does not resolve, and retries as for any unreachable host', async () => {
+    await notifications.setEndpoint(t.db, project.id, 'https://hooks.example.com/hook', project.adminId);
+    vi.spyOn(addressResolver, 'lookup').mockRejectedValue(Object.assign(new Error('getaddrinfo EAI_AGAIN'), { code: 'EAI_AGAIN' }));
+    const post = vi.spyOn(deliveryTransport, 'post');
+    expect(await deliverOnce()).toEqual([{ attempt: 1, error: 'The address did not resolve (EAI_AGAIN).', response_status: null }]);
+    expect(post).not.toHaveBeenCalled();
+    expect((await t.db.selectFrom('notification_delivery').select('status').executeTakeFirstOrThrow()).status).toBe('pending');
+    expect(await t.db.selectFrom('job').select('id').where('kind', '=', 'notification.deliver').where('status', '=', 'queued').execute()).toHaveLength(1);
   });
 
   it('falls back to a second provider when the first is unreachable, and fails with NO_PROVIDER_AVAILABLE when none remain', async () => {

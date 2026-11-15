@@ -6,22 +6,24 @@ import { Amount, ConfirmedAction, Empty, ErrorLine, NeedsPermission, Pill, Scope
 import { DataTable, SummaryGrid, type Column, type DataTableProps, type RowAction } from '../components/table/DataTable';
 import { chip, chipBy, distinct, fetchPage, periodFilter, useAdministrators, useReload } from './list-support';
 import { pct } from '../lib/format';
+import { ClientDetail, Clients } from './Clients';
 
 /** Oversight (console spec 10): alerts, health, reporting, export verification, administrators, roles, audit and authentication history. */
 export function OversightPage() {
   const { has } = useSession();
+  const t = useT();
   const tabs = [
     ['alerts', 'Alerts', has('oversight.alerts.read')], ['health', 'Health', has('oversight.reports')], ['reports', 'Reporting', has('oversight.reports')], ['exports', 'Export verification', has('oversight.verify_export')],
-    ['administrators', 'Administrators', has('admin.administrators')], ['roles', 'Roles', has('admin.roles')], ['audit', 'Audit', has('oversight.audit')], ['auth-history', 'Authentication history', has('oversight.auth_history')],
+    ['administrators', 'Administrators', has('admin.administrators')], ['roles', 'Roles', has('admin.roles')], ['clients', t('cl.tab'), has('admin.clients')], ['audit', 'Audit', has('oversight.audit')], ['auth-history', 'Authentication history', has('oversight.auth_history')],
   ] as const;
   return (
     <>
       <h1>Oversight</h1>
-      <div className="tabs">{tabs.filter((t) => t[2]).map(([k, label]) => <NavLink key={k} to={`/oversight/${k}`}>{label}</NavLink>)}</div>
+      <div className="tabs">{tabs.filter((tab) => tab[2]).map(([k, label]) => <NavLink key={k} to={`/oversight/${k}`}>{label}</NavLink>)}</div>
       <Routes>
         <Route path="alerts" element={<Alerts />} /><Route path="alerts/:id" element={<AlertDetail />} /><Route path="health" element={<Health />} /><Route path="reports" element={<Reports />} />
         <Route path="exports" element={<Exports />} /><Route path="administrators" element={<Administrators />} /><Route path="roles" element={<Roles />} /><Route path="roles/:id" element={<Roles />} />
-        <Route path="audit" element={<Audit />} /><Route path="auth-history" element={<AuthHistory />} /><Route path="*" element={<Alerts />} />
+        <Route path="clients" element={<Clients />} /><Route path="clients/:id" element={<ClientDetail />} /><Route path="audit" element={<Audit />} /><Route path="auth-history" element={<AuthHistory />} /><Route path="*" element={<Alerts />} />
       </Routes>
     </>
   );
@@ -179,10 +181,11 @@ export function administratorList({ t, me, reload }: { t: Tr; me?: string; reloa
   ];
   const summary = (a: Row) => (
     <SummaryGrid items={[
-      { label: t('l.roles_scope'), value: a.assignments.length ? a.assignments.map((x: Row) => <div key={x.id}>{x.role_name} <span className="small muted">{x.scope_type}{x.scopes.length ? `: ${x.scopes.map((s: Row) => (s.project_id ?? s.provider_account_id).slice(0, 8)).join(', ')}` : ''}</span> {a.id !== me && <ConfirmedAction operationType="role.change" values={{ kind: 'assignment_remove', assignment_id: x.id }} path="/oversight/roles/changes" label="×" onDone={reload} />}</div>) : '—' },
+      { label: t('l.roles_scope'), value: a.assignments.length ? a.assignments.map((x: Row) => <div key={x.id}>{x.role_name} <span className="small muted">{x.scope_type}{x.scopes.length ? `: ${x.scopes.map((s: Row) => (s.project_id ?? s.provider_account_id).slice(0, 8)).join(', ')}` : ''}</span> {a.id !== me && !x.membership_id && <ConfirmedAction operationType="role.change" values={{ kind: 'assignment_remove', assignment_id: x.id }} path="/oversight/roles/changes" label="×" onDone={reload} />}</div>) : '—' },
       { label: t('l.language'), value: a.language },
       { label: t('l.timezone'), value: a.timezone },
-      { label: t('col.status'), value: a.id === me ? <span className="small muted">{t('l.own_status_locked')}</span> : <ConfirmedAction operationType="administrator.amend" values={{ id: a.id, status: a.status === 'active' ? 'disabled' : 'active' }} path={`/oversight/administrators/${a.id}`} method="PATCH" label={a.status === 'active' ? t('l.disable') : t('l.enable')} onDone={reload} /> },
+      // A client account's status keeps its client's owner rule, which only the Clients page applies.
+      { label: t('col.status'), value: a.id === me ? <span className="small muted">{t('l.own_status_locked')}</span> : a.kind === 'client' ? <span className="small muted">{t('l.client_status_elsewhere')}</span> : <ConfirmedAction operationType="administrator.amend" values={{ id: a.id, status: a.status === 'active' ? 'disabled' : 'active' }} path={`/oversight/administrators/${a.id}`} method="PATCH" label={a.status === 'active' ? t('l.disable') : t('l.enable')} onDone={reload} /> },
     ]} />
   );
   return {
@@ -192,8 +195,8 @@ export function administratorList({ t, me, reload }: { t: Tr; me?: string; reloa
       ...chip<Row>('role', t('col.role'), [...new Set(rows.flatMap((a) => a.assignments.map((x: Row) => x.role_name as string)))].sort()).map((f) => ({ ...f, match: (a: Row, v: string) => a.assignments.some((x: Row) => x.role_name === v) })),
     ],
     actions: [
-      { label: t('l.disable'), opens: true, when: (a) => a.id !== me && a.status === 'active' },
-      { label: t('l.enable'), opens: true, when: (a) => a.id !== me && a.status !== 'active' },
+      { label: t('l.disable'), opens: true, when: (a) => a.id !== me && a.kind !== 'client' && a.status === 'active' },
+      { label: t('l.enable'), opens: true, when: (a) => a.id !== me && a.kind !== 'client' && a.status !== 'active' },
     ],
     empty: { none: t('l.admin_none'), why: t('l.admin_why') },
   };
@@ -214,7 +217,8 @@ export function roleList({ t, edit }: { t: Tr; edit: (r: Row) => void }): Lists 
   );
   return {
     columns, summary, rowKey: (r) => r.id, defaultSort: 'name', filters: [],
-    actions: [{ label: t('l.modify'), run: edit }],
+    // A client role is fixed in code and changes with a release, never from this page.
+    actions: [{ label: t('l.modify'), when: (r) => r.kind !== 'client', run: edit }],
     empty: { none: t('l.role_none'), why: t('l.role_why') },
   };
 }
@@ -237,7 +241,7 @@ function Administrators() {
       </div>
       <div className="card"><h2>Assign a role</h2>
         <ConfirmedAction operationType="role.change" values={{ kind: 'assignment_add', ...assign }} path="/oversight/roles/changes" label="Assign" disabled={!assign.administrator_id || !assign.role_id} onDone={reload}
-          summary={<div className="row"><select value={assign.administrator_id} onChange={(e) => setAssign({ ...assign, administrator_id: e.target.value })}><option value="">administrator</option>{data.administrators.filter((a: any) => a.id !== me?.administrator.id).map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}</select><select value={assign.role_id} onChange={(e) => setAssign({ ...assign, role_id: e.target.value })}><option value="">role</option>{(roles.data?.roles ?? []).map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}</select><select value={assign.scope_type} onChange={(e) => setAssign({ ...assign, scope_type: e.target.value })}><option value="all">scope: all</option></select></div>} />
+          summary={<div className="row"><select value={assign.administrator_id} onChange={(e) => setAssign({ ...assign, administrator_id: e.target.value })}><option value="">administrator</option>{data.administrators.filter((a: any) => a.id !== me?.administrator.id).map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}</select><select value={assign.role_id} onChange={(e) => setAssign({ ...assign, role_id: e.target.value })}><option value="">role</option>{(roles.data?.roles ?? []).filter((r: any) => r.kind !== 'client').map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}</select><select value={assign.scope_type} onChange={(e) => setAssign({ ...assign, scope_type: e.target.value })}><option value="all">scope: all</option></select></div>} />
         <p className="small muted">Assignments carrying treasury or administration permissions go to a second approver.</p>
       </div>
     </div>

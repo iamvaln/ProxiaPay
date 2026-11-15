@@ -19,7 +19,7 @@ type Txn = Record<string, any>;
 type Tr = (k: string, v?: Record<string, string | number>) => string;
 
 /** Columns, summary, actions and filters of the transaction list; the Transactions page and a project's activity both use it. */
-export function transactionList({ t, has, ref, reload, currency, project }: { t: Tr; has: (p: string) => boolean; ref: Reference; reload: () => void; currency?: string; project?: boolean }): Pick<DataTableProps<Txn>, 'columns' | 'filters' | 'actions' | 'summary' | 'rowKey' | 'defaultSort' | 'defaultOrder' | 'empty'> {
+export function transactionList({ t, has, ref, reload, currency, project, client }: { t: Tr; has: (p: string) => boolean; ref: Reference; reload: () => void; currency?: string; project?: boolean; client?: boolean }): Pick<DataTableProps<Txn>, 'columns' | 'filters' | 'actions' | 'summary' | 'rowKey' | 'defaultSort' | 'defaultOrder' | 'empty'> {
   const columns: Column<Txn>[] = [
     { key: 'reference', label: t('col.reference'), mono: true, render: (r) => <Link to={`/transactions/${r.reference}`}>{r.reference}</Link> },
     ...(project ? [] : [{ key: 'project', label: t('col.project'), render: (r: Txn) => r.project_name }]),
@@ -54,7 +54,8 @@ export function transactionList({ t, has, ref, reload, currency, project }: { t:
       { label: t('l.received'), value: r.settled_amount == null ? <span className="muted">—</span> : <Amount minor={r.settled_amount} currency={r.currency_code} /> },
       { label: t('l.fees'), value: <span><Amount minor={r.processing_fee} currency={r.currency_code} /> <span className="small muted">({r.processing_fee_bearer})</span> + <Amount minor={r.platform_fee} currency={r.currency_code} /> <span className="small muted">({r.platform_fee_bearer})</span></span> },
       { label: t('l.payer'), value: r.msisdn_masked },
-      { label: t('l.provider_reference'), value: <span className="mono">{r.provider_reference ?? '—'}</span> },
+      // The provider is ProxiaPay's own business: a client is never shown one.
+      ...(client ? [] : [{ label: t('l.provider_reference'), value: <span className="mono">{r.provider_reference ?? '—'}</span> }]),
       { label: t('l.operator_reference'), value: <span className="mono">{r.operator_reference ?? '—'}</span> },
       { label: t('l.terminal'), value: r.terminal_at ? <When value={r.terminal_at} /> : <span className="muted">—</span> },
       { label: t('l.failure_reason'), value: r.failure_reason ?? '—' },
@@ -76,13 +77,13 @@ export const transactionFetch = (fixedProject?: string, range: Record<string, st
 /** The transaction list wherever it appears. `fixedProject` narrows it to one project and drops that chip; `prefix` keeps its URL params apart from a page's other lists. */
 export function TransactionTable({ fixedProject, prefix = '', range = {}, onClearFilters }: { fixedProject?: string; prefix?: string; range?: Record<string, string>; onClearFilters?: () => void }) {
   const t = useT();
-  const { has } = useSession();
+  const { has, me } = useSession();
   const ref = useReference();
   const [rev, reload] = useReload();
   const [params] = useSearchParams();
   const currency = cleanCurrency(params.get(`${prefix}currency`), ref.currencies);
   if (!ref.ready) return <p className="muted">{t('common.loading')}</p>;
-  const cfg = transactionList({ t, has, ref, reload, currency, project: !!fixedProject });
+  const cfg = transactionList({ t, has, ref, reload, currency, project: !!fixedProject, client: me?.kind === 'client' });
   const extra = { ...range, ...(fixedProject ? { project: fixedProject } : {}) };
   return (
     <>

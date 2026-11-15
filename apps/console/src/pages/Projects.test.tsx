@@ -9,12 +9,12 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 const ME = { administrator: { id: 'a1', name: 'Valentine', email: 'v@proxiapay.test', language: 'en', timezone: 'UTC' }, second_factor_complete: true, environment: 'production', permission_catalogue: {}, permissions: ['projects.manage'] };
 
-const server = () => {
+const server = (me: object = ME) => {
   const posts: unknown[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
     const path = url.replace(/^\/console/, '');
     if ((init.method ?? 'GET') === 'POST') { posts.push(JSON.parse(String(init.body))); return new Response(JSON.stringify({ id: 'p9', code: 'monjeton', name: 'MonJeton', status: 'active' }), { status: 201 }); }
-    return new Response(JSON.stringify(path === '/auth/me' ? ME : { projects: [], scoped: false }), { status: 200 });
+    return new Response(JSON.stringify(path === '/auth/me' ? me : { projects: [], scoped: false }), { status: 200 });
   }));
   return posts;
 };
@@ -38,5 +38,22 @@ describe('a new project', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     expect((await screen.findByRole('status')).textContent).toBe('✓ Project monjeton created.');
     expect(posts).toEqual([{ code: 'monjeton', name: 'MonJeton' }]);
+  });
+
+  it('a client owner creates a project for its client', async () => {
+    const posts = server({ ...ME, kind: 'client', active_client: { id: 'c1', name: 'Acme' }, clients: [{ id: 'c1', name: 'Acme' }], pending_clients: [], permissions: ['projects.read', 'projects.create_own'] });
+    page();
+    fireEvent.change(await screen.findByLabelText('Code'), { target: { value: 'acme-shop' } });
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Acme shop' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    expect((await screen.findByRole('status')).textContent).toBe('✓ Project monjeton created.');
+    expect(posts).toEqual([{ code: 'acme-shop', name: 'Acme shop' }]);
+  });
+
+  it('a client member without the right is told which permission creates projects', async () => {
+    server({ ...ME, kind: 'client', active_client: { id: 'c1', name: 'Acme' }, clients: [{ id: 'c1', name: 'Acme' }], pending_clients: [], permissions: ['projects.read'] });
+    page();
+    expect(await screen.findByText(/projects\.create_own/)).toBeTruthy();
+    expect(screen.queryByLabelText('Code')).toBeNull();
   });
 });

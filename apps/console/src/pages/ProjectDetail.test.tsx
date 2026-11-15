@@ -125,3 +125,44 @@ describe('the project page', () => {
     });
   });
 });
+
+describe('attaching a project to a client', () => {
+  const stub = (project: object) => {
+    const calls: { method: string; path: string; body: any }[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      const method = init.method ?? 'GET';
+      const path = url.replace(/^\/console/, '').split('?')[0]!;
+      calls.push({ method, path, body: init.body ? JSON.parse(String(init.body)) : undefined });
+      const reads: Record<string, unknown> = {
+        '/auth/me': { ...ME, kind: 'platform', permissions: ['admin.clients'] }, '/projects/p1': { ...PROJECT, project }, '/configuration/routes': ROUTES,
+        '/oversight/clients': { clients: [{ id: 'c1', name: 'Acme', status: 'active' }, { id: 'c2', name: 'Gone', status: 'disabled' }] },
+        '/projects/p1/reach': { platform_accounts: [{ id: 'a9', name: 'Awa Staff' }] },
+      };
+      const answer = method === 'GET' ? (reads[path] ?? EMPTY_PAGE) : path === '/auth/confirmations' ? { confirmation_id: 'cf1', expires_at: '' } : { project_id: 'p1', client_id: 'c1', platform_accounts: [] };
+      return new Response(JSON.stringify(answer), { status: 200 });
+    }));
+    return calls;
+  };
+
+  it('names who still reaches the project before the code is asked for, then attaches', async () => {
+    const calls = stub({ ...PROJECT.project, client_id: null });
+    page('/projects/p1');
+    await screen.findByRole('option', { name: 'Acme' });
+    fireEvent.change(screen.getByLabelText('Client'), { target: { value: 'c1' } });
+    expect(await screen.findByText('Awa Staff')).toBeTruthy();
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+    expect(screen.queryByRole('option', { name: 'Gone' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Attach to client' }));
+    const input = await screen.findByRole('textbox');
+    fireEvent.change(input, { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(calls.find((c) => c.path === '/projects/p1/client')?.body).toEqual({ project_id: 'p1', client_id: 'c1', confirmation: { id: 'cf1', code: '123456' } }));
+  });
+
+  it('offers nothing once the project belongs to a client', async () => {
+    stub({ ...PROJECT.project, client_id: 'c1' });
+    page('/projects/p1');
+    await screen.findByText('monjeton');
+    expect(screen.queryByLabelText('Client')).toBeNull();
+  });
+});

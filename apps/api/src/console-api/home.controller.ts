@@ -1,12 +1,14 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { sql } from 'kysely';
 import { z } from 'zod';
+import { PlatformError } from '../common/errors';
 import { DB_TOKEN, type Db } from '../db/database';
 import { parseBody } from '../http/validation';
 import { TreasuryService, type FloatAccountView } from '../treasury/treasury.service';
 import { HomeService } from './home.service';
 import { ApprovalService } from './approval.service';
-import { SessionGuard, type ConsoleRequest } from './session.guard';
+import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
+import { ClientAccessible } from './client-access';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { ConfirmationService } from '../admin-auth/confirmation.service';
 import { subtract } from '../money/money';
@@ -58,14 +60,28 @@ export class HomeController {
     return { cards };
   }
 
+  /**
+   * A client's home (client accounts spec, "Console for client accounts"): the headline figures of its own projects only.
+   * The platform home's verdict, route chart and earnings are ProxiaPay's, so they have no place here.
+   */
+  @Get('client/home')
+  @ClientAccessible()
+  @RequirePermission('transactions.read')
+  async clientHome(@Req() req: ConsoleRequest) {
+    // Platform staff have the platform home; an unscoped figure here would be every client's at once.
+    if (!req.auth.isClient) throw new PlatformError('NOT_FOUND', 'No such resource.');
+    const scope = req.auth.projectScope('transactions.read');
+    return { collected_today: await this.homeService.collectedToday(scope), success_rate: await this.homeService.overallSuccess(scope), undetermined: await this.homeService.undetermined(scope) };
+  }
+
   @Get('approvals')
   async approvalQueue(@Req() req: ConsoleRequest) {
     return { requests: await this.approvals.pending(req.principal.administratorId, req.auth.permissions()) };
   }
 
   @Get('approvals/:id')
-  async approval(@Param('id') id: string) {
-    return this.db.selectFrom('approval_request as r').innerJoin('administrator as a', 'a.id', 'r.initiated_by').selectAll('r').select('a.name as initiator_name').where('r.id', '=', id).executeTakeFirstOrThrow();
+  async approval(@Param('id') id: string, @Req() req: ConsoleRequest) {
+    return this.approvals.find(id, req.principal.administratorId, req.auth.permissions());
   }
 
   @Post('approvals/:id/decision')

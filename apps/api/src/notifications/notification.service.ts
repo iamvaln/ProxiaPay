@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'kysely';
+import { PlatformError } from '../common/errors';
 import { CryptoService } from '../crypto/crypto.service';
 import { newEventReference } from '../crypto/references';
 import { DB_TOKEN, type Db, type Executor, type Tx } from '../db/database';
@@ -8,6 +9,8 @@ import { log } from '../logging/logger';
 import { SettingsService } from '../settings/settings.service';
 import { AlertService } from '../alerts/alert.service';
 import { AuditService } from '../audit/audit.service';
+import { NOT_PUBLIC, vetTarget } from './public-address';
+import { deliveryTransport } from './delivery-transport';
 
 export type NotificationEvent =
   | 'transaction.action_required' | 'transaction.succeeded' | 'transaction.failed' | 'transaction.expired' | 'transaction.undetermined' | 'transaction.corrected';
@@ -57,6 +60,15 @@ export class NotificationService {
       .where('d.id', '=', deliveryId)
       .executeTakeFirst();
     if (!d || d.status !== 'pending') return 'skipped';
+    // Resolved and judged before every attempt: a name can come to resolve inside the network after it was set. Retrying would not change the answer.
+    const target = await vetTarget(d.url);
+    if (target.verdict === 'internal') {
+      const attempt = d.attempt + 1;
+      await this.db.insertInto('notification_delivery_attempt').values({ delivery_id: d.id, attempt, error: NOT_PUBLIC, duration_ms: 0 }).execute();
+      await this.db.updateTable('notification_delivery').set({ status: 'exhausted', attempt }).where('id', '=', d.id).execute();
+      await this.raiseFailing(d.project_id, { delivery_id: d.id, last_status: null, error: NOT_PUBLIC });
+      return 'exhausted';
+    }
     const body = JSON.stringify(d.payload);
     const timestamp = Math.floor(Date.now() / 1000);
     const secret = this.crypto.openString(d.signing_secret_ciphertext, `notification_endpoint:${d.endpoint_id}`);
@@ -66,29 +78,25 @@ export class NotificationService {
     let responseStatus: number | null = null;
     let responseBody: string | null = null;
     let error: string | null = null;
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 10_000);
+    // A name that does not resolve is not connected to at all: the attempt fails and the usual retry applies.
+    if (target.verdict === 'unresolved') error = `The address did not resolve (${target.error}).`;
+    else {
       try {
-        const res = await fetch(d.url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'user-agent': 'ProxiaPay/1.0',
-            'x-proxiapay-event-id': d.event_id,
-            'x-proxiapay-timestamp': String(timestamp),
-            'x-proxiapay-signature': signature,
-          },
-          body,
-          signal: controller.signal,
-        });
+        // Connected only to the addresses just vetted, never to a second resolution's.
+        const res = await deliveryTransport.post(d.url, {
+          'content-type': 'application/json',
+          'user-agent': 'ProxiaPay/1.0',
+          'x-proxiapay-event-id': d.event_id,
+          'x-proxiapay-timestamp': String(timestamp),
+          'x-proxiapay-signature': signature,
+        }, body, target.addresses, 10_000);
         responseStatus = res.status;
-        responseBody = (await res.text()).slice(0, 1000);
-      } finally {
-        clearTimeout(timer);
+        responseBody = res.body;
+        // A redirect is not followed: it could point anywhere, the check above included.
+        if (res.status >= 300 && res.status < 400) error = 'Redirect not followed.';
+      } catch (e) {
+        error = (e as Error).name === 'TimeoutError' ? 'timeout' : (e as Error).message;
       }
-    } catch (e) {
-      error = (e as Error).name === 'AbortError' ? 'timeout' : (e as Error).message;
     }
     const ok = responseStatus !== null && responseStatus >= 200 && responseStatus < 300;
     await this.db.insertInto('notification_delivery_attempt').values({ delivery_id: d.id, attempt, response_status: responseStatus, response_body: responseBody, error, duration_ms: Date.now() - started }).execute();
@@ -99,10 +107,7 @@ export class NotificationService {
     }
     if (attempt >= d.max_attempts || !d.active) {
       await this.db.updateTable('notification_delivery').set({ status: 'exhausted', attempt }).where('id', '=', d.id).execute();
-      await this.alerts.raise({
-        category: 'service_health', severity: 'warning', subjectType: 'project', subjectReference: d.project_id, projectId: d.project_id,
-        fingerprint: `notification_failing:${d.project_id}`, title: 'Notification deliveries failing to a project', detail: { delivery_id: d.id, last_status: responseStatus, error }, actionReference: `/projects/${d.project_id}#notifications`,
-      }).catch(() => undefined);
+      await this.raiseFailing(d.project_id, { delivery_id: d.id, last_status: responseStatus, error });
       return 'exhausted';
     }
     const delay = RETRY_SECONDS[Math.min(attempt - 1, RETRY_SECONDS.length - 1)]!;
@@ -113,10 +118,19 @@ export class NotificationService {
     return 'retry';
   }
 
+  private async raiseFailing(projectId: string, detail: { delivery_id: string; last_status: number | null; error: string | null }) {
+    await this.alerts.raise({
+      category: 'service_health', severity: 'warning', subjectType: 'project', subjectReference: projectId, projectId,
+      fingerprint: `notification_failing:${projectId}`, title: 'Notification deliveries failing to a project', detail, actionReference: `/projects/${projectId}#notifications`,
+    }).catch(() => undefined);
+  }
+
   /** An administrator replays a delivery: a fresh delivery of the same payload, attributed to them. */
-  async replay(deliveryId: string, administratorId: string): Promise<string> {
+  async replay(transactionId: string, deliveryId: string, administratorId: string): Promise<string> {
     return this.db.transaction().execute(async (tx) => {
-      const d = await tx.selectFrom('notification_delivery').selectAll().where('id', '=', deliveryId).executeTakeFirstOrThrow();
+      // Bound to the transaction the caller reached, so a delivery id of another project's transaction answers as missing.
+      const d = await tx.selectFrom('notification_delivery').selectAll().where('id', '=', deliveryId).where('transaction_id', '=', transactionId).executeTakeFirst();
+      if (!d) throw new PlatformError('NOT_FOUND', 'No such delivery.');
       const row = await tx
         .insertInto('notification_delivery')
         .values({ event_id: d.event_id, transaction_id: d.transaction_id, endpoint_id: d.endpoint_id, event_type: d.event_type, payload: JSON.stringify(d.payload), max_attempts: d.max_attempts, replayed_from: d.id, replayed_by: administratorId })

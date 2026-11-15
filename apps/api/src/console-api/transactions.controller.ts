@@ -12,7 +12,9 @@ import { TransactionReader } from '../transactions/transaction-reader';
 import { TransactionService } from '../transactions/transaction.service';
 import { AuditService } from '../audit/audit.service';
 import { RequirePermission, SessionGuard, type ConsoleRequest } from './session.guard';
+import { ClientAccessible } from './client-access';
 import { ExportService } from './export.service';
+import { CLIENT_TRANSACTION_COLUMNS, clientTransactionDetail, clientTransactionRow } from './client-views';
 import { containsPattern, FRAGMENT_MIN, pageQuerySchema, paginate, prefixPattern } from './pagination';
 
 const searchSchema = pageQuerySchema.extend({
@@ -39,10 +41,12 @@ const referenceMatch = (eb: ExpressionBuilder<any, any>, columns: string[], q: s
 /**
  * The transactions whose own references, or whose current attempt's, match. One subquery with a branch per table, so that
  * each branch can use its trigram index; an OR across the attempt join would scan both tables. Fragment or whole as above.
+ * `providerReference` false leaves the provider's reference out: a client never sees it, so it must not find by it either.
  */
-export const transactionsMatching = (q: string, fragment: string | null) => {
+export const transactionsMatching = (q: string, fragment: string | null, providerReference = true) => {
   const test = (col: string) => (fragment ? sql`lower(${sql.ref(col)}) like lower(${fragment})` : sql`${sql.ref(col)} = ${q}`);
-  return sql<boolean>`t.id in (select id from transaction where ${test('reference')} or ${test('project_reference')} union all select a2.transaction_id from transaction_attempt a2 join transaction t2 on t2.id = a2.transaction_id and t2.current_attempt_id = a2.id where ${test('a2.provider_reference')} or ${test('a2.operator_reference')})`;
+  const attempt = providerReference ? sql`${test('a2.provider_reference')} or ${test('a2.operator_reference')}` : test('a2.operator_reference');
+  return sql<boolean>`t.id in (select id from transaction where ${test('reference')} or ${test('project_reference')} union all select a2.transaction_id from transaction_attempt a2 join transaction t2 on t2.id = a2.transaction_id and t2.current_attempt_id = a2.id where ${attempt})`;
 };
 
 /** Transaction search, detail, previews and global search (console spec 3.2, 5). Scope is applied in the query, never after. */
@@ -82,15 +86,16 @@ export class ConsoleTransactionsController {
     if (q.route) query = query.where('t.route_id', '=', q.route);
     if (q.country) query = query.where('r.country_code', '=', q.country);
     if (q.payment_method) query = query.where('r.payment_method_code', '=', q.payment_method);
-    if (q.provider_account) query = query.where('a.provider_account_id', '=', q.provider_account);
+    // A client never names a provider account: the filter would tell it which ids carry its payments.
+    if (q.provider_account && !req.auth.isClient) query = query.where('a.provider_account_id', '=', q.provider_account);
     if (q.currency) query = query.where('t.currency_code', '=', q.currency);
     if (q.q) {
       if (q.q.length >= FRAGMENT_MIN) {
         const fragment = containsPattern(q.q);
-        query = query.where(transactionsMatching(q.q, fragment));
+        query = query.where(transactionsMatching(q.q, fragment, !req.auth.isClient));
       } else {
         const prefix = prefixPattern(q.q);
-        query = query.where((eb) => eb.or([eb('t.reference', 'like', prefix), eb('t.project_reference', 'like', prefix), eb('a.provider_reference', 'like', prefix), eb('a.operator_reference', 'like', prefix)]));
+        query = query.where((eb) => eb.or([eb('t.reference', 'like', prefix), eb('t.project_reference', 'like', prefix), ...(req.auth.isClient ? [] : [eb('a.provider_reference', 'like', prefix)]), eb('a.operator_reference', 'like', prefix)]));
       }
     }
     if (q.failure_reason) query = query.where('t.failure_reason', '=', q.failure_reason);
@@ -102,22 +107,26 @@ export class ConsoleTransactionsController {
   }
 
   @Get('transactions')
+  @ClientAccessible()
   @RequirePermission('transactions.read')
   async search(@Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
     const q = parseBody(searchSchema, query);
     if (q.sort === 'amount' && !q.currency) throw fieldInvalid('sort', 'sort: amount sorts only within one currency; set a currency filter');
     const page = await paginate(this.baseQuery(req, q), q, { sorts: { created: 't.created_at', amount: 't.requested_amount' }, defaultSort: 'created', id: 't.id' });
+    if (req.auth.isClient) return { ...page, data: page.data.map(clientTransactionRow), scoped: this.scopeIds(req) !== null };
     return { ...page, scoped: this.scopeIds(req) !== null };
   }
 
   @Get('transactions/export')
+  @ClientAccessible()
   @RequirePermission('oversight.export')
   async export(@Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
     req.auth.require('transactions.read');
     const q = parseBody(searchSchema, query);
     const { page: _p, page_size: _s, sort: _o, order: _d, ...filters } = query;
     const rows = await this.baseQuery(req, q).orderBy('t.created_at', 'desc').orderBy('t.id', 'desc').limit(10_000).execute();
-    const columns = ['reference', 'project_reference', 'project_name', 'direction', 'country_code', 'payment_method_code', 'currency_code', 'requested_amount', 'charged_amount', 'settled_amount', 'state', 'reconciliation_status', 'failure_reason', 'provider_reference', 'operator_reference', 'created_at', 'terminal_at'];
+    const platformColumns = ['reference', 'project_reference', 'project_name', 'direction', 'country_code', 'payment_method_code', 'currency_code', 'requested_amount', 'charged_amount', 'settled_amount', 'state', 'reconciliation_status', 'failure_reason', 'provider_reference', 'operator_reference', 'created_at', 'terminal_at'];
+    const columns = req.auth.isClient ? platformColumns.filter((c) => (CLIENT_TRANSACTION_COLUMNS as readonly string[]).includes(c)) : platformColumns;
     return this.exports.produce(req.principal.administratorId, 'transactions', filters, columns, rows as Record<string, unknown>[]);
   }
 
@@ -126,6 +135,7 @@ export class ConsoleTransactionsController {
    * Not paged: it stops at its caps (50 transactions, 20 previews by reference, 50 of each by number) and says so with `capped`.
    */
   @Get('search')
+  @ClientAccessible()
   @RequirePermission('transactions.read')
   async globalSearch(@Query('q') raw: string | undefined, @Req() req: ConsoleRequest) {
     const q = (raw ?? '').trim();
@@ -155,7 +165,7 @@ export class ConsoleTransactionsController {
     }
     // From FRAGMENT_MIN characters a reference is found by any part of it, whatever the case; below, only whole.
     const fragment = q.length >= FRAGMENT_MIN ? containsPattern(q) : null;
-    let qb = txnBase.where(transactionsMatching(q, fragment)).orderBy('t.created_at', 'desc').orderBy('t.id', 'desc').limit(51);
+    let qb = txnBase.where(transactionsMatching(q, fragment, !req.auth.isClient)).orderBy('t.created_at', 'desc').orderBy('t.id', 'desc').limit(51);
     if (scope) qb = qb.where('t.project_id', 'in', scope);
     let pb = previewBase.where((eb) => referenceMatch(eb, ['reference', 'project_reference'], q, fragment)).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(21);
     if (scope) pb = pb.where('project_id', 'in', scope);
@@ -165,6 +175,7 @@ export class ConsoleTransactionsController {
   }
 
   @Get('transactions/:reference')
+  @ClientAccessible()
   @RequirePermission('transactions.read')
   async detail(@Param('reference') reference: string, @Req() req: ConsoleRequest) {
     const found = await this.db.selectFrom('transaction').select(['id', 'project_id']).where('reference', '=', reference).executeTakeFirst();
@@ -180,7 +191,7 @@ export class ConsoleTransactionsController {
     const deliveries = await this.notifications.deliveriesForTransaction(txn.id);
     const discrepancies = await this.db.selectFrom('discrepancy').select(['id', 'type', 'status', 'difference', 'currency_code']).where('transaction_id', '=', txn.id).execute();
     const original = txn.original_transaction_id ? await this.db.selectFrom('transaction').select('reference').where('id', '=', txn.original_transaction_id).executeTakeFirst() : null;
-    return {
+    const detail = {
       transaction: api,
       project,
       amounts: {
@@ -200,6 +211,9 @@ export class ConsoleTransactionsController {
       exchanges_available: req.auth.has('transactions.read_exchanges'),
       correlation_id: txn.correlation_id,
     };
+    if (!req.auth.isClient) return detail;
+    const method = await this.db.selectFrom('payment_method').select('name').where('code', '=', route.payment_method_code).executeTakeFirstOrThrow();
+    return clientTransactionDetail(detail, { payment_method_name: method.name });
   }
 
   @Post('transactions/:reference/reveal-identifier')
@@ -226,6 +240,8 @@ export class ConsoleTransactionsController {
   @HttpCode(202)
   @RequirePermission('transactions.recheck')
   async recheck(@Param('reference') reference: string, @Req() req: ConsoleRequest) {
+    const txn = await this.db.selectFrom('transaction').select('project_id').where('reference', '=', reference).executeTakeFirst();
+    if (!txn || !req.auth.canReachProject('transactions.recheck', txn.project_id)) throw new PlatformError('NOT_FOUND', 'No such transaction.');
     await this.transactions.forceRecheck(reference, req.principal.administratorId);
     return { queued: true };
   }
@@ -233,11 +249,14 @@ export class ConsoleTransactionsController {
   @Post('transactions/:reference/notifications/:deliveryId/replay')
   @HttpCode(202)
   @RequirePermission('transactions.replay_notification')
-  async replay(@Param('deliveryId') deliveryId: string, @Req() req: ConsoleRequest) {
-    return { delivery_id: await this.notifications.replay(deliveryId, req.principal.administratorId) };
+  async replay(@Param('reference') reference: string, @Param('deliveryId') deliveryId: string, @Req() req: ConsoleRequest) {
+    const txn = await this.db.selectFrom('transaction').select(['id', 'project_id']).where('reference', '=', reference).executeTakeFirst();
+    if (!txn || !req.auth.canReachProject('transactions.replay_notification', txn.project_id)) throw new PlatformError('NOT_FOUND', 'No such transaction.');
+    return { delivery_id: await this.notifications.replay(txn.id, deliveryId, req.principal.administratorId) };
   }
 
   @Get('previews')
+  @ClientAccessible()
   @RequirePermission('transactions.read')
   async previews(@Query() query: Record<string, string>, @Req() req: ConsoleRequest) {
     const q = parseBody(previewsSchema, query);

@@ -54,13 +54,14 @@ describe('the production env templates', () => {
     ]);
     for (const k of DERIVED) needed.delete(k);
     needed.delete('SANDBOX_ANY_SECOND_FACTOR');
+    needed.delete('SANDBOX_AUTO_ENTITLE');
     const missing = [...needed].filter((k) => !shared.has(k) && !owner.has(k));
     expect(missing).toEqual([]);
   });
 
   it('puts the shared variables in the shared file', () => {
     const wanted = [...schemaKeys(), 'APP_DATABASE_URL', 'OWNER_ENV_FILE', 'ENV_FILE', 'STACK', 'APP_DOMAIN', 'CERT_RESOLVER', 'COMPOSE_FILE', 'REGISTRY']
-      .filter((k) => !DERIVED.has(k) && k !== 'SANDBOX_ANY_SECOND_FACTOR' && k !== 'DATABASE_URL');
+      .filter((k) => !DERIVED.has(k) && k !== 'SANDBOX_ANY_SECOND_FACTOR' && k !== 'SANDBOX_AUTO_ENTITLE' && k !== 'DATABASE_URL');
     expect(wanted.filter((k) => !shared.has(k))).toEqual([]);
     expect(shared.get('PROXIAPAY_ENV')).toBe('production');
     expect(shared.get('STACK')).toBe('proxiapay');
@@ -87,9 +88,11 @@ describe('the production env templates', () => {
     expect([...shared.keys()].filter((k) => owner.has(k))).toEqual([]);
   });
 
-  it('never sets the sandbox second-factor switch', () => {
-    expect(shared.has('SANDBOX_ANY_SECOND_FACTOR')).toBe(false);
-    expect(owner.has('SANDBOX_ANY_SECOND_FACTOR')).toBe(false);
+  it('never sets the sandbox switches', () => {
+    for (const k of ['SANDBOX_ANY_SECOND_FACTOR', 'SANDBOX_AUTO_ENTITLE']) {
+      expect(shared.has(k)).toBe(false);
+      expect(owner.has(k)).toBe(false);
+    }
   });
 
   it('holds no real secret: every secret is a placeholder', () => {

@@ -4,6 +4,11 @@ import { t, type Lang } from './i18n';
 
 export interface Me {
   administrator: { id: string; name: string; email: string; language: Lang; timezone: string };
+  /** A client account sees its own client's side only; platform staff see the platform's. */
+  kind: 'platform' | 'client';
+  active_client: { id: string; name: string } | null;
+  clients: { id: string; name: string }[];
+  pending_clients: { membership_id: string; client_name: string }[];
   second_factor_complete: boolean;
   permissions: string[];
   environment: 'production' | 'sandbox';

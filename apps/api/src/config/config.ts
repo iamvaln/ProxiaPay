@@ -42,6 +42,8 @@ const schema = z.object({
    * boot in production — see loadConfig — so a configuration slip cannot waive it where money is real.
    */
   SANDBOX_ANY_SECOND_FACTOR: z.string().optional().transform((v) => v === 'true'),
+  /** Sandbox only: a project a client creates is granted every active route at once. Refused at boot in production, like the switch above. */
+  SANDBOX_AUTO_ENTITLE: z.string().optional().transform((v) => v === 'true'),
   /** Worker instance name, used when claiming jobs. */
   INSTANCE_NAME: z.string().default(() => `${process.pid}@${require('node:os').hostname()}`),
 });
@@ -59,6 +61,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
   if (parsed.data.RESEND_API_KEY && !parsed.data.MAIL_FROM) throw new Error('Invalid configuration: MAIL_FROM is required when RESEND_API_KEY is set');
   if (parsed.data.SANDBOX_ANY_SECOND_FACTOR && parsed.data.PROXIAPAY_ENV === 'production') throw new Error('Invalid configuration: SANDBOX_ANY_SECOND_FACTOR is refused in production');
+  if (parsed.data.SANDBOX_AUTO_ENTITLE && parsed.data.PROXIAPAY_ENV === 'production') throw new Error('Invalid configuration: SANDBOX_AUTO_ENTITLE is refused in production');
   cached = parsed.data;
   return cached;
 }
