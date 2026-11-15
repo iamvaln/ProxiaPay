@@ -206,7 +206,7 @@ describe('quoting a payment link', () => {
     expect(await other.json()).toMatchObject({ error: { code: 'FIELD_INVALID', field: 'amount' } });
   });
 
-  it('refuses with the preview\'s own message when no provider takes the amount', async () => {
+  it('refuses, without the provider\'s figure or wording, an amount no provider takes', async () => {
     const momo = await routeId('CM', 'MOMO');
     const l = await link([momo], { amount_type: 'free' });
     const rv = await t.db.selectFrom('route_version').select('id').where('route_id', '=', momo).where('valid_to', 'is', null).executeTakeFirstOrThrow();
@@ -214,8 +214,8 @@ describe('quoting a payment link', () => {
     try { await t.db.updateTable('route_binding').set({ maximum_amount: 3000 }).where('route_version_id', '=', rv.id).execute(); }
     finally { await sql`alter table route_binding enable trigger route_binding_immutable`.execute(t.db); }
     const res = await quote(l.code, { method: l.keys[momo], amount: 5000 });
-    expect(res.status).toBe(422);
-    expect(await res.json()).toMatchObject({ error: { code: 'AMOUNT_ABOVE_MAXIMUM', field: 'amount', message: 'Amount is above what the provider accepts on this route.' } });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: { code: 'FIELD_INVALID', field: 'amount', message: 'This amount cannot be paid with this method.', retryable: false } });
     expect((await quote(l.code, { method: l.keys[momo], amount: 2000 })).status).toBe(200);
   });
 

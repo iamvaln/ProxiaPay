@@ -9,6 +9,16 @@ import { RouteResolver, resolveLimits } from '../routes/route-resolver';
 
 export const LINK_UNAVAILABLE_MESSAGE = 'This link is no longer available';
 export const METHOD_UNAVAILABLE_MESSAGE = 'This payment method is not available on this link.';
+export const AMOUNT_NOT_PAYABLE_MESSAGE = 'This amount cannot be paid with this method.';
+
+/**
+ * A provider's limits are ProxiaPay's business: the payer is told the amount does not go through on this method, never the
+ * provider's figure or wording. Any other error passes unchanged.
+ */
+export function neutralProviderLimit(e: unknown): unknown {
+  if (e instanceof PlatformError && (e.code === 'AMOUNT_BELOW_MINIMUM' || e.code === 'AMOUNT_ABOVE_MAXIMUM')) return new PlatformError('FIELD_INVALID', AMOUNT_NOT_PAYABLE_MESSAGE, { field: 'amount' });
+  return e;
+}
 
 /** What the payment page shows: the project's face and what each method charges, never an internal id or ProxiaPay's economics. */
 export interface PublicLinkView {
@@ -167,11 +177,11 @@ export class PublicLinkService {
       if (e instanceof PlatformError) throw methodUnavailable();
       throw e;
     }
-    // The same provider-limit check the preview makes, so the payer is told here what the preview would tell them.
+    // The same provider-limit check the preview makes, so the payer hears here what the preview would say, in neutral words.
     const counterparty = RouteResolver.counterpartyAmount(resolution.route.direction, this.resolver.computeFigures(resolution, amount, undefined));
     if ((await this.resolver.availableBindings(this.db, resolution.routeVersion.id, counterparty)).length === 0) {
       const providerRefusal = await this.resolver.providerLimitRefusal(this.db, resolution, amount);
-      if (providerRefusal) throw providerRefusal;
+      if (providerRefusal) throw neutralProviderLimit(providerRefusal);
     }
     const charged = this.resolver.computeFigures(resolution, amount, undefined).chargedAmount;
     return { charged_amount: charged, fees_borne_by_payer: subtract(charged, amount) };
