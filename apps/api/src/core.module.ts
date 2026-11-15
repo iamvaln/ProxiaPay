@@ -16,6 +16,7 @@ import { RateLimiter } from './project-auth/rate-limiter';
 import { RouteResolver } from './routes/route-resolver';
 import { PreviewService } from './transactions/preview.service';
 import { TransactionService } from './transactions/transaction.service';
+import { LinkLifecycle } from './payment-links/link-lifecycle';
 import { TransactionReader } from './transactions/transaction-reader';
 import { ProviderRegistry } from './providers/provider-registry';
 import { ProviderAccountService } from './providers/provider-account.service';
@@ -46,14 +47,14 @@ const db = {
   providers: [
     config, db, CryptoService, LedgerService, SettingsService, AuditService, JobQueue, Worker,
     AdminAuthService, AuthorisationService, ConfirmationService, ProjectAuthService, CredentialService, RateLimiter,
-    RouteResolver, PreviewService, TransactionService, TransactionReader,
+    RouteResolver, PreviewService, TransactionService, TransactionReader, LinkLifecycle,
     ProviderRegistry, ProviderAccountService, CircuitBreaker, SubmissionService, StatusService,
     NotificationService, AlertService, Mailer, HealthService, ReconciliationService, StatementService, DiscrepancyService, TreasuryService,
   ],
   exports: [
     CONFIG, DB_TOKEN, CryptoService, LedgerService, SettingsService, AuditService, JobQueue, Worker,
     AdminAuthService, AuthorisationService, ConfirmationService, ProjectAuthService, CredentialService, RateLimiter,
-    RouteResolver, PreviewService, TransactionService, TransactionReader,
+    RouteResolver, PreviewService, TransactionService, TransactionReader, LinkLifecycle,
     ProviderRegistry, ProviderAccountService, CircuitBreaker, SubmissionService, StatusService,
     NotificationService, AlertService, Mailer, HealthService, ReconciliationService, StatementService, DiscrepancyService, TreasuryService,
   ],

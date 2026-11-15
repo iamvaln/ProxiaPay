@@ -24,8 +24,9 @@ export async function listTransactions(db: Db, reader: TransactionReader, projec
     .selectFrom('transaction as t')
     .innerJoin('route as r', 'r.id', 't.route_id')
     .leftJoin('transaction_attempt as a', 'a.id', 't.current_attempt_id')
+    .leftJoin('payment_link as pl', 'pl.id', 't.payment_link_id')
     .selectAll('t')
-    .select(['r.country_code', 'r.payment_method_code', 'r.direction as route_direction', 'a.provider_reference', 'a.operator_reference'])
+    .select(['r.country_code', 'r.payment_method_code', 'r.direction as route_direction', 'a.provider_reference', 'a.operator_reference', 'pl.code as payment_link_code'])
     .where('t.project_id', '=', projectId)
     .orderBy('t.created_at', 'desc')
     .orderBy('t.id', 'desc')
@@ -46,7 +47,7 @@ export async function listTransactions(db: Db, reader: TransactionReader, projec
   }
   const rows = await query.execute();
   const page = rows.slice(0, q.limit);
-  const data = page.map((row) => reader.toApi(row, row.provider_reference !== undefined ? ({ provider_reference: row.provider_reference, operator_reference: row.operator_reference } as never) : undefined, { country_code: row.country_code, payment_method_code: row.payment_method_code, direction: row.route_direction }, { revealMsisdn: true, revealAction: false }));
+  const data = page.map((row) => reader.toApi(row, row.provider_reference !== undefined ? ({ provider_reference: row.provider_reference, operator_reference: row.operator_reference } as never) : undefined, { country_code: row.country_code, payment_method_code: row.payment_method_code, direction: row.route_direction }, row.payment_link_code ? { code: row.payment_link_code } : null, { revealMsisdn: true, revealAction: false }));
   const last = page[page.length - 1];
   return { data, next_cursor: rows.length > q.limit && last ? encodeCursor(last.created_at, last.id) : null, has_more: rows.length > q.limit };
 }

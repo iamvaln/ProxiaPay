@@ -30,7 +30,9 @@ const transaction = {
     reconciliation_status: { type: 'string', enum: ['unreviewed', 'matched', 'disputed', 'examined', 'corrected'] }, currency: { type: 'string' }, requested_amount: { type: 'integer' }, charged_amount: { type: 'integer' }, settled_amount: { type: 'integer', nullable: true },
     fees, route, counterparty: { type: 'object', properties: { msisdn: { type: 'string' }, name: { type: 'string' }, email: { type: 'string' } } },
     action: { type: 'object', nullable: true, properties: { type: { type: 'string', enum: ['code', 'browser'] }, url: { type: 'string' }, attempts_remaining: { type: 'integer' }, expires_at: { type: 'string', format: 'date-time' } } },
-    failure_reason: { type: 'string', nullable: true, enum: [...FAILURE_REASONS, null] }, metadata: { type: 'object', additionalProperties: true }, created_at: { type: 'string', format: 'date-time' }, terminal_at: { type: 'string', format: 'date-time', nullable: true },
+    failure_reason: { type: 'string', nullable: true, enum: [...FAILURE_REASONS, null] },
+    payment_link: { type: 'object', nullable: true, description: 'The payment link the payer paid through; null for a payment the project made itself. Optional: older payloads omit it.', properties: { code: { type: 'string', example: 'x7Kp2mQ9aZ' } } },
+    metadata: { type: 'object', additionalProperties: true }, created_at: { type: 'string', format: 'date-time' }, terminal_at: { type: 'string', format: 'date-time', nullable: true },
   },
 };
 const preview = { type: 'object', properties: { reference: { type: 'string', example: 'prv_01J8XQ2M4K' }, direction: { type: 'string' }, currency: { type: 'string' }, requested_amount: { type: 'integer' }, charged_amount: { type: 'integer' }, settled_amount: { type: 'integer' }, fees, route, counterparty: { type: 'object', properties: { msisdn: { type: 'string' }, name: { type: 'string' } } }, payer_action: { type: 'string', enum: ['none', 'code', 'browser'] }, project_reference: { type: 'string' }, expires_at: { type: 'string', format: 'date-time' } } };

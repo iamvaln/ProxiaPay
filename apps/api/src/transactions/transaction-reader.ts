@@ -26,6 +26,8 @@ export interface ApiTransaction {
   counterparty: { msisdn: string; name?: string; email?: string };
   action: { type: string; url?: string; attempts_remaining?: number; expires_at: string | null } | null;
   failure_reason: string | null;
+  /** The payment link the payer paid through, or null for a payment the project made itself. */
+  payment_link: { code: string } | null;
   metadata: unknown;
   created_at: string;
   terminal_at: string | null;
@@ -36,15 +38,16 @@ export interface ApiTransaction {
 export class TransactionReader {
   constructor(@Inject(DB_TOKEN) private readonly db: Db, private readonly crypto: CryptoService) {}
 
-  async load(exec: Executor, transactionId: string): Promise<{ txn: TransactionRow; attempt: AttemptRow | undefined; route: { country_code: string; payment_method_code: string; direction: string } }> {
+  async load(exec: Executor, transactionId: string): Promise<{ txn: TransactionRow; attempt: AttemptRow | undefined; route: { country_code: string; payment_method_code: string; direction: string }; link: { code: string } | null }> {
     const txn = await exec.selectFrom('transaction').selectAll().where('id', '=', transactionId).executeTakeFirstOrThrow();
     const attempt = txn.current_attempt_id ? await exec.selectFrom('transaction_attempt').selectAll().where('id', '=', txn.current_attempt_id).executeTakeFirst() : undefined;
     const route = await exec.selectFrom('route').select(['country_code', 'payment_method_code', 'direction']).where('id', '=', txn.route_id).executeTakeFirstOrThrow();
-    return { txn, attempt, route };
+    const link = txn.payment_link_id ? (await exec.selectFrom('payment_link').select('code').where('id', '=', txn.payment_link_id).executeTakeFirst()) ?? null : null;
+    return { txn, attempt, route, link };
   }
 
   /** The project-facing shape. `revealAction` controls whether a browser address is included (never in the console). */
-  toApi(txn: TransactionRow, attempt: AttemptRow | undefined, route: { country_code: string; payment_method_code: string; direction: string }, opts: { revealMsisdn: boolean; revealAction: boolean }): ApiTransaction {
+  toApi(txn: TransactionRow, attempt: AttemptRow | undefined, route: { country_code: string; payment_method_code: string; direction: string }, link: { code: string } | null, opts: { revealMsisdn: boolean; revealAction: boolean }): ApiTransaction {
     const msisdn = opts.revealMsisdn ? this.crypto.openString(txn.msisdn_ciphertext, 'msisdn') : txn.msisdn_masked;
     let action: ApiTransaction['action'] = null;
     if (txn.state === 'action_required') {
@@ -73,6 +76,7 @@ export class TransactionReader {
       counterparty: { msisdn, ...(txn.counterparty_name ? { name: txn.counterparty_name } : {}), ...(txn.counterparty_email ? { email: txn.counterparty_email } : {}) },
       action,
       failure_reason: txn.failure_reason,
+      payment_link: link ? { code: link.code } : null,
       metadata: txn.metadata,
       created_at: txn.created_at.toISOString(),
       terminal_at: txn.terminal_at?.toISOString() ?? null,
@@ -80,8 +84,8 @@ export class TransactionReader {
   }
 
   async apiById(exec: Executor, transactionId: string, opts: { revealMsisdn: boolean; revealAction: boolean }): Promise<ApiTransaction> {
-    const { txn, attempt, route } = await this.load(exec, transactionId);
-    return this.toApi(txn, attempt, route, opts);
+    const { txn, attempt, route, link } = await this.load(exec, transactionId);
+    return this.toApi(txn, attempt, route, link, opts);
   }
 
   previewToApi(p: PreviewRow, route: { country_code: string; payment_method_code: string; direction: string }, reveal: boolean) {

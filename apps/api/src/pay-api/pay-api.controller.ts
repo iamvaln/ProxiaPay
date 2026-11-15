@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { PlatformError } from '../common/errors';
 import { CONFIG, type AppConfig } from '../config/config';
@@ -56,6 +56,16 @@ export class PayApiController {
   @HttpCode(200)
   async confirm(@Param('token') token: string, @Req() req: Request) {
     return this.payments.confirm(token, clientAddress(req, this.config.TRUSTED_PROXY_HOPS));
+  }
+
+  /**
+   * The page follows the payment here until its outcome is in, in the page's language (`?lang=fr|en`): 60 a minute per token,
+   * and, as for reading a link, a generous ceiling per address, so guessing at tokens costs the guesser and not the store.
+   */
+  @Get('payments/:token')
+  async payment(@Param('token') token: string, @Query('lang') lang: unknown, @Req() req: Request) {
+    await this.limit(`paylink:payment-read:${clientAddress(req, this.config.TRUSTED_PROXY_HOPS)}`, 300, 60);
+    return this.payments.follow(token, lang);
   }
 
   /**

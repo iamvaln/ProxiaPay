@@ -16,6 +16,7 @@ import { JobQueue } from '../jobs/job-queue';
 import { AlertService } from '../alerts/alert.service';
 import { TransactionReader, type ApiTransaction, type TransactionRow } from './transaction-reader';
 import { AuditService } from '../audit/audit.service';
+import { LinkLifecycle } from '../payment-links/link-lifecycle';
 
 export type EventSource = 'provider_response' | 'notification' | 'status_check' | 'reconciliation' | 'administrator' | 'system';
 export const OPEN_STATES = ['created', 'action_required', 'submitted', 'processing'] as const;
@@ -28,6 +29,8 @@ export interface OutcomeDetail {
   actorId?: string | null;
   discrepancyId?: string | null;
   detail?: Record<string, unknown>;
+  /** A correction reopens a final transaction before finalising it again: the state it held before that, for what follows from the change. */
+  correctedFrom?: string;
 }
 
 /**
@@ -50,6 +53,7 @@ export class TransactionService {
     private readonly queue: JobQueue,
     private readonly alerts: AlertService,
     private readonly audit: AuditService,
+    private readonly links: LinkLifecycle,
   ) {}
 
   /**
@@ -254,6 +258,7 @@ export class TransactionService {
     }).where('id', '=', txn.id).execute();
     if (r.attemptId) await tx.updateTable('transaction_attempt').set({ state: 'succeeded', actual_provider_fee: actualFee, operator_reference: r.operatorReference ?? null, ended_at: sql`now()`, response_payload_id: r.payloadId ?? null }).where('id', '=', r.attemptId).execute();
     await this.event(tx, txn.id, txn.state, 'succeeded', { ...r, detail: { ...(r.detail ?? {}), actual_provider_fee: actualFee, provider_charged_amount: r.chargedAmount ?? null } });
+    await this.links.onTransactionFinal(tx, txn, r.correctedFrom ?? txn.state, 'succeeded');
     await this.checkReportedAmount(tx, txn, r.attemptId ?? txn.current_attempt_id, r.chargedAmount ?? null);
     await this.notify(tx, txn.id, 'transaction.succeeded');
     await this.alerts.clear(`undetermined:${txn.id}`, tx);
@@ -269,6 +274,7 @@ export class TransactionService {
     await tx.updateTable('transaction').set({ state: next, failure_reason: reason, terminal_at: sql`now()`, next_status_check_at: null, action_url_ciphertext: null, ...(r.discrepancyId ? { reconciliation_status: 'corrected' } : {}) }).where('id', '=', txn.id).execute();
     if (r.attemptId) await tx.updateTable('transaction_attempt').set({ state: 'failed', failure_reason: reason, provider_error_code: r.providerCode ?? null, provider_error_message: r.providerMessage ?? null, ended_at: sql`now()`, response_payload_id: r.payloadId ?? null }).where('id', '=', r.attemptId).execute();
     await this.event(tx, txn.id, txn.state, next, { ...r, detail: { ...(r.detail ?? {}), failure_reason: reason, provider_code: r.providerCode ?? null } });
+    await this.links.onTransactionFinal(tx, txn, r.correctedFrom ?? txn.state, next);
     await this.notify(tx, txn.id, next === 'expired' ? 'transaction.expired' : 'transaction.failed');
     await this.alerts.clear(`undetermined:${txn.id}`, tx);
   }
@@ -306,7 +312,7 @@ export class TransactionService {
     const attempt = txn.current_attempt_id ? await tx.selectFrom('transaction_attempt').selectAll().where('id', '=', txn.current_attempt_id).executeTakeFirst() : undefined;
     const providerAccountId = attempt?.provider_account_id ?? txn.selected_provider_account_id;
     if (!providerAccountId) throw new PlatformError('RULE_VIOLATION', 'The transaction reached no provider; nothing to correct against.');
-    const detail: OutcomeDetail = { source: 'reconciliation', actorId: r.actorId, discrepancyId: r.discrepancyId, attemptId: attempt?.id ?? null, detail: { run_id: r.runId ?? null, previous_state: priorState } };
+    const detail: OutcomeDetail = { source: 'reconciliation', actorId: r.actorId, discrepancyId: r.discrepancyId, attemptId: attempt?.id ?? null, detail: { run_id: r.runId ?? null, previous_state: priorState }, correctedFrom: priorState };
 
     if (target === 'succeeded') {
       if (priorState === 'succeeded') return;
@@ -345,8 +351,8 @@ export class TransactionService {
   }
 
   private async notify(tx: Tx, transactionId: string, event: NotificationEvent, extra: Record<string, unknown> = {}): Promise<void> {
-    const { txn, attempt, route } = await this.reader.load(tx, transactionId);
-    const data = { transaction: this.reader.toApi(txn, attempt, route, { revealMsisdn: true, revealAction: true }), ...extra };
+    const { txn, attempt, route, link } = await this.reader.load(tx, transactionId);
+    const data = { transaction: this.reader.toApi(txn, attempt, route, link, { revealMsisdn: true, revealAction: true }), ...extra };
     await this.notifications.enqueue(tx, { projectId: txn.project_id, transactionId, event, data });
   }
 

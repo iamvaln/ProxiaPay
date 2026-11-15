@@ -11,6 +11,7 @@ import { RateLimiter } from '../project-auth/rate-limiter';
 import { SubmissionService } from '../providers/submission.service';
 import { PreviewService } from '../transactions/preview.service';
 import { TERMINAL_STATES, TransactionService } from '../transactions/transaction.service';
+import { failureText, payerLanguage, type PayerLanguage } from './failure-text';
 import { amountRefusal, isUuid, LINK_UNAVAILABLE_MESSAGE, linkPrincipal, METHOD_UNAVAILABLE_MESSAGE, neutralProviderLimit, PublicLinkService } from './public-view';
 
 export const ADDRESS_LIMITED = 'Too many requests from this connection. Wait a minute and try again.';
@@ -19,6 +20,8 @@ const LINK_LIMITED = 'This link is taking too many payments at once. Wait a minu
 const TOTAL_EXPIRED = 'This total has expired; start again.';
 const IN_PROGRESS = 'A payment is already in progress on this link';
 const BEING_CHECKED = 'A payment on this link is being checked';
+const PAYMENT_GONE = 'This payment is no longer available';
+const NOT_STARTED = 'We could not start this payment. Please try again.';
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
 /** Counts a request against a fixed window in the store; past the limit the caller is told plainly when to come back. */
@@ -57,7 +60,8 @@ function forPayer(e: unknown): unknown {
     case 'SIMILAR_PAYMENT_PENDING': return new PlatformError(e.code, 'A payment from this number is already in progress.');
     case 'VELOCITY_COUNT_EXCEEDED': case 'VELOCITY_VALUE_EXCEEDED': return new PlatformError(e.code, 'This link cannot take more payments right now. Try again later.');
     case 'NO_PROVIDER_AVAILABLE': case 'FLOAT_INSUFFICIENT': return new PlatformError(e.code, 'This payment method is not available right now. Try again later.');
-    default: return new PlatformError(e.code, e.message, e.options.field ? { field: e.options.field } : {});
+    // Anything else was written for a developer (field paths, references, rules): the payer hears only that it did not start.
+    default: return new PlatformError(e.code, NOT_STARTED);
   }
 }
 
@@ -69,6 +73,20 @@ export interface LinkPaymentReview {
   method: { country: string; name: string };
   msisdn_formatted: string;
   expires_at: string;
+}
+
+/** A payment as the page follows it once confirmed: its state, how to approve it, and in the end its outcome in plain words. */
+export interface FollowedPayment {
+  state: string;
+  reference: string;
+  amount: number;
+  charged_amount: number;
+  currency: string;
+  method: { country: string; name: string };
+  /** The route's own instructions in the page's language, or null for the page's generic text. */
+  instructions: string | null;
+  /** Null until the payment is final; a failure carries why, in the payer's words. */
+  outcome: { failure_reason_text: string | null } | null;
 }
 
 /**
@@ -143,12 +161,15 @@ export class LinkPaymentsService {
     const payment = await this.db.selectFrom('payment_link_payment as pp')
       .innerJoin('preview as pv', 'pv.id', 'pp.preview_id')
       .innerJoin('payment_link as l', 'l.id', 'pp.link_id')
-      .select(['pp.id', 'pp.link_id', 'pp.expires_at', 'pv.reference as preview_reference', 'pv.msisdn_index', 'pv.route_id', 'l.code'])
+      .leftJoin('transaction as t', 't.id', 'pp.transaction_id')
+      .select(['pp.id', 'pp.link_id', 'pp.expires_at', 'pv.reference as preview_reference', 'pv.msisdn_index', 'pv.route_id', 'l.code', 't.reference as transaction_reference'])
       .where('pp.token_hash', '=', CryptoService.tokenHash(token)).executeTakeFirst();
     if (!payment) throw noSuchPayment();
     // The operator pushes a request to the number here, so this is where the number and the link are limited.
     await enforceLimit(this.limiter, `paylink:confirm-number:${payment.msisdn_index.toString('hex')}`, 3, 600, NUMBER_LIMITED);
     await enforceLimit(this.limiter, `paylink:confirm-link:${payment.link_id}`, 30, 60, LINK_LIMITED);
+    // A payment already made answers the same however late the repeat: only a new payment needs the token in its day.
+    if (payment.transaction_reference) return { reference: payment.transaction_reference };
     if (payment.expires_at.getTime() <= Date.now()) throw new PlatformError('PREVIEW_EXPIRED', TOTAL_EXPIRED);
 
     const outcome = await this.db.transaction().execute(async (tx) => {
@@ -170,11 +191,12 @@ export class LinkPaymentsService {
       // The method must still be on offer as the page shows it, not merely resolvable.
       if (!(await this.links.methods(tx, link)).some((m) => m.routeId === payment.route_id)) throw methodUnavailable();
 
-      const { transactionId } = await this.transactions.confirmCollectionIn(tx, linkPrincipal(link), payment.preview_reference);
+      // The project-facing confirmation speaks to developers; only its refusals are put in the payer's words.
+      const { transactionId } = await this.transactions.confirmCollectionIn(tx, linkPrincipal(link), payment.preview_reference).catch((e: unknown) => { throw forPayer(e); });
       const txn = await tx.updateTable('transaction').set({ payment_link_id: link.id }).where('id', '=', transactionId).returning('reference').executeTakeFirstOrThrow();
       await tx.updateTable('payment_link_payment').set({ transaction_id: transactionId }).where('id', '=', payment.id).execute();
       return { reference: txn.reference, transactionId };
-    }).catch((e: unknown) => { throw forPayer(e); });
+    });
 
     if (outcome.transactionId) {
       // The transaction is committed and its submission queued as a safety net, so a fault here leaves a payment the worker
@@ -186,5 +208,34 @@ export class LinkPaymentsService {
       }
     }
     return { reference: outcome.reference };
+  }
+
+  /**
+   * The payment as the page follows it after confirming. The payer types nothing more: the state moves when the provider's
+   * callback or the status checks settle the transaction, and the page polls this until the outcome is in. The token is
+   * what the page holds, so an unknown, unconfirmed or past-its-day token all answer the same.
+   */
+  async follow(token: string, lang: unknown): Promise<FollowedPayment> {
+    const gone = () => new PlatformError('NOT_FOUND', PAYMENT_GONE);
+    if (!TOKEN.test(token)) throw gone();
+    const hash = CryptoService.tokenHash(token);
+    // Keyed on the token's hash: the window table never holds a token.
+    await enforceLimit(this.limiter, `paylink:payment:${hash.toString('hex')}`, 60, 60);
+    const row = await this.db.selectFrom('payment_link_payment as pp')
+      .innerJoin('transaction as t', 't.id', 'pp.transaction_id')
+      .innerJoin('route as r', 'r.id', 't.route_id')
+      .innerJoin('payment_method as pm', 'pm.code', 'r.payment_method_code')
+      .select(['t.state', 't.reference', 't.requested_amount', 't.charged_amount', 't.currency_code', 't.failure_reason', 'r.country_code', 'pm.name', 'r.payer_instructions'])
+      .where('pp.token_hash', '=', hash).where('pp.expires_at', '>', sql<Date>`now()`).executeTakeFirst();
+    if (!row) throw gone();
+    const language = payerLanguage(lang);
+    const given = (row.payer_instructions as Partial<Record<PayerLanguage, unknown>> | null)?.[language];
+    const final = (TERMINAL_STATES as readonly string[]).includes(row.state);
+    return {
+      state: row.state, reference: row.reference, amount: row.requested_amount, charged_amount: row.charged_amount, currency: row.currency_code,
+      method: { country: row.country_code, name: row.name },
+      instructions: typeof given === 'string' && given.trim() !== '' ? given : null,
+      outcome: final ? { failure_reason_text: row.state === 'succeeded' ? null : failureText(row.failure_reason, language) } : null,
+    };
   }
 }

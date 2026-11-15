@@ -1285,6 +1285,17 @@
               null
             ]
           },
+          "payment_link": {
+            "type": "object",
+            "nullable": true,
+            "description": "The payment link the payer paid through; null for a payment the project made itself. Optional: older payloads omit it.",
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "x7Kp2mQ9aZ"
+              }
+            }
+          },
           "metadata": {
             "type": "object",
             "additionalProperties": true

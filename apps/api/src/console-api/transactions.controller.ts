@@ -180,8 +180,8 @@ export class ConsoleTransactionsController {
   async detail(@Param('reference') reference: string, @Req() req: ConsoleRequest) {
     const found = await this.db.selectFrom('transaction').select(['id', 'project_id']).where('reference', '=', reference).executeTakeFirst();
     if (!found || !req.auth.canReachProject('transactions.read', found.project_id)) throw new PlatformError('NOT_FOUND', 'No such transaction.');
-    const { txn, attempt, route } = await this.reader.load(this.db, found.id);
-    const api = this.reader.toApi(txn, attempt, route, { revealMsisdn: false, revealAction: false });
+    const { txn, attempt, route, link } = await this.reader.load(this.db, found.id);
+    const api = this.reader.toApi(txn, attempt, route, link, { revealMsisdn: false, revealAction: false });
     const project = await this.db.selectFrom('project').select(['id', 'name', 'code']).where('id', '=', txn.project_id).executeTakeFirstOrThrow();
     const attempts = await this.db.selectFrom('transaction_attempt as a').innerJoin('provider_account as pa', 'pa.id', 'a.provider_account_id').selectAll('a').select('pa.name as provider_account_name').where('a.transaction_id', '=', txn.id).orderBy('a.sequence').execute();
     const events = await this.db.selectFrom('transaction_event as e').leftJoin('administrator as ad', 'ad.id', 'e.actor_id').selectAll('e').select('ad.name as actor_name').where('e.transaction_id', '=', txn.id).orderBy('e.id').execute();

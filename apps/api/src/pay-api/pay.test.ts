@@ -12,6 +12,8 @@ import { RateLimiter } from '../project-auth/rate-limiter';
 import { LedgerService } from '../ledger/ledger.service';
 import { StatusService } from '../providers/status.service';
 import { TransactionService } from '../transactions/transaction.service';
+import { PreviewService } from '../transactions/preview.service';
+import { PlatformError } from '../common/errors';
 import { SimulatorAdapter } from '../providers/adapters/simulator.adapter';
 import { NotificationService } from '../notifications/notification.service';
 import { deliveryTransport } from '../notifications/delivery-transport';
@@ -186,6 +188,31 @@ describe('paying a link', () => {
     // Past the token's own day, the same.
     await t.db.updateTable('payment_link_payment').set({ expires_at: new Date(Date.now() - 1000) }).execute();
     expect(await answer(await confirm(tok))).toEqual(expired);
+    expect(await t.db.selectFrom('transaction').select('id').execute()).toEqual([]);
+  });
+
+  it('confirming again after the token\'s day answers the payment already made', async () => {
+    const momo = await routeId('CM', 'MOMO');
+    const l = await link([momo]);
+    const tok = await token(l.code, { method: l.keys[momo], msisdn: '677123456' });
+    const first = await answer(await confirm(tok));
+    expect(first.status).toBe(200);
+    await t.db.updateTable('payment_link_payment').set({ expires_at: new Date(Date.now() - 1000) }).execute();
+    await t.db.updateTable('preview').set({ expires_at: new Date(Date.now() - 1000) }).execute();
+    expect(await answer(await confirm(tok))).toEqual(first);
+    expect(await linkTransactions(l.id)).toHaveLength(1);
+  });
+
+  it('a refusal the payer has no words for answers a plain message, never the developer\'s', async () => {
+    const momo = await routeId('CM', 'MOMO');
+    const l = await link([momo]);
+    const generic = { error: { code: 'REFERENCE_CONFLICT', message: 'We could not start this payment. Please try again.', retryable: false } };
+    vi.spyOn(app.get(PreviewService), 'create').mockRejectedValueOnce(new PlatformError('REFERENCE_CONFLICT', 'The project reference is already used by prv_01J8.', { field: 'reference' }));
+    expect(await answer(await preview(l.code, { method: l.keys[momo], msisdn: '677123456' }))).toEqual({ status: 409, body: generic });
+
+    const tok = await token(l.code, { method: l.keys[momo], msisdn: '677123456' });
+    vi.spyOn(app.get(TransactionService), 'confirmCollectionIn').mockRejectedValueOnce(new PlatformError('PREVIEW_DIRECTION_MISMATCH', 'The preview was raised as a disbursement.'));
+    expect(await answer(await confirm(tok))).toEqual({ status: 409, body: { error: { ...generic.error, code: 'PREVIEW_DIRECTION_MISMATCH' } } });
     expect(await t.db.selectFrom('transaction').select('id').execute()).toEqual([]);
   });
 
