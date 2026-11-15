@@ -58,7 +58,7 @@ session, and the link reads well in a message.
 
 ## Goals
 
-1. **Create a link from the console.** A project's team creates a link from
+1. **Create a link from the console.** The project's owner creates a link from
    the project page, in a new "Payment links" tab. A link holds:
    - a title, for example "Abonnement Pro – novembre";
    - an optional description;
@@ -150,14 +150,15 @@ session, and the link reads well in a message.
 transaction records its origin is left to the builder; the constraint is that
 every transaction says whether it came from a credential or from a link.
 
-**New permission `links.manage`**, "Create and disable payment links", granted
-to:
-- `Owner`;
-- `Configuration`;
-- `Client owner`;
-- `Client developer`.
+**New permission `links.manage`**, "Create and disable payment links". Links
+are created **on each project by the person who owns that project**
+(Valentine, 2026-11-15):
+- on a client's project, the client's **owner** (`Client owner`);
+- on a platform project such as MonJeton, Valentine (`Owner`).
 
-Reading links falls under `projects.read`.
+Developers, Finance and the platform's other roles do not hold it. Reading
+links falls under `projects.read`, so a client's team still sees the links of
+the projects it reaches.
 
 ### Creating a link (console API)
 
