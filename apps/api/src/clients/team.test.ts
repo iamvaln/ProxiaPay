@@ -41,7 +41,7 @@ async function clientPerson(clientId: string, roleName = 'Client owner') {
 async function requestOf(admin: { id: string; email: string }, clientId: string): Promise<ConsoleRequest> {
   return {
     principal: { sessionId: '00000000-0000-0000-0000-00000000005e', administratorId: admin.id, name: 'Owner', email: admin.email, language: 'en', timezone: 'UTC', secondFactorComplete: true, kind: 'client', activeClientId: clientId },
-    auth: await new AuthorisationService(t.db).load(admin.id, clientId),
+    auth: await new AuthorisationService(t.db).load(admin.id, clientId, 'client'),
     clientAddress: '127.0.0.1', clientDescription: 'vitest',
   } as unknown as ConsoleRequest;
 }
@@ -154,7 +154,7 @@ describe('the owner\'s team', () => {
     const there = await session(other.id);
 
     await team().access(member.id, { profile: 'finance', project_ids: [shop.id, second.id] }, req);
-    const auth = await new AuthorisationService(t.db).load(member.admin_id, acme.id);
+    const auth = await new AuthorisationService(t.db).load(member.admin_id, acme.id, 'client');
     expect(auth.has('projects.credentials')).toBe(false);
     expect(auth.has('oversight.export')).toBe(true);
     expect(auth.projectScope('transactions.read')!.sort()).toEqual([shop.id, second.id].sort());
@@ -178,7 +178,7 @@ describe('the owner\'s team', () => {
     const s = await t.db.insertInto('admin_session').values({ administrator_id: member.admin_id, active_client_id: acme.id, token_hash: CryptoService.tokenHash(CryptoService.randomToken()), expires_at: new Date(Date.now() + 3600_000), origin_address: '10.0.0.1' }).returning('id').executeTakeFirstOrThrow();
     await team().status(member.id, { status: 'disabled' }, req);
     expect((await t.db.selectFrom('admin_session').select('revoked_at').where('id', '=', s.id).executeTakeFirstOrThrow()).revoked_at).not.toBeNull();
-    expect((await new AuthorisationService(t.db).load(member.admin_id, acme.id)).permissions()).toEqual([]);
+    expect((await new AuthorisationService(t.db).load(member.admin_id, acme.id, 'client')).permissions()).toEqual([]);
     expect(await team().status(member.id, { status: 'active' }, req)).toEqual({ membership_id: member.id, status: 'active' });
     expect((await t.db.selectFrom('audit_record').select('action').where('action', '=', 'team.status').execute())).toHaveLength(4);
   });

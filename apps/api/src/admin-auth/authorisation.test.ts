@@ -38,7 +38,7 @@ describe('authorisation from the active membership', () => {
     const p2 = await newProject(c.id, 'acme-2');
     const other = await newClient('Other');
     await newProject(other.id, 'other-1');
-    const auth = await service().load(person.id, c.id);
+    const auth = await service().load(person.id, c.id, 'client');
     expect(auth.isClient).toBe(true);
     expect(auth.clientId).toBe(c.id);
     expect(auth.has('client.members')).toBe(true);
@@ -53,7 +53,7 @@ describe('authorisation from the active membership', () => {
     const person = await clientPerson();
     await membership(person.id, a.id, 'Client developer');
     await membership(person.id, b.id, 'Client finance');
-    const auth = await service().load(person.id, a.id);
+    const auth = await service().load(person.id, a.id, 'client');
     expect(auth.permissions()).toContain('projects.credentials');
     expect(auth.permissions()).not.toContain('oversight.export');
     expect(auth.projectScope('projects.credentials')).toEqual([pa.id]);
@@ -64,19 +64,19 @@ describe('authorisation from the active membership', () => {
     await newProject(c.id, 'acme-1');
     const person = await clientPerson();
     const m = await membership(person.id, c.id, 'Client owner');
-    expect((await service().load(person.id, c.id)).permissions().length).toBeGreaterThan(0);
+    expect((await service().load(person.id, c.id, 'client')).permissions().length).toBeGreaterThan(0);
     await t.db.updateTable('client_membership').set({ status: 'disabled' }).where('id', '=', m.id).execute();
-    expect((await service().load(person.id, c.id)).permissions()).toEqual([]);
+    expect((await service().load(person.id, c.id, 'client')).permissions()).toEqual([]);
     await t.db.updateTable('client_membership').set({ status: 'active' }).where('id', '=', m.id).execute();
     await t.db.updateTable('client').set({ status: 'disabled' }).where('id', '=', c.id).execute();
-    expect((await service().load(person.id, c.id)).permissions()).toEqual([]);
+    expect((await service().load(person.id, c.id, 'client')).permissions()).toEqual([]);
   });
 
   it('gives a client account nothing without an active client', async () => {
     const c = await newClient('Acme');
     const person = await clientPerson();
     await membership(person.id, c.id, 'Client owner');
-    const auth = await service().load(person.id, null);
+    const auth = await service().load(person.id, null, 'platform');
     expect(auth.permissions()).toEqual([]);
     expect(auth.isClient).toBe(true);
   });
@@ -86,7 +86,7 @@ describe('authorisation from the active membership', () => {
     const c = await newClient('Acme');
     // A stray membership-bound assignment must not leak into a platform account.
     await membership(staff.id, c.id, 'Client owner');
-    const auth = await service().load(staff.id, null);
+    const auth = await service().load(staff.id, null, 'platform');
     expect(auth.isClient).toBe(false);
     expect(auth.clientId).toBeNull();
     expect(auth.has('admin.clients')).toBe(true);
@@ -103,7 +103,7 @@ describe('a client account is always narrowed to its active client', () => {
     await membership(person.id, c.id, 'Client developer');
     const owner = await t.db.selectFrom('role').select('id').where('name', '=', 'Owner').executeTakeFirstOrThrow();
     await t.db.insertInto('role_assignment').values({ administrator_id: person.id, role_id: owner.id, scope_type: 'all' }).execute();
-    const auth = await service().load(person.id, c.id);
+    const auth = await service().load(person.id, c.id, 'client');
     expect(auth.has('admin.clients')).toBe(false);
     expect(auth.projectScope('projects.credentials')).not.toBeNull();
   });
@@ -119,7 +119,7 @@ describe('a client account is always narrowed to its active client', () => {
     await t.db.insertInto('role_assignment').values({ administrator_id: person.id, role_id: owner.id, scope_type: 'all', membership_id: m.id }).execute();
     const pr = await t.db.selectFrom('role').select('id').where('name', '=', 'Finance').executeTakeFirst();
     if (pr) await t.db.insertInto('role_assignment').values({ administrator_id: person.id, role_id: pr.id, scope_type: 'provider_accounts', membership_id: m.id }).execute();
-    const auth = await service().load(person.id, c.id);
+    const auth = await service().load(person.id, c.id, 'client');
     for (const perm of auth.permissions()) {
       const scope = auth.projectScope(perm);
       expect(scope).not.toBeNull();

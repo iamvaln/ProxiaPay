@@ -73,11 +73,11 @@ export class AuthorisationService {
 
   /**
    * `acting` is the session's acting kind (SessionPrincipal.kind): a platform account in a partner's view acts as a client and is
-   * authorised by that membership alone. Left out, it is derived the same way. A client account is a client's whatever is asked.
+   * authorised by that membership alone. A client account is a client's whatever is asked.
    */
-  async load(administratorId: string, activeClientId: string | null, acting?: 'platform' | 'client'): Promise<Authorisation> {
+  async load(administratorId: string, activeClientId: string | null, acting: 'platform' | 'client'): Promise<Authorisation> {
     const admin = await this.db.selectFrom('administrator').select('kind').where('id', '=', administratorId).executeTakeFirst();
-    if (admin?.kind === 'client' || (acting ?? (activeClientId ? 'client' : 'platform')) === 'client') return this.loadClient(administratorId, activeClientId);
+    if (admin?.kind === 'client' || acting === 'client') return this.loadClient(administratorId, activeClientId);
     // The platform view: only assignments that belong to no membership, and never a client's own permission, whatever a role was given.
     const rows = await this.db
       .selectFrom('role_assignment as ra')

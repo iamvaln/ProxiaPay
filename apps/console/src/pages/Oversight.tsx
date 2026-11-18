@@ -248,21 +248,23 @@ function Administrators() {
   </>);
 }
 
-function Roles() {
+export function Roles() {
   const t = useT();
   const { data, error, reload } = useLoad(() => get<any>('/oversight/roles'));
   const [editing, setEditing] = useState<any>(null);
   const [impact, setImpact] = useState<any>(null);
   if (error) return <ErrorLine error={error} />;
   if (!data) return null;
-  const domains = [...new Set(Object.keys(data.permissions).map((k) => k.split('.')[0]))];
+  // This editor only ever edits platform roles (client roles are fixed in code), which cannot hold a client-only permission.
+  const offered = Object.entries(data.permissions).filter(([k]) => !(data.client_only_permissions ?? []).includes(k));
+  const domains = [...new Set(offered.map(([k]) => k.split('.')[0]))];
   return (<div className="grid2">
     <div><DataTable<Row> prefix="role_" rows={data.roles} {...roleList({ t, edit: (r) => { setEditing({ kind: 'role_permissions', role_id: r.id, name: r.name, description: r.description, permissions: [...r.permissions] }); setImpact(null); } })} />
       <button style={{ marginTop: 8 }} onClick={() => setEditing({ kind: 'role_permissions', name: '', description: '', permissions: [] })}>New role</button></div>
     {editing && <div className="card">
       <h2>{editing.role_id ? `Edit ${editing.name}` : 'New role'}</h2>
       <input placeholder="name" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /> <input placeholder="description" value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} style={{ width: 300 }} />
-      {domains.map((d) => <div key={d}><h3>{d}</h3>{Object.entries(data.permissions).filter(([k]) => k.startsWith(`${d}.`)).map(([k, desc]) => <label key={k} className="row"><input type="checkbox" checked={editing.permissions.includes(k)} onChange={(e) => setEditing({ ...editing, permissions: e.target.checked ? [...editing.permissions, k] : editing.permissions.filter((p: string) => p !== k) })} /> <span>{desc as string} <span className="small muted">{k}</span></span></label>)}</div>)}
+      {domains.map((d) => <div key={d}><h3>{d}</h3>{offered.filter(([k]) => k.startsWith(`${d}.`)).map(([k, desc]) => <label key={k} className="row"><input type="checkbox" checked={editing.permissions.includes(k)} onChange={(e) => setEditing({ ...editing, permissions: e.target.checked ? [...editing.permissions, k] : editing.permissions.filter((p: string) => p !== k) })} /> <span>{desc as string} <span className="small muted">{k}</span></span></label>)}</div>)}
       <div className="row" style={{ marginTop: 8 }}><button onClick={async () => setImpact(await post('/oversight/roles/impact', editing))}>Show who this affects</button><button onClick={() => setEditing(null)}>Cancel</button></div>
       {impact && <div className="warnbox">{impact.granted?.length ? <p>Grants: {impact.granted.join(', ')}</p> : null}{impact.removed?.length ? <p>Removes: {impact.removed.join(', ')}</p> : null}<p>Affects: {impact.administrators?.map((a: any) => a.name).join(', ') || 'nobody yet'}</p>{impact.requires_approval && <p className="small">Carries treasury or administration permissions: a second approver is required.</p>}
         <ConfirmedAction operationType="role.change" values={editing} path="/oversight/roles/changes" label="Commit" onDone={() => { setEditing(null); setImpact(null); reload(); }} /></div>}

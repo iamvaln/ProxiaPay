@@ -99,7 +99,7 @@ describe('the shell', () => {
   });
 
   it('a platform administrator gets the account link and no switcher', async () => {
-    server({ ...clientMe(), kind: 'platform', active_client: null, clients: [], permissions: ['reference.read'] });
+    server({ ...clientMe(), kind: 'platform', account_kind: 'platform', active_client: null, clients: [], permissions: ['reference.read'] });
     shell();
     await screen.findByText('Configuration');
     expect(screen.getByRole('link', { name: 'Account' })).toBeTruthy();

@@ -65,7 +65,7 @@ describe('invitations', () => {
     expect(assignment).toMatchObject({ name: 'Client developer', scope_type: 'projects', membership_id: m.id });
     expect((await t.db.selectFrom('role_assignment_scope').select('project_id').where('assignment_id', '=', assignment.id).execute()).map((s) => s.project_id)).toEqual([shop.id]);
     // Pending grants nothing.
-    expect((await new AuthorisationService(t.db).load(admin.id, acme.id)).permissions()).toEqual([]);
+    expect((await new AuthorisationService(t.db).load(admin.id, acme.id, 'client')).permissions()).toEqual([]);
 
     const mails = mailsTo('ama@example.test');
     expect(mails).toHaveLength(1);
@@ -125,7 +125,7 @@ describe('invitations', () => {
     // Pending: the session cannot work in Beta, and me offers the acceptance.
     const auth = get(AdminAuthService);
     await expect(auth.switchClient({ kind: 'client', administratorId: person.id, sessionId: '00000000-0000-0000-0000-000000000000' } as never, beta.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    expect((await new AuthorisationService(t.db).load(person.id, beta.id)).permissions()).toEqual([]);
+    expect((await new AuthorisationService(t.db).load(person.id, beta.id, 'client')).permissions()).toEqual([]);
     expect(await auth.pendingMemberships(person.id)).toEqual([{ membership_id: m.id, client_name: 'Beta' }]);
 
     const controller = new InvitationController(service());
@@ -136,7 +136,7 @@ describe('invitations', () => {
     expect(await controller.acceptMembership(m.id, req)).toEqual({ ok: true });
     expect(await auth.pendingMemberships(person.id)).toEqual([]);
     expect((await auth.activeMemberships(person.id)).map((c) => c.name).sort()).toEqual(['Acme', 'Beta']);
-    expect((await new AuthorisationService(t.db).load(person.id, beta.id)).has('oversight.export')).toBe(true);
+    expect((await new AuthorisationService(t.db).load(person.id, beta.id, 'client')).has('oversight.export')).toBe(true);
     await expect(controller.acceptMembership(m.id, req)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     // The link no longer works once the membership is accepted.
     await expect(service().preview(tokenIn(mails[0]!.text)!)).rejects.toMatchObject(NEUTRAL);

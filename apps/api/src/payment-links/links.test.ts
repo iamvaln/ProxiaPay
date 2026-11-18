@@ -30,7 +30,7 @@ async function clientPerson(clientId: string, roleName: string) {
 async function requestOf(admin: { id: string; email: string }, clientId: string): Promise<ConsoleRequest> {
   return {
     principal: { sessionId: '00000000-0000-0000-0000-00000000005e', administratorId: admin.id, name: 'Test', email: admin.email, language: 'en', timezone: 'UTC', secondFactorComplete: true, kind: 'client', activeClientId: clientId },
-    auth: await new AuthorisationService(t.db).load(admin.id, clientId),
+    auth: await new AuthorisationService(t.db).load(admin.id, clientId, 'client'),
     clientAddress: '127.0.0.1', clientDescription: 'vitest',
   } as unknown as ConsoleRequest;
 }

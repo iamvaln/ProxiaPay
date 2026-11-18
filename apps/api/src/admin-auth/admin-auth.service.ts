@@ -220,6 +220,8 @@ export class AdminAuthService {
     await this.db.transaction().execute(async (tx) => {
       await tx.updateTable('admin_session').set({ active_client_id: clientId }).where('id', '=', principal.sessionId).execute();
       await tx.updateTable('administrator').set({ last_client_id: clientId }).where('id', '=', principal.administratorId).execute();
+      // Which view an account worked in is part of who did what: a partner's view has powers the super-admin view lacks.
+      await this.audit.record(tx, { actorId: principal.administratorId, action: 'session.switch_view', subjectType: 'admin_session', subjectId: principal.sessionId, next: { from: principal.activeClientId, to: clientId } });
     });
   }
 

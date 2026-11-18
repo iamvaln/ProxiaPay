@@ -26,7 +26,7 @@ function controller(autoEntitle: boolean) {
 
 /** A request as the session guard builds it: authorisation loaded from the database for the active client. */
 async function requestOf(adminId: string, activeClientId: string | null): Promise<ConsoleRequest> {
-  const auth = await new AuthorisationService(t.db).load(adminId, activeClientId);
+  const auth = await new AuthorisationService(t.db).load(adminId, activeClientId, activeClientId ? 'client' : 'platform');
   return { principal: { administratorId: adminId }, auth } as unknown as ConsoleRequest;
 }
 async function newClient(name: string) {
@@ -52,7 +52,7 @@ describe('projects created by clients', () => {
     const owner = await clientPerson(acme.id, 'Client owner');
     const created = await controller(false).create({ code: 'acme-shop', name: 'Acme shop' }, await requestOf(owner.id, acme.id));
     expect(created.client_id).toBe(acme.id);
-    const after = await new AuthorisationService(t.db).load(owner.id, acme.id);
+    const after = await new AuthorisationService(t.db).load(owner.id, acme.id, 'client');
     expect(after.projectScope('projects.credentials')).toContain(created.id);
   });
 

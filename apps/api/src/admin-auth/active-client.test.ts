@@ -90,13 +90,15 @@ describe('the active client of a session', () => {
     const pa = await newProject(a.id, 'a-1');
     const pb = await newProject(b.id, 'b-1');
     const p = await signIn(person.email, person.password);
-    expect((await authorisation().load(p.administratorId, p.activeClientId)).projectScope('projects.credentials')).toEqual([pa.id]);
+    expect((await authorisation().load(p.administratorId, p.activeClientId, p.kind)).projectScope('projects.credentials')).toEqual([pa.id]);
     await expect(controller().switchClient({ client_id: b.id }, { principal: p } as never)).resolves.toEqual({ ok: true });
     const next = (await auth().resolveSession(await tokenOf(p.sessionId)))!;
     expect(next.activeClientId).toBe(b.id);
-    expect((await authorisation().load(next.administratorId, next.activeClientId)).projectScope('projects.credentials')).toEqual([pb.id]);
+    expect((await authorisation().load(next.administratorId, next.activeClientId, next.kind)).projectScope('projects.credentials')).toEqual([pb.id]);
     const admin = await t.db.selectFrom('administrator').select('last_client_id').where('id', '=', person.id).executeTakeFirstOrThrow();
     expect(admin.last_client_id).toBe(b.id);
+    const rows = await t.db.selectFrom('audit_record').select(['actor_id', 'subject_id', 'new_state']).where('action', '=', 'session.switch_view').execute();
+    expect(rows).toEqual([{ actor_id: person.id, subject_id: p.sessionId, new_state: { from: a.id, to: b.id } }]);
   });
 
   it('refuses to switch to a client the person does not belong to, as not found', async () => {
@@ -157,11 +159,11 @@ describe('the active client of a session', () => {
     const { a, b, person } = await twoClients();
     await t.db.updateTable('client_membership').set({ status: 'disabled' }).where('client_id', '=', b.id).execute();
     const p = await signIn(person.email, person.password);
-    const me = await controller().me({ principal: { ...p, secondFactorComplete: true }, auth: await authorisation().load(p.administratorId, p.activeClientId) } as never);
+    const me = await controller().me({ principal: { ...p, secondFactorComplete: true }, auth: await authorisation().load(p.administratorId, p.activeClientId, p.kind) } as never);
     expect(me).toMatchObject({ kind: 'client', active_client: { id: a.id, name: 'A' }, clients: [{ id: a.id, name: 'A' }], pending_clients: [] });
     // A pending membership is offered for acceptance, never as a client to work in.
     const pending = await t.db.updateTable('client_membership').set({ status: 'pending' }).where('client_id', '=', b.id).returning('id').executeTakeFirstOrThrow();
-    const again = await controller().me({ principal: { ...p, secondFactorComplete: true }, auth: await authorisation().load(p.administratorId, p.activeClientId) } as never);
+    const again = await controller().me({ principal: { ...p, secondFactorComplete: true }, auth: await authorisation().load(p.administratorId, p.activeClientId, p.kind) } as never);
     expect(again).toMatchObject({ clients: [{ id: a.id, name: 'A' }], pending_clients: [{ membership_id: pending.id, client_name: 'B' }] });
   });
 });

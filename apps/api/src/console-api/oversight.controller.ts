@@ -9,7 +9,7 @@ import { ConfirmationService } from '../admin-auth/confirmation.service';
 import { AlertService } from '../alerts/alert.service';
 import { HealthService } from '../alerts/health.service';
 import { AuditService } from '../audit/audit.service';
-import { PERMISSIONS } from '../permissions/permissions';
+import { CLIENT_ONLY_PERMISSIONS, PERMISSIONS } from '../permissions/permissions';
 import { pageQuerySchema, paginate, prefixPattern } from './pagination';
 import { confirmationSchema, withConfirmation } from './confirmed-operation';
 import { ExportService } from './export.service';
@@ -288,7 +288,8 @@ export class OversightController {
   @Get('roles')
   @RequirePermission('admin.roles')
   async roleList() {
-    return { roles: await this.roles.list(), permissions: PERMISSIONS };
+    // The editor offers client-only permissions on a client role alone: a platform role cannot hold them.
+    return { roles: await this.roles.list(), permissions: PERMISSIONS, client_only_permissions: CLIENT_ONLY_PERMISSIONS };
   }
 
   @Post('roles/impact')
