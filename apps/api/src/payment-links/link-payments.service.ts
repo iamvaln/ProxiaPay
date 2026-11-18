@@ -123,7 +123,7 @@ export class LinkPaymentsService {
   private readonly logger = log('payment-links');
   constructor(
     @Inject(DB_TOKEN) private readonly db: Db,
-    @Inject(CONFIG) private readonly config: Pick<AppConfig, 'PROXIAPAY_ENV'>,
+    @Inject(CONFIG) private readonly config: Pick<AppConfig, 'PROXIAPAY_ENV' | 'PAYLINK_BASE_URL'>,
     private readonly links: PublicLinkService,
     private readonly previews: PreviewService,
     private readonly transactions: TransactionService,
@@ -292,7 +292,7 @@ export class LinkPaymentsService {
       .innerJoin('currency as c', 'c.code', 't.currency_code')
       .innerJoin('route as r', 'r.id', 't.route_id')
       .innerJoin('payment_method as pm', 'pm.code', 'r.payment_method_code')
-      .select(['pp.id', 't.state', 't.reference', 't.requested_amount', 't.charged_amount', 't.currency_code', 't.msisdn_masked', 't.terminal_at', 't.updated_at', 'c.exponent', 'l.title', 'pr.name as project_name', 'pm.name as method_name', 'r.country_code'])
+      .select(['pp.id', 't.state', 't.reference', 't.requested_amount', 't.charged_amount', 't.currency_code', 't.msisdn_masked', 't.terminal_at', 't.updated_at', 'c.exponent', 'l.title', 'l.logo_asset_id', 'l.primary_color', 'pr.name as project_name', 'pm.name as method_name', 'r.country_code'])
       .where('pp.token_hash', '=', hash).where('pp.expires_at', '>', sql<Date>`now()`).executeTakeFirst();
     if (!row) throw gone();
     await enforceLimit(this.limiter, `paylink:receipt:${hash.toString('hex')}`, 60, 60);
@@ -308,7 +308,8 @@ export class LinkPaymentsService {
     const mail = receiptMail({
       projectName: row.project_name, title: row.title, reference: row.reference, paidAt: row.terminal_at ?? row.updated_at, country: row.country_code,
       amount: row.requested_amount, fees: subtract(row.charged_amount, row.requested_amount), total: row.charged_amount, exponent: row.exponent,
-      currency: row.currency_code, method: row.method_name, maskedNumber: row.msisdn_masked,
+      currency: row.currency_code, method: row.method_name, maskedNumber: row.msisdn_masked, primaryColor: row.primary_color,
+      logoUrl: row.logo_asset_id && this.config.PAYLINK_BASE_URL ? `${this.config.PAYLINK_BASE_URL.replace(/\/+$/, '')}/pay-api/v1/assets/${row.logo_asset_id}` : null,
     }, input.language === 'fr' ? 'fr' : 'en');
     try {
       await this.mailer.send({ to: email, ...mail, fromName: receiptSender(row.project_name), recipientLabel: masked });

@@ -7,13 +7,14 @@ import type { INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { createTestContext, type TestContext } from '../test/context';
+import { resetConfigForTests } from '../config/config';
 import { AppModule } from '../app.module';
 import { configureBodyParsers } from '../http/body-parsers';
 import { StatusService } from '../providers/status.service';
 import { SimulatorAdapter } from '../providers/adapters/simulator.adapter';
 
 import { Mailer, fromHeader } from '../alerts/mailer';
-import { maskEmail, receiptDate, receiptMail, receiptSender, ZONES } from '../payment-links/receipt';
+import { escapeHtml, maskEmail, receiptDate, receiptMail, receiptSender, ZONES } from '../payment-links/receipt';
 
 /** The receipt by email: branded, kept as a masked address only, three at most, and only once the payment succeeded. */
 let t: TestContext;
@@ -22,7 +23,11 @@ let base: string;
 let project: { id: string; key: string; secret: string; adminId: string };
 const EMAIL = 'aicha.nkoulou@gmail.com';
 
+const PAYLINK = 'https://pay.example.com';
+const had = process.env.PAYLINK_BASE_URL;
 beforeAll(async () => {
+  process.env.PAYLINK_BASE_URL = PAYLINK;
+  resetConfigForTests();
   t = await createTestContext();
   const nest = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true, logger: ['error'], abortOnError: false, bodyParser: true });
   configureBodyParsers(nest);
@@ -31,7 +36,11 @@ beforeAll(async () => {
   base = await nest.getUrl();
   SimulatorAdapter.settleAfterMs = 0;
 });
-afterAll(async () => { await app?.close(); await t.close(); });
+afterAll(async () => {
+  await app?.close(); await t.close();
+  if (had === undefined) delete process.env.PAYLINK_BASE_URL; else process.env.PAYLINK_BASE_URL = had;
+  resetConfigForTests();
+});
 afterEach(() => vi.restoreAllMocks());
 beforeEach(async () => {
   await t.reset();
@@ -237,5 +246,85 @@ describe('the sender header', () => {
     await live.send({ to: EMAIL, subject: 's', text: 't' });
     const sentFrom = fetched.mock.calls.map((c) => (JSON.parse(String((c[1] as RequestInit).body)) as { from: string }).from);
     expect(sentFrom).toEqual(['"Acme via ProxiaPay" <no-reply@proxia.test>', 'ProxiaPay <no-reply@proxia.test>']);
+  });
+});
+
+describe('the receipt in HTML', () => {
+  const data = { projectName: 'Acme', title: 'Invoice 42', reference: 'PP-1', paidAt: new Date('2026-11-15T13:32:00Z'), amount: 1_250_000, fees: 3125, total: 1_253_125, exponent: 0, currency: 'XAF', country: 'CM', method: 'MTN Mobile Money', maskedNumber: '+237•••••3456', primaryColor: '#1A56DB', logoUrl: 'https://pay.example.com/pay-api/v1/assets/abc' };
+
+  it('the html escapes a project name with markup', () => {
+    const evil = `<script>alert(1)</script> & "Q" 'S'`;
+    const html = receiptMail({ ...data, projectName: evil, title: evil, reference: evil, method: evil, maskedNumber: evil }, 'en').html;
+    expect(html).not.toContain('<script');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;Q&quot; &#39;S&#39;');
+    expect(escapeHtml(`&<>"'`)).toBe('&amp;&lt;&gt;&quot;&#39;');
+    // The text part stays plain.
+    expect(receiptMail({ ...data, projectName: evil }, 'en').text).toContain(evil);
+  });
+
+  it('the html carries the logo URL on the paylink host and the primary colour', () => {
+    const html = receiptMail(data, 'en').html;
+    expect(html).toContain('<img src="https://pay.example.com/pay-api/v1/assets/abc"');
+    expect(html).toContain('background:#1A56DB');
+    expect(html).toContain('Powered by ProxiaPay');
+    expect(html).toContain('Total paid');
+    expect(html).toContain('1,253,125 XAF');
+    expect(html).not.toMatch(/<script|<style|<link|class=/);
+    const fr = receiptMail(data, 'fr').html;
+    expect(fr).toContain('lang="fr"');
+    expect(fr).toContain('Total payé');
+    expect(fr).toContain('Référence');
+  });
+
+  it('no logo, no img', () => {
+    expect(receiptMail({ ...data, logoUrl: null }, 'en').html).not.toContain('<img');
+    expect(receiptMail({ ...data, logoUrl: undefined }, 'en').html).not.toContain('<img');
+  });
+
+  it('a non-hex colour never reaches the html', () => {
+    for (const bad of ['crimson', '#12345', 'url(javascript:x)', '#1A56DB;background:url(x)', '"><script>']) {
+      const html = receiptMail({ ...data, primaryColor: bad }, 'en').html;
+      expect(html).not.toContain(bad);
+      expect(html).toContain('background:#0B0D12');
+    }
+  });
+
+  it('sends html beside the text to Resend, and logs the text only without a key', async () => {
+    const fetched = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ id: 'e1' }), { status: 200 }));
+    const live = new Mailer({ RESEND_API_KEY: 'k', MAIL_FROM: 'no-reply@proxia.test', NODE_ENV: 'production' });
+    await live.send({ to: EMAIL, subject: 's', text: 'plain', html: '<p>rich</p>' });
+    await live.send({ to: EMAIL, subject: 's', text: 'plain' });
+    const bodies = fetched.mock.calls.map((c) => JSON.parse(String((c[1] as RequestInit).body)) as { text: string; html?: string });
+    expect(bodies[0]).toMatchObject({ text: 'plain', html: '<p>rich</p>' });
+    expect(bodies[1]!.html).toBeUndefined();
+    const logged = new Mailer({ RESEND_API_KEY: undefined, MAIL_FROM: undefined, NODE_ENV: 'test' });
+    fetched.mockClear();
+    expect(await logged.send({ to: EMAIL, subject: 's', text: 'plain', html: '<p>rich</p>' })).toBe('logged');
+    expect(fetched).not.toHaveBeenCalled();
+  });
+
+  it('the receipt endpoint sends the link’s logo and colour, text and html both', async () => {
+    const asset = await t.db.insertInto('brand_asset').values({ project_id: project.id, bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]), content_type: 'image/png', sha256: 'x' }).returning('id').executeTakeFirstOrThrow();
+    const token = await pay();
+    await t.db.updateTable('payment_link').set({ logo_asset_id: asset.id, primary_color: '#047857' }).execute();
+    await settle();
+    expect(await receipt(token, { email: EMAIL, language: 'en' })).toEqual({ status: 200, body: { status: 'sent' } });
+    const mail = mailer().sent.find((m) => m.to === EMAIL)!;
+    expect(mail.text).toContain('Powered by ProxiaPay');
+    expect(mail.html).toContain(`src="${PAYLINK}/pay-api/v1/assets/${asset.id}"`);
+    expect(mail.html).toContain('background:#047857');
+    expect(mail.html).toContain('Acme &quot;Shop&quot; &lt;Ltd&gt;');
+
+    // The link is disabled later: the receipt's logo is still served, because a payment succeeded through it.
+    await t.db.updateTable('payment_link').set({ status: 'disabled' }).execute();
+    const res = await fetch(`${base}/pay-api/v1/assets/${asset.id}`);
+    expect(res.status).toBe(200);
+  });
+
+  it('a logo of a disabled link nobody paid through is still not served', async () => {
+    const asset = await t.db.insertInto('brand_asset').values({ project_id: project.id, bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]), content_type: 'image/png', sha256: 'y' }).returning('id').executeTakeFirstOrThrow();
+    const l = await link(await routeId('CM', 'MOMO'));
+    await t.db.updateTable('payment_link').set({ logo_asset_id: asset.id, status: 'disabled' }).where('id', '=', l.id).execute();
+    expect((await fetch(`${base}/pay-api/v1/assets/${asset.id}`)).status).toBe(404);
   });
 });

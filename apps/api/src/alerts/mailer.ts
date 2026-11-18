@@ -5,6 +5,8 @@ import { fetchJson } from '../providers/adapter';
 
 export interface Mail {
   to: string; subject: string; text: string; sensitive?: boolean;
+  /** An HTML alternative to `text`; the text part is always sent too, and a logged mail shows the text only. */
+  html?: string;
   /** A sender display name, sent with the address of MAIL_FROM: "<fromName>" <address>. */
   fromName?: string;
   /** What logs show in place of `to`, for a recipient whose address is not kept (a masked form). */
@@ -59,7 +61,7 @@ export class Mailer {
     const res = await fetchJson(RESEND_ENDPOINT, {
       method: 'POST',
       headers: { authorization: `Bearer ${this.config.RESEND_API_KEY}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ from: mail.fromName ? fromHeader(this.config.MAIL_FROM!, mail.fromName) : this.config.MAIL_FROM, to: mail.to, subject: mail.subject, text: mail.text }),
+      body: JSON.stringify({ from: mail.fromName ? fromHeader(this.config.MAIL_FROM!, mail.fromName) : this.config.MAIL_FROM, to: mail.to, subject: mail.subject, text: mail.text, ...(mail.html ? { html: mail.html } : {}) }),
       timeoutMs: RESEND_TIMEOUT_MS,
     });
     if (res.timedOut) throw new Error('resend: request timed out');

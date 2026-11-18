@@ -197,7 +197,10 @@ export class PublicLinkService {
     return given;
   }
 
-  /** A logo, only while an active link or a project's brand shows it, and the project is active: an asset nothing shows any more is not served. */
+  /**
+   * A logo, only while an active link or a project's brand shows it, and the project is active: an asset nothing shows any more
+   * is not served. A link with a succeeded payment keeps its logo served, disabled or not: its receipt mail points at it.
+   */
   async asset(id: string): Promise<{ bytes: Buffer; content_type: string }> {
     if (!UUID.test(id)) throw new PlatformError('NOT_FOUND', 'No such resource.');
     const row = await this.db.selectFrom('brand_asset as a').select(['a.bytes', 'a.content_type']).where('a.id', '=', id)
@@ -206,6 +209,8 @@ export class PublicLinkService {
         eb.exists(eb.selectFrom('project_brand as b').select('b.project_id').whereRef('b.logo_asset_id', '=', 'a.id')),
         eb.exists(eb.selectFrom('payment_link as l').select('l.id').whereRef('l.logo_asset_id', '=', 'a.id').where('l.status', '=', 'active')
           .where((w) => w.or([w('l.expires_at', 'is', null), w('l.expires_at', '>', sql<Date>`now()`)]))),
+        eb.exists(eb.selectFrom('payment_link as l').innerJoin('payment_link_payment as pp', 'pp.link_id', 'l.id').innerJoin('transaction as t', 't.id', 'pp.transaction_id')
+          .select('l.id').whereRef('l.logo_asset_id', '=', 'a.id').where('t.state', '=', 'succeeded')),
       ])).executeTakeFirst();
     if (!row) throw new PlatformError('NOT_FOUND', 'No such resource.');
     return row;
