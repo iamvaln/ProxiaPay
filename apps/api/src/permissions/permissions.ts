@@ -54,18 +54,21 @@ export const PERMISSIONS = {
   'admin.roles': 'Manage roles',
   'admin.sessions': 'Revoke sessions',
   'admin.clients': 'Manage clients and their owners',
-  // Payment links
-  'links.manage': 'Create and manage payment links and project branding',
   // Client accounts: held only by roles of kind 'client'
   'projects.create_own': 'Create projects for one\'s own client',
   'client.members': 'Manage one\'s own client team',
+  'links.manage': 'Create and manage payment links and project branding',
 } as const;
 
 export type Permission = keyof typeof PERMISSIONS;
 export const ALL_PERMISSIONS = Object.keys(PERMISSIONS) as Permission[];
 
-/** Permissions that only make sense inside a client: platform roles, Owner included, never hold them. */
-export const CLIENT_ONLY_PERMISSIONS: Permission[] = ['projects.create_own', 'client.members'];
+/**
+ * Permissions that only make sense inside a client: platform roles, Owner included, never hold them.
+ * `links.manage` is one: only a partner makes links and sets a brand, on its own projects, so the
+ * platform reaches them only from a partner's view.
+ */
+export const CLIENT_ONLY_PERMISSIONS: Permission[] = ['projects.create_own', 'client.members', 'links.manage'];
 export const PLATFORM_PERMISSIONS = ALL_PERMISSIONS.filter((p) => !CLIENT_ONLY_PERMISSIONS.includes(p));
 
 /** Permissions whose presence on a role makes changes to that role require a second approver (spec 8.4). */

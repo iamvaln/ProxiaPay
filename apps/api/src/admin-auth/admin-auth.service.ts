@@ -16,8 +16,13 @@ export interface SessionPrincipal {
   language: 'en' | 'fr';
   timezone: string;
   secondFactorComplete: boolean;
-  /** Platform staff or a client account; code tells them apart by this, never by whether a client is active. */
+  /**
+   * The acting kind, which the wall and the authorisation key on: 'client' for a client account, and for a platform
+   * account working in a partner's view (a session with an active client); 'platform' only for the super-admin view.
+   */
   kind: 'platform' | 'client';
+  /** The account's stored kind. Only a platform account may switch back to the super-admin view. */
+  accountKind: 'platform' | 'client';
   activeClientId: string | null;
 }
 
@@ -71,7 +76,11 @@ export class AdminAuthService {
       throw new PlatformError('CREDENTIALS_INVALID', 'The address and password did not match.');
     }
     // A client account works inside one client at a time: the last one used if still active, else the oldest.
+    // A platform account opens on the super-admin view, unless it worked in a partner's view last and still belongs to it.
     let activeClientId: string | null = null;
+    if (admin.kind === 'platform' && admin.last_client_id) {
+      activeClientId = (await this.activeMemberships(admin.id)).find((m) => m.client_id === admin.last_client_id)?.client_id ?? null;
+    }
     if (admin.kind === 'client') {
       const memberships = await this.activeMemberships(admin.id);
       activeClientId = (memberships.find((m) => m.client_id === admin.last_client_id) ?? memberships[0])?.client_id ?? null;
@@ -156,6 +165,7 @@ export class AdminAuthService {
     if (Date.now() - row.last_seen_at.getTime() > 60_000) {
       await this.db.updateTable('admin_session').set({ last_seen_at: sql`now()` }).where('id', '=', row.session_id).execute();
     }
+    const accountKind = row.kind === 'platform' ? 'platform' : 'client';
     return {
       sessionId: row.session_id,
       administratorId: row.admin_id,
@@ -164,7 +174,9 @@ export class AdminAuthService {
       language: row.language as 'en' | 'fr',
       timezone: row.timezone,
       secondFactorComplete: row.second_factor_at != null,
-      kind: row.kind as 'platform' | 'client',
+      // Fail closed: anything but a platform account with no active client is walled as a client.
+      kind: accountKind === 'platform' && row.active_client_id === null ? 'platform' : 'client',
+      accountKind,
       activeClientId: row.active_client_id,
     };
   }
@@ -195,10 +207,16 @@ export class AdminAuthService {
       .execute();
   }
 
-  /** Moves a session to another of the person's clients. A client they do not belong to is reported as absent, not forbidden. */
-  async switchClient(principal: SessionPrincipal, clientId: string): Promise<void> {
-    const belongs = principal.kind === 'client' && (await this.activeMemberships(principal.administratorId)).some((m) => m.client_id === clientId);
-    if (!belongs) throw new PlatformError('NOT_FOUND', 'Not found.');
+  /**
+   * Moves a session to another of the person's clients, or with null back to the super-admin view, which only a platform
+   * account has. A client they do not belong to, and null for a client account, are reported as absent, not forbidden.
+   * The choice is kept for the next sign-in; null resets it.
+   */
+  async switchClient(principal: SessionPrincipal, clientId: string | null): Promise<void> {
+    const allowed = clientId === null
+      ? principal.accountKind === 'platform'
+      : (await this.activeMemberships(principal.administratorId)).some((m) => m.client_id === clientId);
+    if (!allowed) throw new PlatformError('NOT_FOUND', 'Not found.');
     await this.db.transaction().execute(async (tx) => {
       await tx.updateTable('admin_session').set({ active_client_id: clientId }).where('id', '=', principal.sessionId).execute();
       await tx.updateTable('administrator').set({ last_client_id: clientId }).where('id', '=', principal.administratorId).execute();

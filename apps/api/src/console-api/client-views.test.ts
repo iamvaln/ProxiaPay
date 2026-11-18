@@ -98,11 +98,21 @@ async function clientOwner(...clientIds: string[]) {
   }
   return a;
 }
-/** A request as the session guard builds it for a client account working in `activeClientId`. */
-async function clientRequest(admin: { id: string; email: string }, activeClientId: string, auth?: Authorisation): Promise<ConsoleRequest> {
+/** A platform account (the Owner role, unscoped) attached as owner of each client: in a partner's view it is that partner's owner, nothing more. */
+async function platformPartner(...clientIds: string[]) {
+  const a = await t.admin();
+  const role = await t.db.selectFrom('role').select('id').where('name', '=', 'Client owner').executeTakeFirstOrThrow();
+  for (const clientId of clientIds) {
+    const m = await t.db.insertInto('client_membership').values({ administrator_id: a.id, client_id: clientId, status: 'active', accepted_at: new Date() }).returning('id').executeTakeFirstOrThrow();
+    await t.db.insertInto('role_assignment').values({ administrator_id: a.id, role_id: role.id, scope_type: 'client', membership_id: m.id }).execute();
+  }
+  return { ...a, accountKind: 'platform' as const };
+}
+/** A request as the session guard builds it for an account working in `activeClientId`: a client account, or a platform account in that partner's view. */
+async function clientRequest(admin: { id: string; email: string; accountKind?: 'platform' | 'client' }, activeClientId: string, auth?: Authorisation): Promise<ConsoleRequest> {
   return {
-    principal: { sessionId: '00000000-0000-0000-0000-00000000005e', administratorId: admin.id, name: 'Test Admin', email: admin.email, language: 'en', timezone: 'UTC', secondFactorComplete: true, kind: 'client', activeClientId },
-    auth: auth ?? await new AuthorisationService(t.db).load(admin.id, activeClientId),
+    principal: { sessionId: '00000000-0000-0000-0000-00000000005e', administratorId: admin.id, name: 'Test Admin', email: admin.email, language: 'en', timezone: 'UTC', secondFactorComplete: true, kind: 'client', accountKind: admin.accountKind ?? 'client', activeClientId },
+    auth: auth ?? await new AuthorisationService(t.db).load(admin.id, activeClientId, 'client'),
     clientAddress: '127.0.0.1', clientDescription: 'vitest',
   } as unknown as ConsoleRequest;
 }
@@ -256,11 +266,15 @@ describe('client views', () => {
     await t.db.updateTable('transaction').set({ payment_link_id: link.id }).where('id', '=', txn.id).execute();
     expect((await controllers.links().detail(project.id, link.id, await clientRequest(owner, acme.id))).payments).toMatchObject({ count: 1, succeeded: 1, total_collected: 1000 });
 
-    const ownerAuth = await new AuthorisationService(t.db).load(owner.id, acme.id);
+    const ownerAuth = await new AuthorisationService(t.db).load(owner.id, acme.id, 'client');
     // Shaping does not rest on what the client holds: a client principal with every permission gets the client shapes too.
     const everything = new Authorisation(owner.id, ALL_PERMISSIONS.map((permission) => ({ permission: permission as Permission, scopeType: 'projects', projectIds: [project.id], providerAccountIds: [] })), acme.id, true);
-    for (const auth of [ownerAuth, everything]) {
-      const req = await clientRequest(owner, acme.id, auth);
+    // A platform account holding Owner, working in Acme's view: the shapes are the client's, never the platform's.
+    const valentine = await platformPartner(acme.id);
+    const valentineAuth = await new AuthorisationService(t.db).load(valentine.id, acme.id, 'client');
+    expect(valentineAuth.isClient).toBe(true);
+    for (const [who, auth] of [[owner, ownerAuth], [owner, everything], [valentine, valentineAuth]] as const) {
+      const req = await clientRequest(who, acme.id, auth);
       const calls: Record<string, () => Promise<unknown>> = {
         'GET console/auth/me': () => controllers.auth().me(req),
         'GET console/auth/sessions': () => controllers.auth().sessions(req),

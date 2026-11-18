@@ -86,6 +86,19 @@ export class ClientsController {
     return withConfirmation(this.db, this.confirmations, req.principal, 'client.status', { client_id: id, status }, confirmation, (tx) => this.clients.setClientStatus(tx, id, status, req.principal.administratorId));
   }
 
+  /**
+   * Attaches the caller's own platform account as an owner of the client, so it can work in that partner's view.
+   * Never client-accessible: from a partner's view, the platform's handlers do not exist.
+   */
+  @Post(':id/owners/me')
+  @HttpCode(201)
+  @RequirePermission('admin.clients')
+  async attachSelf(@Param('id') id: string, @Body() body: unknown, @Req() req: ConsoleRequest) {
+    const { confirmation } = parseBody(confirmed, body);
+    return withConfirmation(this.db, this.confirmations, req.principal, 'client.attach_self', { client_id: id }, confirmation, (tx, confirmationId) =>
+      this.clients.attachSelf(tx, id, req.principal.administratorId, confirmationId));
+  }
+
   @Post(':id/owners')
   @HttpCode(201)
   @RequirePermission('admin.clients')

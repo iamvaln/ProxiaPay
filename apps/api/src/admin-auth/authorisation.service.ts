@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { DB_TOKEN, type Db } from '../db/database';
-import type { Permission } from '../permissions/permissions';
+import { CLIENT_ONLY_PERMISSIONS, type Permission } from '../permissions/permissions';
 import { PlatformError } from '../common/errors';
 
 export interface Grant {
@@ -16,8 +16,9 @@ export interface Grant {
  */
 export class Authorisation {
   /**
-   * `clientId` is the active client of a client account; null for platform staff, and for a client account that has none yet.
-   * `clientAccount` is always said: a client account without an active client is still not platform staff.
+   * `clientId` is the active client of a session acting as a client; null for the platform view, and for a client account that has none yet.
+   * `clientAccount` says the session acts as a client: a client account, or a platform account in a partner's view. It is always
+   * said, since a client account without an active client is still not platform staff.
    */
   constructor(readonly administratorId: string, private readonly grants: Grant[], readonly clientId: string | null, private readonly clientAccount: boolean) {}
 
@@ -70,10 +71,14 @@ export class Authorisation {
 export class AuthorisationService {
   constructor(@Inject(DB_TOKEN) private readonly db: Db) {}
 
-  async load(administratorId: string, activeClientId: string | null): Promise<Authorisation> {
+  /**
+   * `acting` is the session's acting kind (SessionPrincipal.kind): a platform account in a partner's view acts as a client and is
+   * authorised by that membership alone. Left out, it is derived the same way. A client account is a client's whatever is asked.
+   */
+  async load(administratorId: string, activeClientId: string | null, acting?: 'platform' | 'client'): Promise<Authorisation> {
     const admin = await this.db.selectFrom('administrator').select('kind').where('id', '=', administratorId).executeTakeFirst();
-    if (admin?.kind === 'client') return this.loadClient(administratorId, activeClientId);
-    // Platform staff: only assignments that belong to no membership.
+    if (admin?.kind === 'client' || (acting ?? (activeClientId ? 'client' : 'platform')) === 'client') return this.loadClient(administratorId, activeClientId);
+    // The platform view: only assignments that belong to no membership, and never a client's own permission, whatever a role was given.
     const rows = await this.db
       .selectFrom('role_assignment as ra')
       .innerJoin('role_permission as rp', 'rp.role_id', 'ra.role_id')
@@ -82,10 +87,11 @@ export class AuthorisationService {
       .where('ra.administrator_id', '=', administratorId)
       .where('ra.membership_id', 'is', null)
       .execute();
-    return new Authorisation(administratorId, this.grantsOf(rows, [], false), null, false);
+    const grants = this.grantsOf(rows, [], false).filter((g) => !CLIENT_ONLY_PERMISSIONS.includes(g.permission));
+    return new Authorisation(administratorId, grants, null, false);
   }
 
-  /** A client account is authorised by its active membership alone; the other memberships of the same person count for nothing. */
+  /** A session acting as a client is authorised by its active membership alone; the other memberships, and a platform account's own roles, count for nothing. */
   private async loadClient(administratorId: string, activeClientId: string | null): Promise<Authorisation> {
     if (!activeClientId) return new Authorisation(administratorId, [], null, true);
     const rows = await this.db

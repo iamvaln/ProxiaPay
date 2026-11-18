@@ -30,6 +30,26 @@ export class ClientsService {
     return this.invitations.invite(tx, { clientId, ...input, profile: 'owner', projectIds: [] }, actorId, { auditAction: 'client.invite_owner' });
   }
 
+  /**
+   * The actor's own platform account becomes an active owner of the client, with no invitation: the rule that a platform
+   * account never joins a team holds for invitations, which still refuse platform addresses.
+   */
+  async attachSelf(tx: Tx, clientId: string, actorId: string, confirmationId: string): Promise<{ membership_id: string; client_id: string }> {
+    const client = isUuid(clientId) ? await tx.selectFrom('client').select('status').where('id', '=', clientId).forUpdate().executeTakeFirst() : undefined;
+    if (!client) throw new PlatformError('NOT_FOUND', 'No such client.');
+    if (client.status === 'disabled') throw new PlatformError('RULE_VIOLATION', CLIENT_DISABLED);
+    const actor = await tx.selectFrom('administrator').select('kind').where('id', '=', actorId).executeTakeFirstOrThrow();
+    if (actor.kind !== 'platform') throw new PlatformError('PERMISSION_DENIED', 'Only a platform account attaches itself to a client.');
+    // Any membership, in any state: a disabled one is re-enabled from the client page, never duplicated.
+    const existing = await tx.selectFrom('client_membership').select('id').where('client_id', '=', clientId).where('administrator_id', '=', actorId).executeTakeFirst();
+    if (existing) throw new PlatformError('CONFLICT', 'You already belong to this client.');
+    const membership = await tx.insertInto('client_membership').values({ client_id: clientId, administrator_id: actorId, status: 'active', invited_by: actorId, accepted_at: sql`now()` }).returning('id').executeTakeFirstOrThrow();
+    const role = await tx.selectFrom('role').select('id').where('name', '=', 'Client owner').where('kind', '=', 'client').executeTakeFirstOrThrow();
+    await tx.insertInto('role_assignment').values({ administrator_id: actorId, role_id: role.id, scope_type: 'client', membership_id: membership.id, granted_by: actorId }).execute();
+    await this.audit.record(tx, { actorId, action: 'client.attach_self', subjectType: 'client_membership', subjectId: membership.id, next: { client_id: clientId, profile: 'owner' }, confirmationId });
+    return { membership_id: membership.id, client_id: clientId };
+  }
+
   /** Disabling switches off the active memberships and ends the sessions in the client; enabling restores only what that switched off. */
   async setClientStatus(tx: Tx, clientId: string, status: 'active' | 'disabled', actorId: string) {
     const client = isUuid(clientId) ? await tx.selectFrom('client').select('status').where('id', '=', clientId).forUpdate().executeTakeFirst() : undefined;
@@ -127,8 +147,12 @@ export class ClientsService {
     if (!client) throw new PlatformError('NOT_FOUND', 'No such client.');
     // The account's own status beside the membership's: the platform disables and re-enables the person from here.
     const members = await this.invitations.membersOf(exec, client.id);
-    const accounts = members.length ? await exec.selectFrom('administrator').select(['id', 'status']).where('id', 'in', members.map((m) => m.administrator_id)).execute() : [];
-    const withAccounts = members.map((m) => ({ ...m, account_status: accounts.find((a) => a.id === m.administrator_id)!.status }));
+    const accounts = members.length ? await exec.selectFrom('administrator').select(['id', 'status', 'kind']).where('id', 'in', members.map((m) => m.administrator_id)).execute() : [];
+    // A platform account attached as owner is disabled from the administrators page, not from here.
+    const withAccounts = members.map((m) => {
+      const account = accounts.find((a) => a.id === m.administrator_id)!;
+      return { ...m, account_status: account.status, account_kind: account.kind };
+    });
     const projects = await exec.selectFrom('project').select(['id', 'code', 'name', 'status']).where('client_id', '=', client.id).orderBy('code').execute();
     return { ...client, members: withAccounts, projects };
   }

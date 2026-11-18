@@ -2,7 +2,7 @@ export type Lang = 'en' | 'fr';
 
 /** Interface text in both languages (console spec 3.3). Content people entered is never translated. */
 const STRINGS: Record<string, { en: string; fr: string }> = {
-  'nav.team': { en: 'Team', fr: 'Équipe' }, 'nav.account': { en: 'Account', fr: 'Compte' }, 'nav.client': { en: 'Client', fr: 'Client' },
+  'nav.team': { en: 'Team', fr: 'Équipe' }, 'nav.account': { en: 'Account', fr: 'Compte' }, 'nav.client': { en: 'Client', fr: 'Client' }, 'nav.super_admin': { en: 'Super admin', fr: 'Super admin' },
   'account.title': { en: 'Account', fr: 'Compte' }, 'account.password': { en: 'Change password', fr: 'Changer le mot de passe' },
   'account.current': { en: 'Current password', fr: 'Mot de passe actuel' }, 'account.new': { en: 'New password', fr: 'Nouveau mot de passe' },
   'account.confirm': { en: 'Confirm the new password', fr: 'Confirmer le nouveau mot de passe' },
@@ -494,6 +494,8 @@ const STRINGS: Record<string, { en: string; fr: string }> = {
   'cl.invite_owner': { en: 'Invite another owner', fr: 'Inviter un autre propriétaire' }, 'cl.invite_owner_submit': { en: 'Invite owner', fr: 'Inviter le propriétaire' },
   'cl.disable_account': { en: 'Disable account', fr: 'Désactiver le compte' }, 'cl.enable_account': { en: 'Enable account', fr: 'Réactiver le compte' }, 'cl.project_none': { en: 'No projects attached.', fr: 'Aucun projet rattaché.' },
   'cl.confirm_note': { en: 'Each write asks for a confirmation code.', fr: 'Chaque écriture demande un code de confirmation.' },
+  'cl.attach_self': { en: 'Attach me as owner', fr: 'Me rattacher comme propriétaire' },
+  'cl.attached_self': { en: 'You are an owner of this client. Choose it in the client selector to work in its view.', fr: 'Vous êtes propriétaire de ce client. Choisissez-le dans le sélecteur de client pour travailler dans sa vue.' },
   'cl.invited': { en: 'Invitation sent.', fr: 'Invitation envoyée.' }, 'cl.created': { en: 'Client created.', fr: 'Client créé.' },
   'cl.attach': { en: 'Attach to a client', fr: 'Rattacher à un client' }, 'cl.attach_submit': { en: 'Attach to client', fr: 'Rattacher au client' },
   'cl.attach_warning': { en: 'A project never moves from one client to another. These platform accounts keep reaching it after the attachment:', fr: 'Un projet ne change jamais de client. Ces comptes de la plateforme continueront d’y accéder après le rattachement :' },

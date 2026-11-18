@@ -7,9 +7,9 @@ import { ClientDetail, Clients } from './Clients';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
 
-const ME = { administrator: { id: 'a1', name: 'Val', email: 'v@proxiapay.test', language: 'en', timezone: 'UTC' }, kind: 'platform', second_factor_complete: true, environment: 'sandbox', permission_catalogue: {}, permissions: ['admin.clients'] };
+const ME = { administrator: { id: 'a1', name: 'Val', email: 'v@proxiapay.test', language: 'en', timezone: 'UTC' }, kind: 'platform', account_kind: 'platform', clients: [], pending_clients: [], second_factor_complete: true, environment: 'sandbox', permission_catalogue: {}, permissions: ['admin.clients'] };
 
-const server = (members: unknown[] = []) => {
+const server = (members: unknown[] = [], status = 'active') => {
   const calls: { method: string; path: string; body: any }[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
     const method = init.method ?? 'GET';
@@ -17,7 +17,7 @@ const server = (members: unknown[] = []) => {
     calls.push({ method, path, body: init.body ? JSON.parse(String(init.body)) : undefined });
     const reads: Record<string, unknown> = {
       '/auth/me': ME, '/oversight/clients': { clients: [] },
-      '/oversight/clients/c1': { id: 'c1', name: 'Acme', status: 'active', created_at: '2026-11-01T00:00:00Z', members, projects: [] },
+      '/oversight/clients/c1': { id: 'c1', name: 'Acme', status, created_at: '2026-11-01T00:00:00Z', members, projects: [] },
     };
     const answer = method === 'GET' ? (reads[path] ?? {}) : path === '/auth/confirmations' ? { confirmation_id: 'cf1', expires_at: '' } : { status: 'invitation_sent' };
     return new Response(JSON.stringify(answer), { status: 200 });
@@ -64,5 +64,32 @@ describe('clients', () => {
     await confirm('Enable account');
     await waitFor(() => expect(calls.find((c) => c.path === '/oversight/clients/c1/accounts/u1/enable')).toBeTruthy());
     expect(calls.find((c) => c.path === '/auth/confirmations')?.body).toMatchObject({ operation_type: 'administrator.enable', values: { administrator_id: 'u1' } });
+  });
+
+  const detail = () => render(<SessionProvider><MemoryRouter initialEntries={['/c/c1']}><Routes><Route path="/c/:id" element={<ClientDetail />} /></Routes></MemoryRouter></SessionProvider>);
+  const VAL = { membership_id: 'm9', administrator_id: 'a1', name: 'Val', email: 'v@proxiapay.test', profile: 'owner', project_ids: [], status: 'active', disabled_by_client: false, invitation: 'accepted', account_status: 'active', account_kind: 'platform' };
+
+  it('attaches the signed-in platform account as an owner, with a code', async () => {
+    const calls = server();
+    detail();
+    await screen.findByRole('button', { name: 'Attach me as owner' });
+    await confirm('Attach me as owner');
+    await waitFor(() => expect(calls.find((c) => c.path === '/oversight/clients/c1/owners/me')).toBeTruthy());
+    expect(calls.find((c) => c.path === '/auth/confirmations')?.body).toMatchObject({ operation_type: 'client.attach_self', values: { client_id: 'c1' } });
+    expect(calls.find((c) => c.path === '/oversight/clients/c1/owners/me')?.body).toEqual({ client_id: 'c1', confirmation: { id: 'cf1', code: '123456' } });
+  });
+
+  it('offers no attach to a member already there, nor in a disabled client, and no account toggle on a platform account', async () => {
+    server([VAL]);
+    detail();
+    await screen.findByText('v@proxiapay.test');
+    expect(screen.queryByRole('button', { name: 'Attach me as owner' })).toBeNull();
+    // A platform account is disabled from the administrators page.
+    expect(screen.queryByRole('button', { name: 'Disable account' })).toBeNull();
+    cleanup();
+    server([], 'disabled');
+    detail();
+    await screen.findByText('Invite another owner');
+    expect(screen.queryByRole('button', { name: 'Attach me as owner' })).toBeNull();
   });
 });

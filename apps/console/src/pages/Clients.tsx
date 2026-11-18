@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { get } from '../lib/api';
-import { useT } from '../lib/session';
+import { useSession, useT } from '../lib/session';
 import { ConfirmedAction, Empty, ErrorLine, Pill, When, useLoad } from '../components/common';
 import { DataTable, type Column, type DataTableProps } from '../components/table/DataTable';
 
@@ -64,6 +64,7 @@ export function ClientDetail() {
 
 function ClientView({ id }: { id: string }) {
   const t = useT();
+  const { me, refresh } = useSession();
   const { data, error, reload } = useLoad(() => get<Row>(`/oversight/clients/${id}`), [id]);
   const [owner, setOwner] = useState({ name: '', email: '', language: 'en' });
   if (error) return <ErrorLine error={error} />;
@@ -81,7 +82,8 @@ function ClientView({ id }: { id: string }) {
       <div className="row">
         <ConfirmedAction operationType="membership.status" values={{ membership_id: m.membership_id, status: m.status === 'disabled' ? 'active' : 'disabled' }} path={`${base}/memberships/${m.membership_id}/status`} label={m.status === 'disabled' ? t('team.enable') : t('team.disable')} onDone={reload} />
         {m.invitation !== 'accepted' && <ConfirmedAction operationType="membership.resend" values={{ membership_id: m.membership_id }} path={`${base}/memberships/${m.membership_id}/resend`} label={t('team.resend')} onDone={reload} />}
-        {m.account_status === 'disabled'
+        {/* A platform account attached as owner is disabled from the administrators page. */}
+        {m.account_kind === 'platform' ? null : m.account_status === 'disabled'
           ? <ConfirmedAction operationType="administrator.enable" values={{ administrator_id: m.administrator_id }} path={`${base}/accounts/${m.administrator_id}/enable`} label={t('cl.enable_account')} onDone={reload} />
           : <ConfirmedAction operationType="administrator.disable" values={{ administrator_id: m.administrator_id }} path={`${base}/accounts/${m.administrator_id}/disable`} label={t('cl.disable_account')} onDone={reload} />}
       </div>
@@ -92,6 +94,11 @@ function ClientView({ id }: { id: string }) {
       <p className="small"><Link to="/oversight/clients">{t('cl.back')}</Link></p>
       <h2>{data.name} <Pill value={data.status} /></h2>
       <ConfirmedAction operationType="client.status" values={{ client_id: id, status: next }} path={`${base}/status`} label={data.status === 'active' ? t('cl.disable') : t('cl.enable')} onDone={reload} />
+      {/* The caller's own account joins as an owner, to work in this partner's view from the client selector. */}
+      {data.status === 'active' && me?.account_kind === 'platform' && !data.members.some((m: Row) => m.administrator_id === me.administrator.id) && (
+        <ConfirmedAction operationType="client.attach_self" values={{ client_id: id }} path={`${base}/owners/me`} label={t('cl.attach_self')} done={() => t('cl.attached_self')}
+          onDone={() => { reload(); void refresh(); }} />
+      )}
       <div className="card" style={{ marginTop: 16 }}>
         <h2>{t('cl.members')}</h2>
         <DataTable<Row> bare rows={data.members} rowKey={(m) => m.membership_id} defaultSort="name" columns={columns} empty={{ none: t('team.none'), why: '' }} />

@@ -33,9 +33,13 @@ beforeEach(async () => {
   await t.reset();
   const client = await t.db.insertInto('client').values({ name: 'Acme' }).returning('id').executeTakeFirstOrThrow();
   projectId = (await t.db.insertInto('project').values({ code: 'acme-shop', name: 'Shop', client_id: client.id }).returning('id').executeTakeFirstOrThrow()).id;
+  // Only a partner sets a brand: a platform account attached as Acme's owner, working in Acme's view.
   const owner = await t.admin();
-  const auth = await new AuthorisationService(t.db).load(owner.id, null);
-  // The session guard is not under test here: it lets the request in as a platform owner.
+  const m = await t.db.insertInto('client_membership').values({ administrator_id: owner.id, client_id: client.id, status: 'active', accepted_at: new Date() }).returning('id').executeTakeFirstOrThrow();
+  const role = await t.db.selectFrom('role').select('id').where('name', '=', 'Client owner').executeTakeFirstOrThrow();
+  await t.db.insertInto('role_assignment').values({ administrator_id: owner.id, role_id: role.id, scope_type: 'client', membership_id: m.id }).execute();
+  const auth = await new AuthorisationService(t.db).load(owner.id, client.id, 'client');
+  // The session guard is not under test here: it lets the request in as the partner's owner.
   const guard = { canActivate: (ctx: { switchToHttp(): { getRequest(): Record<string, unknown> } }) => { const r = ctx.switchToHttp().getRequest(); r.auth = auth; r.principal = { administratorId: owner.id }; return true; } };
   vi.spyOn(SessionGuard.prototype, 'canActivate').mockImplementation(guard.canActivate as never);
   @Module({

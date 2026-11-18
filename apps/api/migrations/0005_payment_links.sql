@@ -89,6 +89,7 @@ DROP TRIGGER route_immutable ON route;
 CREATE TRIGGER route_immutable BEFORE DELETE ON route FOR EACH ROW EXECUTE FUNCTION refuse_mutation();
 CREATE TRIGGER route_update_guard BEFORE UPDATE ON route FOR EACH ROW EXECUTE FUNCTION route_guard();
 
+-- A partner's own: the platform's Owner makes links only from a partner's view, as that partner's owner.
 INSERT INTO role_permission (role_id, permission_key)
-SELECT id, 'links.manage' FROM role WHERE name IN ('Owner', 'Client owner')
+SELECT id, 'links.manage' FROM role WHERE name = 'Client owner'
 ON CONFLICT DO NOTHING;

@@ -71,15 +71,27 @@ const CLIENT_ACCESSIBLE_ROUTES = [
 /** Handlers that run before any session exists, so SessionGuard (and the wall) never sees them. */
 const UNGUARDED_ROUTES = ['GET console/auth/environment', 'POST console/auth/sign-in', 'GET console/invitations/:token', 'POST console/invitations/:token'];
 
-const principalOf = (kind: 'platform' | 'client', secondFactorComplete = true): SessionPrincipal => ({
+/**
+ * `partner` is a platform account working in a partner's view: its acting kind is the client's, so it
+ * meets the same wall as a client account until it switches back to super admin.
+ */
+const principalOf = (kind: 'platform' | 'client' | 'partner', secondFactorComplete = true): SessionPrincipal => ({
   sessionId: 's', administratorId: '00000000-0000-0000-0000-0000000000ad', name: 'Someone', email: 'someone@proxia.test', language: 'en', timezone: 'UTC',
-  secondFactorComplete, kind, activeClientId: kind === 'client' ? '00000000-0000-0000-0000-0000000000c1' : null,
+  secondFactorComplete, kind: kind === 'platform' ? 'platform' : 'client', accountKind: kind === 'client' ? 'client' : 'platform',
+  activeClientId: kind === 'platform' ? null : '00000000-0000-0000-0000-0000000000c1',
 });
+const WALLED = ['client', 'partner'] as const;
 
 function guardFor(principal: SessionPrincipal, permissions: Permission[]) {
   const sessions = { resolveSession: async () => principal } as unknown as AdminAuthService;
   const grants = permissions.map((permission): Grant => ({ permission, scopeType: 'all', projectIds: [], providerAccountIds: [] }));
-  const authorisation = { load: async () => new Authorisation(principal.administratorId, grants, principal.activeClientId, principal.kind === 'client') } as unknown as AuthorisationService;
+  // The guard must load grants for the acting kind: a platform account in a partner's view is authorised as the partner.
+  const authorisation = {
+    load: async (administratorId: string, activeClientId: string | null, acting: 'platform' | 'client') => {
+      expect([administratorId, activeClientId, acting]).toEqual([principal.administratorId, principal.activeClientId, principal.kind]);
+      return new Authorisation(administratorId, grants, activeClientId, acting === 'client');
+    },
+  } as unknown as AuthorisationService;
   return new SessionGuard(new Reflector(), sessions, authorisation, { TRUSTED_PROXY_HOPS: 0 });
 }
 
@@ -108,33 +120,40 @@ describe('the client wall', () => {
     const guarded = routes.filter((r) => r.guarded);
     expect(guarded.length).toBeGreaterThan(CLIENT_ACCESSIBLE_ROUTES.length);
     // Every permission, then none: the answer to a client on a closed handler does not depend on what it holds.
-    for (const permissions of [ALL_PERMISSIONS as Permission[], []]) {
-      const guard = guardFor(principalOf('client'), permissions);
-      for (const route of guarded) {
-        const result = await outcome(guard, route);
-        if (CLIENT_ACCESSIBLE_ROUTES.includes(route.key)) expect(result, route.key).not.toBe('NOT_FOUND: No such resource.');
-        else expect(result, route.key).toBe('NOT_FOUND: No such resource.');
+    // A platform account in a partner's view meets exactly the same wall, whatever its platform roles grant.
+    for (const kind of WALLED) {
+      for (const permissions of [ALL_PERMISSIONS as Permission[], []]) {
+        const guard = guardFor(principalOf(kind), permissions);
+        for (const route of guarded) {
+          const result = await outcome(guard, route);
+          if (CLIENT_ACCESSIBLE_ROUTES.includes(route.key)) expect(result, `${kind} ${route.key}`).not.toBe('NOT_FOUND: No such resource.');
+          else expect(result, `${kind} ${route.key}`).toBe('NOT_FOUND: No such resource.');
+        }
       }
     }
   });
 
   it('refuses a client before the second factor too, without naming the second factor', async () => {
-    const guard = guardFor(principalOf('client', false), ALL_PERMISSIONS as Permission[]);
-    const closed = consoleRoutes().find((r) => r.key === 'GET console/approvals')!;
-    expect(await outcome(guard, closed)).toBe('NOT_FOUND: No such resource.');
+    for (const kind of WALLED) {
+      const guard = guardFor(principalOf(kind, false), ALL_PERMISSIONS as Permission[]);
+      const closed = consoleRoutes().find((r) => r.key === 'GET console/approvals')!;
+      expect(await outcome(guard, closed), kind).toBe('NOT_FOUND: No such resource.');
+    }
   });
 
   it('asks a client for the second factor on an open data handler, as it asks anyone', async () => {
-    const guard = guardFor(principalOf('client', false), ALL_PERMISSIONS as Permission[]);
-    const open = consoleRoutes().find((r) => r.key === 'GET console/transactions')!;
-    expect(await outcome(guard, open)).toBe('SECOND_FACTOR_REQUIRED: Complete the second factor to continue.');
+    for (const kind of WALLED) {
+      const guard = guardFor(principalOf(kind, false), ALL_PERMISSIONS as Permission[]);
+      const open = consoleRoutes().find((r) => r.key === 'GET console/transactions')!;
+      expect(await outcome(guard, open), kind).toBe('SECOND_FACTOR_REQUIRED: Complete the second factor to continue.');
+    }
   });
 
   it('ignores @ClientAccessible on a controller: only a handler is opened', async () => {
     @ClientAccessible()
     class Marked { closed() { return 'reached'; } }
     const route = { key: 'GET console/marked', controller: Marked, handler: Marked.prototype.closed, guarded: true, clientAccessible: false } as unknown as Route;
-    expect(await outcome(guardFor(principalOf('client'), ALL_PERMISSIONS as Permission[]), route)).toBe('NOT_FOUND: No such resource.');
+    for (const kind of WALLED) expect(await outcome(guardFor(principalOf(kind), ALL_PERMISSIONS as Permission[]), route), kind).toBe('NOT_FOUND: No such resource.');
     expect(await outcome(guardFor(principalOf('platform'), ALL_PERMISSIONS as Permission[]), route)).toBe('true');
   });
 

@@ -4,8 +4,10 @@ import { t, type Lang } from './i18n';
 
 export interface Me {
   administrator: { id: string; name: string; email: string; language: Lang; timezone: string };
-  /** A client account sees its own client's side only; platform staff see the platform's. */
+  /** The acting kind: a client account, or a platform account in a partner's view, sees that client's side only; the super-admin view sees the platform's. */
   kind: 'platform' | 'client';
+  /** The account's own kind: only a platform account may switch back to the super-admin view. */
+  account_kind: 'platform' | 'client';
   active_client: { id: string; name: string } | null;
   clients: { id: string; name: string }[];
   pending_clients: { membership_id: string; client_name: string }[];

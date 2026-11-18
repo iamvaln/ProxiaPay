@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { PlatformError } from '../common/errors';
 import { DB_TOKEN, type Db, type Executor, type Tx } from '../db/database';
-import { ALL_PERMISSIONS, SENSITIVE_PERMISSIONS, type Permission } from '../permissions/permissions';
+import { ALL_PERMISSIONS, CLIENT_ONLY_PERMISSIONS, SENSITIVE_PERMISSIONS, type Permission } from '../permissions/permissions';
 import { AuditService } from '../audit/audit.service';
 import { AlertService } from '../alerts/alert.service';
 
@@ -93,6 +93,9 @@ export class RoleService {
       const role = await exec.selectFrom('role').select('kind').where('id', '=', change.role_id).executeTakeFirst();
       if (role?.kind === 'client') throw new PlatformError('PERMISSION_DENIED', 'Client roles are fixed.');
     }
+    // A platform role never holds a client's own permission: the authorisation would ignore it anyway.
+    const clientOnly = change.kind === 'role_permissions' ? (change.permissions ?? []).filter((p) => CLIENT_ONLY_PERMISSIONS.includes(p)) : [];
+    if (clientOnly.length) throw new PlatformError('FIELD_INVALID', `${clientOnly.join(', ')} belongs to client roles only.`, { field: 'permissions' });
     if (change.kind === 'assignment_remove' && change.assignment_id) {
       const a = await exec.selectFrom('role_assignment').select('membership_id').where('id', '=', change.assignment_id).executeTakeFirst();
       if (a?.membership_id) throw new PlatformError('PERMISSION_DENIED', 'Client access is changed through the client\'s team.');

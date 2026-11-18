@@ -14,7 +14,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [q, setQ] = useState('');
   if (!me) return null;
   const client = me.kind === 'client';
-  // A client account never sees the platform's areas, whatever else it might hold (the API refuses them anyway).
+  // A session acting as a client (a client account, or a platform account in a partner's view) never sees the platform's areas,
+  // whatever else it might hold (the API refuses them anyway).
   const areas = [
     { to: '/', label: t('nav.home'), show: true },
     { to: '/transactions', label: t('nav.transactions'), show: has('transactions.read') },
@@ -32,7 +33,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <div className="shell">
         <nav className="side">
           <div className="brand"><Lockup size={22} /><EnvChip environment={me.environment} /></div>
-          {client && <ClientSwitcher />}
+          <ClientSwitcher />
           {areas.filter((a) => a.show).map((a) => <NavLink key={a.to} to={a.to} end={a.to === '/'}>{a.label}</NavLink>)}
           <div className="foot">
             {me.administrator.name}<br />

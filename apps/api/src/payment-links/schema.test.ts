@@ -29,8 +29,8 @@ async function link(over: Record<string, unknown>) {
 }
 
 describe('payment link schema', () => {
-  it('gives links.manage to Owner and Client owner only', async () => {
-    expect(await holders('links.manage')).toEqual(['Client owner', 'Owner']);
+  it('gives links.manage to Client owner only: the platform never makes a partner\'s links', async () => {
+    expect(await holders('links.manage')).toEqual(['Client owner']);
   });
 
   it('refuses a fixed link without an amount', async () => {
