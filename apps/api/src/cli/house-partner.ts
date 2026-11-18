@@ -23,10 +23,19 @@ class HousePartnerCliModule {}
  * Idempotent. Run by the controller on each environment, with Valentine's approval.
  */
 async function main() {
-  const args = Object.fromEntries(process.argv.slice(2).map((a, i, all) => (a.startsWith('--') ? [a.slice(2), all[i + 1] ?? ''] : [])).filter((p) => p.length));
-  const { name, 'owner-email': ownerEmail, projects } = args as Record<string, string>;
+  const usage = 'usage: --name NAME --owner-email EMAIL --projects code,code,…';
+  const argv = process.argv.slice(2);
+  const args: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i += 2) {
+    const flag = argv[i]!;
+    const value = argv[i + 1];
+    if (!['--name', '--owner-email', '--projects'].includes(flag)) throw new Error(`unknown argument ${flag}; ${usage}`);
+    if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value; ${usage}`);
+    args[flag.slice(2)] = value;
+  }
+  const { name, 'owner-email': ownerEmail, projects } = args;
   const projectCodes = (projects ?? '').split(',').map((c) => c.trim()).filter(Boolean);
-  if (!name || !ownerEmail || projectCodes.length === 0) throw new Error('usage: --name NAME --owner-email EMAIL --projects code,code,…');
+  if (!name?.trim() || !ownerEmail || projectCodes.length === 0) throw new Error(usage);
   loadEnv();
   const app = await NestFactory.createApplicationContext(HousePartnerCliModule, { logger: ['error'], abortOnError: false });
   try {

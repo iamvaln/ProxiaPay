@@ -19,7 +19,7 @@ function services() {
   const clientProjects = new ClientProjectsService(t.db, { SANDBOX_AUTO_ENTITLE: false }, new EntitlementService(t.db, audit), t.app.get(AlertService), audit);
   return { clients, clientProjects };
 }
-const run = (ownerEmail: string, projectCodes: string[]) => setUpHousePartner(t.db, services(), { name: 'Proxia Digital', ownerEmail, projectCodes });
+const run = (ownerEmail: string, projectCodes: string[], name = 'Proxia Digital') => setUpHousePartner(t.db, services(), { name, ownerEmail, projectCodes });
 
 describe('the house partner CLI', () => {
   it('idempotent: twice gives one client, one membership, the projects attached once', async () => {
@@ -64,5 +64,19 @@ describe('the house partner CLI', () => {
     await expect(run('nobody@proxia.test', [])).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await t.db.updateTable('administrator').set({ kind: 'client' }).where('id', '=', owner.id).execute();
     await expect(run(owner.email, [])).rejects.toMatchObject({ code: 'RULE_VIOLATION' });
+  });
+
+  it('finds the client whatever the case or spacing of the name', async () => {
+    const owner = await t.admin('val@proxia.test');
+    await run(owner.email, []);
+    expect(await run(owner.email, [], '  proxia DIGITAL ')).toEqual([]);
+    expect(await t.db.selectFrom('client').select('id').execute()).toHaveLength(1);
+  });
+
+  it('refuses an owner account that is not active', async () => {
+    const owner = await t.admin('val@proxia.test');
+    await t.db.updateTable('administrator').set({ status: 'disabled' }).where('id', '=', owner.id).execute();
+    await expect(run(owner.email, [])).rejects.toMatchObject({ code: 'RULE_VIOLATION' });
+    expect(await t.db.selectFrom('client').select('id').execute()).toEqual([]);
   });
 });
