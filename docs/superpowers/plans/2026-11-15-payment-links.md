@@ -470,3 +470,111 @@
   - a client owner setting the brand and creating a free link over CM and GA;
   - paying it from the page with a simulator number, through the code step;
   - the branded receipt, with the email shown in the API log.
+
+---
+
+## Addendum tasks (2026-11-18)
+
+### Task 12: A platform account in a partner's view; links only by partners
+
+**Files:**
+- Modify:
+  - `apps/api/src/admin-auth/admin-auth.service.ts`: `resolveSession`, `switchClient`, `activeMemberships`, sign-in;
+  - `apps/api/src/admin-auth/authorisation.service.ts`: `load`;
+  - `apps/api/src/console-api/session.guard.ts`;
+  - `apps/api/src/console-api/auth.controller.ts`: `/me` and `active-client`;
+  - `apps/api/src/console-api/clients.controller.ts` and `apps/api/src/clients/clients.service.ts`: attach self;
+  - `apps/api/src/permissions/permissions.ts`, migration `0005`, `seed.ts`: `links.manage` client-only;
+  - `apps/console/src/components/ClientSwitcher.tsx`, `apps/console/src/components/Shell.tsx`, `apps/console/src/pages/Clients.tsx`, `i18n.ts`.
+- Test: `apps/api/src/admin-auth/partner-view.test.ts`, and console tests.
+
+**Interfaces:**
+- **Acting kind.**
+  - `SessionPrincipal` gains `accountKind: 'platform' | 'client'`, the stored kind.
+  - `kind` becomes the **acting** kind: `'client'` when `accountKind === 'client'`, or when `accountKind === 'platform'` and the session has an `active_client_id`. Otherwise `'platform'`.
+  - `AuthorisationService.load(administratorId, activeClientId, acting: 'platform' | 'client')` loads client grants from the active membership when acting is `client`, and platform grants otherwise.
+  - The wall (`SessionGuard`) keys on the acting kind, so a platform account in a partner view is walled exactly like a client.
+- **Switching.**
+  - `POST /console/auth/active-client` takes `{ client_id: string | null }`.
+  - A uuid requires an active membership of the caller in an active client.
+  - `null` is accepted only when `accountKind === 'platform'`; a client account gets NOT_FOUND.
+  - The endpoint stays `@ClientAccessible()`, so it is reachable from a partner view.
+  - A platform account signs in to the super-admin view (`active_client_id` null) unless it chose a partner last; keep that as `last_client_id`, which null resets.
+- **`/me`** gains `account_kind`. `clients` lists the account's active memberships for either kind. `kind` stays the acting kind.
+- **Attach self.**
+  - `POST /console/oversight/clients/:id/owners/me` requires `admin.clients`, is code-confirmed (`client.attach_self`), is not client-accessible, and is audited.
+  - It creates an active owner membership, with `scope_type 'client'` and the Client owner role, for the caller's platform account in that client.
+  - It refuses a disabled client and a duplicate.
+  - The rule "a platform account never joins a team" now applies only to invitations: they still refuse platform addresses, silently, as today.
+- **`links.manage` becomes client-only.**
+  - Add it to `CLIENT_ONLY_PERMISSIONS`.
+  - Migration 0005 (amended in place; never deployed) grants it to `Client owner` only.
+  - The seed must not give it to `Owner`.
+  - Update the tests that assumed Owner can create links or set a brand: they now act through a partner view.
+- **Console.**
+  - The switcher shows for a platform account with at least one membership. Its options are "Super admin" (FR "Super admin") followed by the partners.
+  - In a partner view, the nav is the client nav.
+  - The Clients page detail has an "Attach me as owner" action.
+
+- [ ] **Step 1: Write the failing tests:**
+  - `a platform account attached as owner switches to the partner and is walled like a client`: platform handlers answer NOT_FOUND, and it can create a link on the partner's project.
+  - `switches back to super admin and sees the platform again`.
+  - `a client account cannot switch to null`.
+  - `Owner in the super-admin view cannot create a link or set a brand on any project`.
+  - `attach self requires admin.clients and a code, refuses duplicates and disabled clients`.
+  - Console: `the switcher offers Super admin and the partners`.
+- [ ] **Step 2: Run them.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** the affected API test files one or two at a time, plus the console suite, tsc, lint and build. Expected: PASS.
+- [ ] **Step 5: Commit.** Message: "A platform account works in a partner's view; links are a partner's".
+
+### Task 13: Proxia Digital, the house partner (CLI)
+
+**Files:**
+- Create: `apps/api/src/cli/house-partner.ts`, with a `package.json` script `partner:house`.
+- Test: `apps/api/src/cli/house-partner.test.ts`.
+- Modify: `docs/production-deployment.md` and `docs/sandbox-deployment.md`, adding a short "House partner" section.
+
+**Interfaces:**
+- **Command:** `node dist/cli/house-partner.js --name "Proxia Digital" --owner-email <platform admin email> --projects <code,code,…>`.
+- **What it does,** in one transaction, with the same rules as the console paths:
+  - finds or creates the client by name;
+  - attaches each listed project (it refuses a project that belongs to another client);
+  - gives the platform account an active owner membership, unless it already has one.
+- **What it prints:** what it did, or "nothing to do".
+- **Audit:** `client.create`, `project.attach_client` and `client.attach_self`, with actor = the owner account.
+
+- [ ] **Step 1: Write the failing test:** `idempotent: twice gives one client, one membership, the projects attached once; refuses a project of another client`.
+- [ ] **Step 2: Run it.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run it.** Expected: PASS.
+- [ ] **Step 5: Commit.** Message: "A CLI to set up the house partner".
+
+### Task 14: The receipt email in HTML, in the client's brand
+
+**Files:**
+- Modify:
+  - `apps/api/src/payment-links/receipt.ts`: `html` beside `text`;
+  - `apps/api/src/alerts/mailer.ts`: `Mail.html?`, sent to Resend as `html` alongside `text`;
+  - the receipt send path, to pass the logo URL and colours.
+- Test: `apps/api/src/pay-api/receipt.test.ts`.
+
+**Interfaces:**
+- `receiptMail(...)` returns `{ subject, text, html }`.
+- **The HTML:**
+  - a table layout with inline styles only, no external CSS and no script;
+  - a header in the link's primary colour, with the logo as an `<img>` whose absolute `src` is `${PAYLINK_BASE_URL}/pay-api/v1/assets/<id>` (no logo, no `<img>`), followed by the partner's or project's name;
+  - the title, the details table (reference, date in the local zone as today, amount, fees, total, method, masked number), and the footer "Powered by ProxiaPay";
+  - English or French by `language`.
+- **Escaping:** every interpolated value is HTML-escaped (`&<>"'`). Colours are interpolated only after `isHexColor`.
+
+- [ ] **Step 1: Write the failing tests:**
+  - `the html escapes a project name with markup`;
+  - `the html carries the logo URL on the paylink host and the primary colour`;
+  - `no logo, no img`;
+  - `the text part is still sent`;
+  - `a non-hex colour never reaches the html`.
+- [ ] **Step 2: Run them.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them.** Expected: PASS.
+- [ ] **Step 5: Commit.** Message: "The receipt email in HTML, in the client's brand".

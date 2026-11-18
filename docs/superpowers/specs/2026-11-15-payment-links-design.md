@@ -423,3 +423,24 @@ credential, and nothing else in the API is reachable from the paylink domain.
 - The page's visual design, within the existing visual identity
   (`docs/superpowers/specs/2026-11-02-proxiapay-visual-identity-design.md`).
 - How the page follows the payment: polling interval and back-off.
+
+## Addendum (Valentine, 2026-11-18): everything goes through a partner; a branded HTML receipt
+
+**Only a partner creates links and sets a brand, on its own projects.**
+- `links.manage` belongs to the client owner role only. The platform `Owner` role loses it, so the super admin never creates links or sets a brand on another partner's project.
+- ProxiaPay's own projects (MonJeton and the others) belong to a partner of their own, "Proxia Digital". Valentine is its owner.
+
+**A platform account can also be a partner's member.**
+- Valentine's platform account can hold a membership in a partner. It is attached from Oversight → Clients ("Attach me as owner"), by an administrator holding `admin.clients`, for their own account only, with a confirmation code. It is never attached by invitation.
+- The console's client selector then offers "Super admin" plus each partner the account belongs to.
+  - **Super admin:** the full platform view, unchanged. No link creation and no brand on anyone's project.
+  - **A partner:** the session behaves exactly like that partner's owner session. The wall, the client views, the scopes from the active membership, links, brand, keys and team all apply. Nothing of the platform view is reachable until the account switches back to "Super admin".
+- Switching back to "Super admin" is possible only for a platform account. A client account can never reach it.
+
+**Setting up Proxia Digital.** A one-off CLI, `src/cli/house-partner.ts`, is run by the controller on each environment with Valentine's approval. It creates the partner, attaches the listed projects to it, and makes the named platform account its owner. It is idempotent.
+
+**The receipt email is HTML in the client's brand.**
+- It carries the logo (an absolute URL on the paylink host), the primary colour, the partner and project name, the payment details, and "Powered by ProxiaPay".
+- It uses table layout and inline styles, so it renders in common mail clients.
+- A text part goes alongside, with the same content as today's text.
+- Every value is HTML-escaped.
