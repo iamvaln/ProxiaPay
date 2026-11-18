@@ -15,10 +15,19 @@ export class ClientsService {
 
   /** The owner's mail goes out through `deliver`, once the caller's transaction has committed. */
   async createClient(tx: Tx, input: { name: string; ownerName: string; ownerEmail: string; language: 'en' | 'fr' }, actorId: string): Promise<{ clientId: string } & Pick<Invited, 'status' | 'deliver'>> {
-    const client = await tx.insertInto('client').values({ name: input.name, created_by: actorId }).returning('id').executeTakeFirstOrThrow();
-    await this.audit.record(tx, { actorId, action: 'client.create', subjectType: 'client', subjectId: client.id, next: { name: input.name } });
+    const client = await this.createWithoutInvite(tx, input.name, actorId);
     const invited = await this.invitations.invite(tx, { clientId: client.id, name: input.ownerName, email: input.ownerEmail, language: input.language, profile: 'owner', projectIds: [] }, actorId, { auditAction: 'client.invite_owner' });
     return { clientId: client.id, ...invited };
+  }
+
+  /**
+   * A client with no owner invitation: its owner is an existing platform account, attached with `attachSelf`. Only the house-partner
+   * CLI takes this path; the console always invites.
+   */
+  async createWithoutInvite(tx: Tx, name: string, actorId: string): Promise<{ id: string }> {
+    const client = await tx.insertInto('client').values({ name, created_by: actorId }).returning('id').executeTakeFirstOrThrow();
+    await this.audit.record(tx, { actorId, action: 'client.create', subjectType: 'client', subjectId: client.id, next: { name } });
+    return client;
   }
 
   /** Another owner, for example a successor. */
@@ -34,7 +43,7 @@ export class ClientsService {
    * The actor's own platform account becomes an active owner of the client, with no invitation: the rule that a platform
    * account never joins a team holds for invitations, which still refuse platform addresses.
    */
-  async attachSelf(tx: Tx, clientId: string, actorId: string, confirmationId: string): Promise<{ membership_id: string; client_id: string }> {
+  async attachSelf(tx: Tx, clientId: string, actorId: string, confirmationId: string | null): Promise<{ membership_id: string; client_id: string }> {
     const client = isUuid(clientId) ? await tx.selectFrom('client').select('status').where('id', '=', clientId).forUpdate().executeTakeFirst() : undefined;
     if (!client) throw new PlatformError('NOT_FOUND', 'No such client.');
     if (client.status === 'disabled') throw new PlatformError('RULE_VIOLATION', CLIENT_DISABLED);

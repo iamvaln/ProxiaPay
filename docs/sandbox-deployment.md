@@ -188,6 +188,26 @@ rest to the console container's port 8080, which sends the page's CSP
 access. The console host never serves `/pay-api` nor the page. Tokens travel in `/pay-api`
 paths: see "Access logs" in `docs/production-deployment.md`.
 
+## House partner
+
+ProxiaPay's own projects (MonJeton and the others) belong to a partner of their own,
+"Proxia Digital", so links and brands go through a partner like everyone else's. One
+command, run once per environment by the controller with Valentine's approval, creates
+that partner (no owner invitation is sent), attaches the listed projects and makes the
+named platform account an active owner of it:
+
+```sh
+docker compose --env-file .env.sandbox -f docker-compose.deploy.yml run --rm -T migrate \
+  node dist/cli/house-partner.js --name "Proxia Digital" \
+  --owner-email <platform administrator email> --projects <code,code,…>
+```
+
+It is one transaction by the console's own rules, and idempotent: a second run prints
+`nothing to do`. A project that already belongs to another client is refused and nothing
+is kept. The audit trail carries `client.create`, `project.attach_client` and
+`client.attach_self`, with the owner account as actor. Project codes are the ones shown on
+the Projects page.
+
 ## Client accounts on the sandbox
 
 Two settings in `.env.sandbox` serve client accounts (`docs/client-onboarding.md`):

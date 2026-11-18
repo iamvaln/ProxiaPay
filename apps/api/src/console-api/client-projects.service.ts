@@ -64,7 +64,7 @@ export class ClientProjectsService {
     return rows;
   }
 
-  async attach(tx: Tx, projectId: string, clientId: string, actorId: string, confirmationId: string) {
+  async attach(tx: Tx, projectId: string, clientId: string, actorId: string, confirmationId: string | null) {
     const project = await tx.selectFrom('project').select(['id', 'client_id']).where('id', '=', projectId).forUpdate().executeTakeFirst();
     if (!project) throw new PlatformError('NOT_FOUND', 'No such project.');
     // A project never moves from one client to another.

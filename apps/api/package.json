@@ -19,6 +19,7 @@
     "admin:create": "node -r @swc-node/register src/cli/create-admin.ts",
     "db:codegen": "kysely-codegen --url \"$DATABASE_URL\" --out-file src/db/schema.generated.ts --exclude-pattern schema_migrations && sed -i \"s|export type Int8 = ColumnType<string, bigint \\\\| number \\\\| string, bigint \\\\| number \\\\| string>;|// BIGINT columns are parsed to safe integers by pg-types.ts; see configurePgTypes.\\\\nexport type Int8 = ColumnType<number, number, number>;|\" src/db/schema.generated.ts",
     "smoke": "node -r @swc-node/register src/cli/smoke.ts",
+    "partner:house": "node -r @swc-node/register src/cli/house-partner.ts",
     "provider:probe": "node -r @swc-node/register src/cli/provider-probe.ts"
   },
   "dependencies": {

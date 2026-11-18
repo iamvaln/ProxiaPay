@@ -425,6 +425,26 @@ Traefik access log, but the shared Traefik is not in this repository: if it writ
 logs, the `proxiapay-payapi` and `proxiapay-paylink` routers (and the sandbox's) must be
 excluded from them or the logged path must be dropped. Check before the first link is shared.
 
+## House partner
+
+ProxiaPay's own projects (MonJeton and the others) belong to a partner of their own,
+"Proxia Digital", so links and brands go through a partner like everyone else's. One
+command, run once per environment by the controller with Valentine's approval, creates
+that partner (no owner invitation is sent), attaches the listed projects and makes the
+named platform account an active owner of it:
+
+```sh
+docker compose --env-file .env.production -f docker-compose.deploy.yml -f docker-compose.production.yml run --rm -T migrate \
+  node dist/cli/house-partner.js --name "Proxia Digital" \
+  --owner-email <platform administrator email> --projects <code,code,…>
+```
+
+It is one transaction by the console's own rules, and idempotent: a second run prints
+`nothing to do`. A project that already belongs to another client is refused and nothing
+is kept. The audit trail carries `client.create`, `project.attach_client` and
+`client.attach_self`, with the owner account as actor. Project codes are the ones shown on
+the Projects page.
+
 ## Activating a new country
 
 Production opens with Cameroon only. The seed inserts the whole catalogue and
